@@ -17,7 +17,7 @@
 
 import { EventEmitter } from 'events';
 import * as fs from 'fs';
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn, execSync, type ChildProcess } from 'child_process';
 import * as http from 'http';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 
@@ -460,18 +460,24 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   }
 
   private async cleanupPlaywrightObjects(): Promise<void> {
-    // Close context (which closes all pages)
+    // Close context with timeout (which closes all pages)
     if (this.context) {
       try {
-        await this.context.close();
+        await Promise.race([
+          this.context.close(),
+          delay(1500),
+        ]);
       } catch { /* ignore */ }
       this.context = null;
     }
 
-    // Disconnect browser from CDP (does not kill the Chrome process)
+    // Disconnect browser from CDP with timeout
     if (this.browser) {
       try {
-        await this.browser.close();
+        await Promise.race([
+          this.browser.close(),
+          delay(1500),
+        ]);
       } catch { /* ignore */ }
       this.browser = null;
     }
@@ -486,14 +492,20 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     this.log.info('chrome_kill', 'Terminating Chrome process', { pid: proc.pid });
 
     try {
-      // Attempt graceful shutdown first
-      proc.kill('SIGTERM');
-      await delay(2000);
+      if (process.platform === 'win32' && proc.pid) {
+        try {
+          execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: 'ignore' });
+        } catch { /* already exited */ }
+      } else {
+        // Attempt graceful shutdown first
+        proc.kill('SIGTERM');
+        await delay(1000);
 
-      // Force kill if still running
-      if (!proc.killed && proc.exitCode === null) {
-        proc.kill('SIGKILL');
-        await delay(500);
+        // Force kill if still running
+        if (!proc.killed && proc.exitCode === null) {
+          proc.kill('SIGKILL');
+          await delay(500);
+        }
       }
     } catch {
       // If the process is already gone, ignore the error
