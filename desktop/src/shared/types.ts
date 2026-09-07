@@ -394,3 +394,204 @@ export type FlowAutomationStatus =
   | 'selecting_ratio'
   | 'downloading'
   | 'error';
+
+// ---------------------------------------------------------------------------
+// Phase 3: Project, Prompt Slot, and Job Entity Models
+// ---------------------------------------------------------------------------
+
+/**
+ * Processing order for mixed image and video generation projects.
+ */
+export type ProcessingOrder = 'images_first' | 'videos_first' | 'automatic';
+
+/**
+ * Valid lifecycle states of a single prompt slot.
+ */
+export type PromptSlotStatus =
+  | 'draft'
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+/**
+ * Represents the immutable result of a completed generation.
+ */
+export interface SlotMediaResult {
+  assetId: string;
+  mediaPath: string;           // Absolute path to local .png / .mp4
+  thumbnailPath?: string;      // Local thumbnail path
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
+  modelUsed: string;           // e.g. "Nano Banana 2"
+  ratioUsed: string;           // e.g. "16:9"
+  completedAt: string;         // ISO 8601
+  fileSizeBytes: number;
+}
+
+/**
+ * Error detail stored on a failed prompt slot.
+ */
+export interface SlotErrorDetail {
+  code: string;
+  message: string;
+  timestamp: string;          // ISO 8601
+  retryCount: number;
+  profileId?: string;
+}
+
+/**
+ * An individual prompt slot in a project.
+ * IMMUTABLE IDENTITY: slotIndex, promptId, and type must NEVER change once created.
+ */
+export interface PromptSlotEntity {
+  /** Deterministic zero-based index in the grid. Never reorders. */
+  slotIndex: number;
+  /** Unique permanent ID (e.g. "slot_abc123") */
+  promptId: string;
+  /** Project ID this slot belongs to */
+  projectId: string;
+  /** Content generation type */
+  type: 'image' | 'video';
+  /** The prompt text to be entered into Google Flow */
+  promptText: string;
+  /** Current slot lifecycle status */
+  status: PromptSlotStatus;
+  /** Currently executing job ID if running */
+  activeJobId?: string;
+  /** Currently assigned profile ID if running */
+  assignedProfileId?: string;
+  /** Media result when completed */
+  result?: SlotMediaResult;
+  /** Error detail if failed */
+  error?: SlotErrorDetail;
+  /** ISO 8601 creation timestamp */
+  createdAt: string;
+  /** ISO 8601 last update timestamp */
+  updatedAt: string;
+}
+
+/**
+ * Configuration options for a generation project.
+ */
+export interface ProjectSettings {
+  imageRatio: SupportedAspectRatio;
+  videoRatio: string;
+  processingOrder: ProcessingOrder;
+  autoRetry: boolean;
+  maxRetries: number;
+}
+
+/**
+ * Summary statistics of a project.
+ */
+export interface ProjectStats {
+  totalImages: number;
+  totalVideos: number;
+  completedImages: number;
+  completedVideos: number;
+  failedCount: number;
+}
+
+/**
+ * Status of an entire project.
+ */
+export type ProjectStatus =
+  | 'draft'
+  | 'queued'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'cancelled';
+
+/**
+ * Complete persistent entity representing a Google Flow creation project.
+ * Stored at: %LOCALAPPDATA%\GoogleFlowApp\projects\{projectId}\project.json
+ */
+export interface ProjectEntity {
+  projectId: string;
+  name: string;
+  campaignTag?: string;
+  createdAt: string;
+  updatedAt: string;
+  status: ProjectStatus;
+  settings: ProjectSettings;
+  slots: PromptSlotEntity[];
+  stats: ProjectStats;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Job State Machine & Job Entity
+// ---------------------------------------------------------------------------
+
+/**
+ * All 13 valid lifecycle states for a generation job.
+ */
+export type JobStatus =
+  | 'pending'
+  | 'queued'
+  | 'assigned'
+  | 'starting'
+  | 'configuring'
+  | 'generating'
+  | 'waiting_for_result'
+  | 'downloading'
+  | 'completed'
+  | 'failed'
+  | 'retry_waiting'
+  | 'cancelled'
+  | 'manual_action_required';
+
+/**
+ * Persistent entity representing a single execution task for a prompt slot.
+ * Stored at: %LOCALAPPDATA%\GoogleFlowApp\projects\{projectId}\jobs.json
+ */
+export interface GenerationJobEntity {
+  jobId: string;
+  projectId: string;
+  promptId: string;
+  promptType: 'image' | 'video';
+  slotIndex: number;
+  status: JobStatus;
+  profileId?: string;
+  createdAt: string;
+  queuedAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+  failedAt?: string;
+  outputPath?: string;
+  thumbnailPath?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  retryCount: number;
+  maxRetries: number;
+  metadata: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Event Payloads (Serializable only — zero Playwright/browser handles)
+// ---------------------------------------------------------------------------
+
+export interface JobProgressEvent {
+  jobId: string;
+  projectId: string;
+  promptId: string;
+  slotIndex: number;
+  profileId?: string;
+  status: JobStatus;
+  stepDescription: string;
+  timestamp: string;
+}
+
+export interface SlotUpdatedEvent {
+  projectId: string;
+  slotIndex: number;
+  promptId: string;
+  status: PromptSlotStatus;
+  result?: SlotMediaResult;
+  error?: SlotErrorDetail;
+  timestamp: string;
+}
+
