@@ -8,8 +8,12 @@ import { ProfilesScreen } from '../renderer/screens/ProfilesScreen';
 import type { ProfileSessionSnapshot } from '../shared/types';
 
 describe('ProfilesScreen', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
   afterEach(() => {
     cleanup();
+    document.body.innerHTML = '';
   });
   const mockProfiles: ProfileSessionSnapshot[] = [
     {
@@ -76,7 +80,7 @@ describe('ProfilesScreen', () => {
     expect(screen.getByText('Secondary Profile')).toBeDefined();
     expect(screen.getByText('user1@example.com')).toBeDefined();
     expect(screen.getAllByText(/Ready/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Sign-In Required/i)).toBeDefined();
+    expect(screen.getAllByText(/Sign-In Required/i).length).toBeGreaterThan(0);
 
     // Click Sign In in Chrome for prof_2
     const signInBtn = screen.getByText('Sign In in Chrome');

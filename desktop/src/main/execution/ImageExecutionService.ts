@@ -25,6 +25,7 @@ import { AppLogger } from '../utils/AppLogger';
 export interface ExecutionOptions {
   triggerGenerationClick?: boolean; // Default true; false for dry-run/mock tests
   pollTimeoutMs?: number;           // Timeout waiting for generation
+  mockDeltaUuids?: string[];        // For controlled testing of delta matching & ambiguity
 }
 
 export class ImageExecutionService {
@@ -135,16 +136,39 @@ export class ImageExecutionService {
         await page.waitForTimeout(2500);
 
         const currentMedia = await automation.detectGeneratedMedia();
-        const deltaUuids = currentMedia.imageUuids.filter((id) => !beforeUuids.has(id));
+        const deltaUuids = options.mockDeltaUuids !== undefined
+          ? options.mockDeltaUuids
+          : currentMedia.imageUuids.filter((id) => !beforeUuids.has(id));
 
-        if (deltaUuids.length > 0) {
+        if (deltaUuids.length === 1) {
           newUuid = deltaUuids[0]!;
-          log.info('image_exec', `New generated media detected: ${newUuid}`);
+          log.info('image_exec', `New generated media detected unambiguously: ${newUuid}`);
           break;
+        } else if (deltaUuids.length > 1) {
+          log.warn('image_exec', `Ambiguous media result: ${deltaUuids.length} new images appeared simultaneously.`);
+          await this.updateJobStatus(
+            projectId,
+            jobId,
+            'manual_action_required',
+            `Ambiguous result: ${deltaUuids.length} new images detected simultaneously. Manual selection required.`
+          );
+          await ProjectRepository.updateSlot(projectId, slotIndex, {
+            status: 'failed',
+            error: {
+              code: 'AMBIGUOUS_MEDIA_RESULT',
+              message: `Multiple (${deltaUuids.length}) new images detected. Manual selection required.`,
+              timestamp: new Date().toISOString(),
+              retryCount: job.retryCount,
+              profileId: worker.profileId,
+            },
+          });
+          throw new Error(
+            `Ambiguous media result: ${deltaUuids.length} new images detected. Manual action required.`
+          );
         }
       }
 
-      // In mocked/test mode where triggerClick is false, allow fallback if no live generation was performed
+      // In mocked/test mode where triggerClick is false and no mockDeltaUuids was given, allow fallback
       if (!newUuid && !triggerClick) {
         newUuid = `mock_${promptId}_${jobId}`;
       }
@@ -217,26 +241,32 @@ export class ImageExecutionService {
       const errorMsg = (err as Error).message;
       log.error('image_exec', `Execution failed for Job ${jobId}`, err as Error);
 
-      // Mark job failed
-      const failedJob = await JobRepository.updateJob(projectId, jobId, {
-        status: 'failed',
-        errorMessage: errorMsg,
-      }).catch(() => null);
+      // Check if job was already marked with a specialized status (e.g. manual_action_required)
+      const currentJob = await JobRepository.getJob(projectId, jobId).catch(() => null);
+      const isManualAction = currentJob?.status === 'manual_action_required';
 
-      // Mark slot failed
-      await ProjectRepository.updateSlot(projectId, slotIndex, {
-        status: 'failed',
-        error: {
-          code: 'GENERATION_ERROR',
-          message: errorMsg,
-          timestamp: new Date().toISOString(),
-          retryCount: job.retryCount,
-          profileId: worker.profileId,
-        },
-      }).catch(() => null);
+      if (!isManualAction) {
+        // Mark job failed
+        const failedJob = await JobRepository.updateJob(projectId, jobId, {
+          status: 'failed',
+          errorMessage: errorMsg,
+        }).catch(() => null);
 
-      if (failedJob) {
-        generationEventBus.emitTyped('job:failed', failedJob);
+        // Mark slot failed
+        await ProjectRepository.updateSlot(projectId, slotIndex, {
+          status: 'failed',
+          error: {
+            code: 'GENERATION_ERROR',
+            message: errorMsg,
+            timestamp: new Date().toISOString(),
+            retryCount: job.retryCount,
+            profileId: worker.profileId,
+          },
+        }).catch(() => null);
+
+        if (failedJob) {
+          generationEventBus.emitTyped('job:failed', failedJob);
+        }
       }
 
       throw err;

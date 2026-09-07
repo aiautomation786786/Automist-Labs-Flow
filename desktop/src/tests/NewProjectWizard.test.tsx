@@ -2,13 +2,18 @@
  * @vitest-environment jsdom
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import { NewProjectScreen } from '../renderer/screens/NewProjectScreen';
 
 describe('NewProjectScreen 5-Step Wizard', () => {
   let mockCreatedProject: any;
   let onProjectCreated: ReturnType<typeof vi.fn>;
+
+  afterEach(() => {
+    cleanup();
+    document.body.innerHTML = '';
+  });
 
   beforeEach(() => {
     mockCreatedProject = { projectId: 'proj_new_123', name: 'Cyberpunk Episode' };

@@ -228,6 +228,11 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     return this._status === 'ready';
   }
 
+  /** The OS process ID of the spawned Chrome instance, or undefined if not running. */
+  get pid(): number | undefined {
+    return this.chromeProcess?.pid;
+  }
+
   /** Refreshes the ProfileConfig from the caller (e.g., after a user edit). */
   updateConfig(config: ProfileConfig): void {
     if (config.profileId !== this.profileId) {
