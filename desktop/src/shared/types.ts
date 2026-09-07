@@ -595,3 +595,69 @@ export interface SlotUpdatedEvent {
   timestamp: string;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4: Application Settings & IPC Bridge Contracts
+// ---------------------------------------------------------------------------
+
+export interface AppSettings {
+  appDataDir: string;
+  defaultImageRatio: SupportedAspectRatio;
+  defaultProcessingOrder: ProcessingOrder;
+  maxRetries: number;
+  logLevel: 'INFO' | 'WARN' | 'DEBUG' | 'ERROR';
+}
+
+export interface CreateProjectParams {
+  name: string;
+  campaignTag?: string;
+  imageRatio?: SupportedAspectRatio;
+  videoRatio?: string;
+  processingOrder?: ProcessingOrder;
+  autoRetry?: boolean;
+  maxRetries?: number;
+  prompts: Array<{ text: string; type: 'image' | 'video' }>;
+}
+
+export interface FlowApi {
+  // Projects
+  listProjects: () => Promise<ProjectEntity[]>;
+  getProject: (projectId: string) => Promise<ProjectEntity | null>;
+  createProject: (params: CreateProjectParams) => Promise<ProjectEntity>;
+  updateProject: (
+    projectId: string,
+    patch: Partial<Omit<ProjectEntity, 'projectId' | 'createdAt' | 'slots'>>
+  ) => Promise<ProjectEntity>;
+  deleteProject: (projectId: string) => Promise<void>;
+
+  // Generation
+  startProjectGeneration: (projectId: string) => Promise<GenerationJobEntity[]>;
+  cancelJob: (projectId: string, jobId: string) => Promise<void>;
+  getProjectJobs: (projectId: string) => Promise<GenerationJobEntity[]>;
+
+  // Profiles
+  listProfiles: () => Promise<ProfileSessionSnapshot[]>;
+  createProfile: (params: { displayName: string }) => Promise<ProfileConfig>;
+  startProfile: (profileId: string) => Promise<ProfileSessionSnapshot | null>;
+  stopProfile: (profileId: string) => Promise<void>;
+  deleteProfile: (profileId: string) => Promise<void>;
+  openChrome: (profileId: string) => Promise<{ success: boolean; message: string }>;
+
+  // Settings & System
+  getAppInfo: () => Promise<{ appDataDir: string; version: string; platform: string }>;
+  getSettings: () => Promise<AppSettings>;
+  updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+
+  // Events
+  onJobProgress: (callback: (event: JobProgressEvent) => void) => () => void;
+  onSlotUpdated: (callback: (event: SlotUpdatedEvent) => void) => () => void;
+  onJobCompleted: (callback: (job: GenerationJobEntity) => void) => () => void;
+  onJobFailed: (callback: (job: GenerationJobEntity) => void) => () => void;
+  onWorkerStatus: (callback: (data: { profileId: string; status: string; activeJobId?: string }) => void) => () => void;
+}
+
+declare global {
+  interface Window {
+    flowApi?: FlowApi;
+  }
+}
+

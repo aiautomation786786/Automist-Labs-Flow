@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "description": "Windows desktop session manager for Google Flow multi-profile automation (Phase 1)",
   "type": "commonjs",
-  "main": "dist/main/engine/ProfileSessionManager.js",
+  "main": "dist/main/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build:main": "tsc -p tsconfig.json",
+    "build:ui": "vite build",
+    "build": "npm run build:main && npm run build:ui",
     "build:watch": "tsc -p tsconfig.json --watch",
+    "start": "electron .",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -14,13 +17,21 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "playwright": "^1.51.0"
+    "playwright": "^1.51.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^20.0.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "@vitest/coverage-v8": "^1.6.0",
+    "electron": "^44.2.0",
+    "jsdom": "^29.1.1",
     "typescript": "^5.4.0",
-    "vitest": "^1.6.0",
-    "@vitest/coverage-v8": "^1.6.0"
+    "vitest": "^1.6.0"
   },
   "engines": {
     "node": ">=18.0.0"

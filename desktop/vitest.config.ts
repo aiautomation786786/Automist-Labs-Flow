@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['src/tests/**/*.test.ts'],
+    include: ['src/tests/**/*.test.{ts,tsx}'],
     timeout: 30000, // 30s per test (Chrome launch can be slow)
     hookTimeout: 20000,
     reporters: ['verbose'],

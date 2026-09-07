@@ -1,0 +1,173 @@
+/**
+ * Electron Main Process Entry Point.
+ *
+ * Responsibilities:
+ *  - App lifecycle supervisor.
+ *  - Secure custom protocol registration (`flow-asset://`) for local asset streaming.
+ *  - Startup crash recovery via RecoveryManager.
+ *  - Hardware & session initialization.
+ *  - Window creation and secure preload binding.
+ */
+
+import { app, BrowserWindow, protocol, net, ipcMain } from 'electron';
+import * as path from 'path';
+import * as fs from 'fs';
+import { ProfileSessionManager } from './engine/ProfileSessionManager';
+import { WorkerPool } from './scheduler/WorkerPool';
+import { GenerationScheduler } from './scheduler/GenerationScheduler';
+import { RecoveryManager } from './storage/RecoveryManager';
+import { AssetManager } from './storage/AssetManager';
+import { IpcHandlers } from './ipc/IpcHandlers';
+import { AppLogger } from './utils/AppLogger';
+
+const logger = new AppLogger({ mirrorToStderr: true });
+
+// Register privileged scheme before app is ready
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'flow-asset',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+]);
+
+let mainWindow: BrowserWindow | null = null;
+let sessionManager: ProfileSessionManager | null = null;
+let workerPool: WorkerPool | null = null;
+let scheduler: GenerationScheduler | null = null;
+
+async function createWindow(): Promise<void> {
+  mainWindow = new BrowserWindow({
+    width: 1440,
+    height: 920,
+    minWidth: 1100,
+    minHeight: 700,
+    title: 'Google Flow Desktop',
+    backgroundColor: '#f8fafc', // Clean neutral professional background
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false, // Preload needs IPC access
+    },
+  });
+
+  // Remove default menu for clean desktop productivity UI
+  mainWindow.setMenuBarVisibility(false);
+
+  // In development, load from Vite dev server if available, else static build
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    await mainWindow.loadURL(devServerUrl);
+  } else {
+    const distHtml = path.join(__dirname, '../renderer/index.html');
+    if (fs.existsSync(distHtml)) {
+      await mainWindow.loadFile(distHtml);
+    } else {
+      // Fallback if built under dist root
+      const fallbackHtml = path.join(__dirname, '../../renderer/index.html');
+      if (fs.existsSync(fallbackHtml)) {
+        await mainWindow.loadFile(fallbackHtml);
+      } else {
+        logger.error('main', `Could not find renderer index.html at ${distHtml}`);
+      }
+    }
+  }
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+}
+
+function registerAssetProtocol(): void {
+  // Protocol: flow-asset://project/{projectId}/{subPath}
+  // Maps to: %LOCALAPPDATA%\GoogleFlowApp\projects\{projectId}\{subPath}
+  protocol.handle('flow-asset', (request) => {
+    try {
+      const url = new URL(request.url);
+      const relativePath = decodeURIComponent(url.pathname.replace(/^\//, ''));
+      const projectsRoot = path.resolve(AssetManager.getProjectsRootDir());
+      const targetFilePath = path.resolve(path.join(projectsRoot, relativePath));
+
+      // Security check: strictly enforce path containment
+      if (!targetFilePath.startsWith(projectsRoot) || !fs.existsSync(targetFilePath)) {
+        return new Response('Not Found or Access Denied', { status: 404 });
+      }
+
+      return net.fetch(`file:///${targetFilePath.replace(/\\/g, '/')}`);
+    } catch (err) {
+      logger.error('main', 'Error serving asset protocol', err as Error);
+      return new Response('Internal Protocol Error', { status: 500 });
+    }
+  });
+}
+
+async function initializeApp(): Promise<void> {
+  logger.info('main', 'Starting Google Flow Desktop Application...');
+
+  // Step 1: Run crash recovery on stored projects
+  try {
+    const report = await RecoveryManager.recoverAll();
+    logger.info('main', 'Cold-start crash recovery complete', report as unknown as Record<string, unknown>);
+  } catch (err) {
+    logger.warn('main', 'Recovery warning', { error: (err as Error).message });
+  }
+
+  // Step 2: Initialize Session Manager & Worker Pool
+  try {
+    sessionManager = new ProfileSessionManager();
+    workerPool = new WorkerPool(sessionManager);
+    scheduler = new GenerationScheduler(workerPool);
+
+    // Register IPC handlers
+    IpcHandlers.register(ipcMain, {
+      scheduler,
+      sessionManager,
+      getWebContents: () => mainWindow?.webContents ?? null,
+    });
+  } catch (err) {
+    logger.error('main', 'Failed to initialize core services', err as Error);
+  }
+
+  // Step 3: Register custom protocol
+  registerAssetProtocol();
+
+  // Step 4: Create UI window
+  await createWindow();
+}
+
+// Single-instance lock
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
+  app.whenReady().then(initializeApp).catch((err) => {
+    logger.error('main', 'Fatal initialization error', err as Error);
+  });
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      scheduler?.stop();
+      app.quit();
+    }
+  });
+
+  app.on('activate', () => {
+    if (mainWindow === null) {
+      createWindow().catch((err) => {
+        logger.error('main', 'Error activating window', err as Error);
+      });
+    }
+  });
+}
