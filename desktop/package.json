@@ -1,0 +1,28 @@
+{
+  "name": "google-flow-desktop",
+  "version": "0.1.0",
+  "description": "Windows desktop session manager for Google Flow multi-profile automation (Phase 1)",
+  "type": "commonjs",
+  "main": "dist/main/engine/ProfileSessionManager.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:watch": "tsc -p tsconfig.json --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "manual-test": "node scripts/manual-test.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "playwright": "^1.51.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0",
+    "@vitest/coverage-v8": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
