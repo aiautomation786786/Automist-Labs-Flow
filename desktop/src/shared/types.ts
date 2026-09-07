@@ -244,3 +244,153 @@ export interface SessionManagerEvents {
   /** Emitted when Chrome crashes unexpectedly. */
   'session:crash': (profileId: string) => void;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2: Flow Automation & UI Discovery Types
+// ---------------------------------------------------------------------------
+
+/**
+ * Basic representation of an active or stored Google Flow project.
+ */
+export interface FlowProjectInfo {
+  /** Unique project ID extracted from the URL, e.g. "9a8b7c6d-..." */
+  id: string;
+  /** Full project URL, e.g. "https://labs.google/fx/en/tools/flow/project/9a8b7c6d-..." */
+  url: string;
+  /** Name of the project (if discernible) */
+  name?: string;
+  /** ISO timestamp when last accessed/verified */
+  lastAccessed?: string;
+}
+
+/**
+ * Criteria for ensuring project context.
+ */
+export interface FlowProjectContext {
+  /** Exact project ID requested. If provided, strictly prevents reusing a different project. */
+  projectId?: string;
+  /** Full target project URL */
+  projectUrl?: string;
+  /** Friendly project name for creating a new project if none exists */
+  name?: string;
+  /** If true, explicitly creates a new project instead of reusing any open project */
+  forceNew?: boolean;
+}
+
+/**
+ * Interactive element descriptor extracted during DOM discovery.
+ */
+export interface InteractiveElementInfo {
+  tag: string;
+  text: string;
+  visible: boolean;
+  role?: string | null;
+  ariaLabel?: string | null;
+  dataTestId?: string | null;
+  href?: string | null;
+}
+
+/**
+ * Structured result from discovering controls on the Flow page.
+ */
+export interface FlowUIDiscoveryResult {
+  /** The URL where discovery was performed */
+  url: string;
+  /** Whether the page currently represents a project canvas */
+  isProjectPage: boolean;
+  /** Project ID if on a project page */
+  projectId: string | null;
+  /** Prompt input descriptor (e.g. contenteditable or textarea) */
+  promptInputFound: boolean;
+  promptInputType: 'contenteditable' | 'textarea' | 'none';
+  /** Model selector button/control descriptor */
+  modelSelectorFound: boolean;
+  currentModelText: string | null;
+  /** Ratio selector control descriptor */
+  ratioSelectorFound: boolean;
+  currentRatioText: string | null;
+  /** Generate button control descriptor */
+  generateButtonFound: boolean;
+  generateButtonDisabled: boolean;
+  generateButtonText: string | null;
+  /** Interactive elements discovered on the page */
+  buttonCount: number;
+  inputCount: number;
+  interactiveButtons: InteractiveElementInfo[];
+}
+
+/**
+ * Structured result of active model selection (e.g. Nano Banana 2).
+ */
+export interface ModelSelectionResult {
+  /** Model requested to be active */
+  modelRequested: string;
+  /** Model detected before selection was attempted */
+  modelDetectedBefore: string | null;
+  /** Whether clicking the dropdown was required/attempted */
+  selectionAttempted: boolean;
+  /** Model text detected after selection */
+  modelDetectedAfter: string | null;
+  /** True only if modelDetectedAfter strictly matches or contains modelRequested */
+  verified: boolean;
+  /** Error message if selection or verification failed */
+  error?: string;
+}
+
+/**
+ * Valid aspect ratios for Google Flow image generation.
+ */
+export type SupportedAspectRatio = '16:9' | '9:16';
+
+/**
+ * Structured result of aspect ratio selection.
+ */
+export interface RatioSelectionResult {
+  requestedRatio: SupportedAspectRatio;
+  detectedBefore: string | null;
+  selected: boolean;
+  detectedAfter: string | null;
+  verified: boolean;
+  error?: string;
+}
+
+/**
+ * Result of detecting generated media on the Flow canvas.
+ */
+export interface MediaDetectionResult {
+  /** Unique UUIDs extracted from TRPC redirect URLs (e.g. /media.getMediaUrlRedirect?name=...) */
+  imageUuids: string[];
+  /** Full TRPC media redirect URLs discovered */
+  mediaUrls: string[];
+  /** Whether any video elements or video players were detected */
+  hasVideo: boolean;
+  /** Video sources or posters discovered */
+  videoSources: string[];
+}
+
+/**
+ * Result of non-navigating media download.
+ */
+export interface MediaDownloadResult {
+  /** Target file paths where downloaded files were saved */
+  downloadedFiles: string[];
+  /** Total bytes saved */
+  bytesDownloaded: number;
+  /** Destination directory or file path */
+  destinationPath: string;
+  /** Time elapsed in milliseconds */
+  durationMs: number;
+}
+
+/**
+ * Lifecycle status of a FlowAutomationSession.
+ */
+export type FlowAutomationStatus =
+  | 'idle'
+  | 'navigating'
+  | 'checking_auth'
+  | 'discovering'
+  | 'selecting_model'
+  | 'selecting_ratio'
+  | 'downloading'
+  | 'error';

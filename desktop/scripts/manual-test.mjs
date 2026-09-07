@@ -27,7 +27,7 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 // Use __dirname equivalent for ESM
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,10 +41,10 @@ const rootDir = path.join(__dirname, '..');
 let ProfileSessionManager, ProfileConfigManager, ChromePortAllocator, WindowsChromeFinder;
 
 try {
-  const managerMod = await import(path.join(rootDir, 'dist/main/engine/ProfileSessionManager.js'));
-  const configMod = await import(path.join(rootDir, 'dist/main/engine/ProfileConfig.js'));
-  const allocMod = await import(path.join(rootDir, 'dist/main/engine/ChromePortAllocator.js'));
-  const finderMod = await import(path.join(rootDir, 'dist/main/engine/WindowsChromeFinder.js'));
+  const managerMod = await import(pathToFileURL(path.join(rootDir, 'dist/main/engine/ProfileSessionManager.js')).href);
+  const configMod = await import(pathToFileURL(path.join(rootDir, 'dist/main/engine/ProfileConfig.js')).href);
+  const allocMod = await import(pathToFileURL(path.join(rootDir, 'dist/main/engine/ChromePortAllocator.js')).href);
+  const finderMod = await import(pathToFileURL(path.join(rootDir, 'dist/main/engine/WindowsChromeFinder.js')).href);
 
   ProfileSessionManager = managerMod.ProfileSessionManager;
   ProfileConfigManager = configMod.ProfileConfigManager;

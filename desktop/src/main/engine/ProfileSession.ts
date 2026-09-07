@@ -28,6 +28,7 @@ import type {
 } from '../../shared/types';
 import { AppLogger } from '../utils/AppLogger';
 import { FlowAuthDetector } from './FlowAuthDetector';
+import { FlowAutomationSession } from './FlowAutomationSession';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -99,6 +100,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
+  private automationSession: FlowAutomationSession | null = null;
 
   // ---- Auth / locale (discovered at runtime) ------------------------------
   private detectedEmail: string | null = null;
@@ -188,6 +190,27 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   /** Returns the active Playwright Page, or null if not connected. */
   getPage(): Page | null {
     return this.page;
+  }
+
+  /** Returns the active BrowserContext, or null if not connected. */
+  getContext(): BrowserContext | null {
+    return this.context;
+  }
+
+  /** Returns the active Browser, or null if not connected. */
+  getBrowser(): Browser | null {
+    return this.browser;
+  }
+
+  /**
+   * Returns the FlowAutomationSession bound to this profile.
+   * Lazily initialized on first access.
+   */
+  getAutomationSession(): FlowAutomationSession {
+    if (!this.automationSession) {
+      this.automationSession = new FlowAutomationSession(this);
+    }
+    return this.automationSession;
   }
 
   /** Current session status. */
