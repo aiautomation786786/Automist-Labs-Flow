@@ -129,11 +129,14 @@ export class FlowAuthDetector {
       // Check for CAPTCHA / bot challenge indicators
       const hasCaptcha = await page.evaluate(() => {
         const bodyText = document.body?.innerText ?? '';
+        // "This site is protected by reCAPTCHA" in Google's legal footer is NOT a bot challenge
+        const textWithoutFooter = bodyText.replace(/This site is protected by reCAPTCHA[^\n]*/gi, '');
         return (
-          bodyText.includes('reCAPTCHA') ||
-          bodyText.includes('verify you') ||
-          bodyText.includes('unusual traffic') ||
-          !!document.querySelector('iframe[src*="recaptcha"]')
+          textWithoutFooter.includes('reCAPTCHA') ||
+          textWithoutFooter.includes('verify you are human') ||
+          textWithoutFooter.includes('unusual traffic from your computer network') ||
+          !!document.querySelector('iframe[src*="recaptcha/api2/bframe"]') ||
+          !!document.querySelector('iframe[src*="recaptcha/enterprise/bframe"]')
         );
       }).catch(() => false);
 
@@ -142,14 +145,14 @@ export class FlowAuthDetector {
         return { state: 'captcha', url, detectedEmail: null, locale: null };
       }
 
-      // Check if we're in a project or the Flow home — both mean authenticated
+      // Check if we're in a project or the Flow studio — both mean authenticated
       const isFlowAuthenticated = await page.evaluate(() => {
         // Presence of any Flow-specific structural elements:
         // 1. A project-nav sidebar
         // 2. A prompt textarea / contenteditable (generation UI)
         // 3. A "New project" button
         // 4. A project URL path segment
-        const sidebar = document.querySelector('[class*="sidebar"], [class*="nav-rail"], nav');
+        const sidebar = document.querySelector('[class*="sidebar"], [class*="nav-rail"]');
         const promptInput = document.querySelector(
           '[contenteditable="true"], textarea[placeholder]'
         );
@@ -167,6 +170,21 @@ export class FlowAuthDetector {
           hasEmail: !!detectedEmail,
         });
         return { state: 'authenticated', url, detectedEmail, locale };
+      }
+
+      // Landing page with "Create with Google Flow" / Sign in button
+      const isLandingPage = await page.evaluate(() => {
+        const text = document.body?.innerText ?? '';
+        return (
+          text.includes('Create with Google Flow') ||
+          text.includes('Your AI creative studio') ||
+          !!document.querySelector('a[href*="signin"], button[aria-label*="Sign in"]')
+        );
+      }).catch(() => false);
+
+      if (isLandingPage) {
+        log.info('auth_detector', 'Flow landing page detected; login or project entry required');
+        return { state: 'login_required', url, detectedEmail: null, locale: extractLocale(url) };
       }
 
       // Still on Flow domain but not recognizably authenticated — may be loading

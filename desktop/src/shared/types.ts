@@ -655,6 +655,35 @@ export interface FlowApi {
   onWorkerStatus: (callback: (data: { profileId: string; status: string; activeJobId?: string }) => void) => () => void;
 }
 
+// ---------------------------------------------------------------------------
+// Local Chrome Profile Discovery (Phase 5.2)
+// ---------------------------------------------------------------------------
+
+export interface DiscoveredLocalProfile {
+  profileDirectory: string;         // e.g. "Default", "Profile 1", "Profile 2"
+  profileDisplayName: string;       // e.g. "Your Chrome", "Heidi Mason"
+  accountEmail: string | null;      // e.g. "aiautomation786786@gmail.com"
+  accountDisplayName: string | null;// e.g. "Ai Automation"
+  fullPath: string;                 // Path to profile directory inside User Data
+}
+
+export type ProfileMatchStatus = 'exact_match' | 'multiple_matches' | 'not_found';
+
+export interface ProfileMatchResult {
+  status: ProfileMatchStatus;
+  match: DiscoveredLocalProfile | null;
+  candidates: DiscoveredLocalProfile[];
+  matchingMethod?: 'email' | 'display_name';
+  error?: string;
+}
+
+export interface ProfileInUseResult {
+  inUse: boolean;
+  pids: number[];
+  cdpPort?: number;
+  details?: string;
+}
+
 declare global {
   interface Window {
     flowApi?: FlowApi;
