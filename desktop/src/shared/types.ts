@@ -559,7 +559,12 @@ export interface ProjectSettings {
   autoRetry: boolean;
   maxRetries: number;
   imageDownloadQuality?: 'original' | '2k';
-  videoDownloadQuality?: 'original' | '1080p' | '4k';
+  videoDownloadQuality?: 'original' | '1080p';
+  generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'custom';
+  videoModel?: string;
+  videoResolution?: string;
+  videoDuration?: string;
+  selectedProfileIds?: string[];
 }
 
 /**
@@ -684,7 +689,7 @@ export interface AppSettings {
   maxRetries: number;
   logLevel: 'INFO' | 'WARN' | 'DEBUG' | 'ERROR';
   defaultImageDownloadQuality?: 'original' | '2k';
-  defaultVideoDownloadQuality?: 'original' | '1080p' | '4k';
+  defaultVideoDownloadQuality?: 'original' | '1080p';
 }
 
 export interface CreateProjectParams {
@@ -696,7 +701,12 @@ export interface CreateProjectParams {
   autoRetry?: boolean;
   maxRetries?: number;
   imageDownloadQuality?: 'original' | '2k';
-  videoDownloadQuality?: 'original' | '1080p' | '4k';
+  videoDownloadQuality?: 'original' | '1080p';
+  generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'custom';
+  videoModel?: string;
+  videoResolution?: string;
+  videoDuration?: string;
+  selectedProfileIds?: string[];
   prompts: Array<{ text: string; type: 'image' | 'video' }>;
 }
 
@@ -710,6 +720,8 @@ export interface FlowApi {
     patch: Partial<Omit<ProjectEntity, 'projectId' | 'createdAt' | 'slots'>>
   ) => Promise<ProjectEntity>;
   deleteProject: (projectId: string) => Promise<void>;
+  retrySlot?: (projectId: string, slotIndex: number) => Promise<void>;
+  revealAsset?: (mediaPath: string) => Promise<boolean>;
 
   // Generation
   startProjectGeneration: (projectId: string) => Promise<GenerationJobEntity[]>;

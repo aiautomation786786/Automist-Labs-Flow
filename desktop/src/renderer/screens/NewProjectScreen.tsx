@@ -34,7 +34,7 @@ export const NewProjectScreen: React.FC<NewProjectScreenProps> = ({
   const [imageRatio, setImageRatio] = useState<SupportedAspectRatio>('16:9');
   const [processingOrder, setProcessingOrder] = useState<ProcessingOrder>('images_first');
   const [imageDownloadQuality, setImageDownloadQuality] = useState<'original' | '2k'>('original');
-  const [videoDownloadQuality, setVideoDownloadQuality] = useState<'original' | '1080p' | '4k'>('original');
+  const [videoDownloadQuality, setVideoDownloadQuality] = useState<'original' | '1080p'>('original');
 
   // Step 4: Prompts
   const [imagePromptsText, setImagePromptsText] = useState('');
@@ -329,13 +329,12 @@ export const NewProjectScreen: React.FC<NewProjectScreenProps> = ({
                 {[
                   { id: 'original', label: 'Original (Native)' },
                   { id: '1080p', label: '1080p Upscaled' },
-                  { id: '4k', label: '4K Upscaled' },
                 ].map((q) => (
                   <button
                     key={q.id}
                     type="button"
                     className={videoDownloadQuality === q.id ? 'btn-primary' : 'btn-secondary'}
-                    onClick={() => setVideoDownloadQuality(q.id as 'original' | '1080p' | '4k')}
+                    onClick={() => setVideoDownloadQuality(q.id as 'original' | '1080p')}
                     style={{ minWidth: '130px' }}
                   >
                     {q.label}

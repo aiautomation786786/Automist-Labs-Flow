@@ -53,8 +53,14 @@ export class VideoExecutionService {
     const startMs = Date.now();
     let generationClickTime = jobStartTime;
 
+    const project = await ProjectRepository.get(projectId);
+    const targetModel = project?.settings?.videoModel || 'Omni 1.1 Flash';
+    const targetRatio = (project?.settings?.videoRatio as any) || '16:9';
+    const targetRes = project?.settings?.videoResolution || (targetModel.includes('Omni') ? '720p' : 'Default');
+    const targetDuration = targetModel.includes('Omni') ? (project?.settings?.videoDuration || '4s') : undefined;
+
     const log = new AppLogger({ profileId: worker.profileId, mirrorToStderr: false });
-    log.info('video_exec', `Starting video job ${jobId} (Slot ${slotIndex}) [mock=${isMock}]`);
+    log.info('video_exec', `Starting video job ${jobId} (Slot ${slotIndex}) [model=${targetModel}, mock=${isMock}]`);
 
     try {
       // Step 1: Transition to starting
@@ -101,11 +107,11 @@ export class VideoExecutionService {
             assetId: `video_${promptId}_${jobId}`,
             mediaPath: destinationPath,
             thumbnailPath,
-            modelUsed: 'Omni 1.1 Flash',
-            ratioUsed: '16:9',
-            resolution: '720p',
-            generationResolution: '720p',
-            downloadResolution: '720p',
+            modelUsed: targetModel,
+            ratioUsed: targetRatio,
+            resolution: targetRes,
+            generationResolution: targetRes,
+            downloadResolution: project?.settings?.videoDownloadQuality === '1080p' ? '1080p' : targetRes,
             durationSeconds,
             durationFormatted,
             jobStartTime,
@@ -146,8 +152,6 @@ export class VideoExecutionService {
       // Transition to configuring
       await JobRepository.updateJob(projectId, jobId, { status: 'configuring' });
 
-      // Read project settings
-      const project = await ProjectRepository.get(projectId);
       const slot = project?.slots.find((s) => s.slotIndex === slotIndex);
       const promptText = slot?.promptText || '';
       if (!promptText.trim()) {
@@ -155,12 +159,17 @@ export class VideoExecutionService {
       }
 
       // Configure video model in Flow UI
-      log.info('video_exec', 'Configuring Flow Video UI controls...');
+      log.info('video_exec', `Configuring Flow Video UI controls for ${targetModel}...`, {
+        modelName: targetModel,
+        resolution: targetRes,
+        duration: targetDuration,
+        ratio: targetRatio,
+      });
       const configResult = await ModelSelector.ensureVideoModel(page, {
-        modelName: 'Omni 1.1 Flash',
-        resolution: '720p',
-        duration: '4s',
-        ratio: '16:9',
+        modelName: targetModel,
+        resolution: targetRes,
+        duration: targetDuration,
+        ratio: targetRatio,
         quantity: 'x1',
       });
 
@@ -173,8 +182,14 @@ export class VideoExecutionService {
       if (configResult.mode !== 'Video') {
         throw new Error(`Pre-generation gate failed: mode is "${configResult.mode}", expected "Video"`);
       }
-      if (!configResult.model.toLowerCase().includes('omni')) {
-        throw new Error(`Pre-generation gate failed: model is "${configResult.model}", expected "Omni 1.1 Flash"`);
+      const modelVerified =
+        (targetModel.toLowerCase().includes('lite') && configResult.model.toLowerCase().includes('lite')) ||
+        (targetModel.toLowerCase().includes('fast') && configResult.model.toLowerCase().includes('fast')) ||
+        (targetModel.toLowerCase().includes('quality') && configResult.model.toLowerCase().includes('quality')) ||
+        (targetModel.toLowerCase().includes('omni') && configResult.model.toLowerCase().includes('omni'));
+
+      if (!modelVerified) {
+        throw new Error(`Pre-generation gate failed: model is "${configResult.model}", expected "${targetModel}"`);
       }
 
       // Prompt injection
@@ -367,11 +382,11 @@ export class VideoExecutionService {
           assetId: detectedUuid || `video_${promptId}_${jobId}`,
           mediaPath: destinationPath,
           thumbnailPath: destinationPath,
-          modelUsed: 'Omni 1.1 Flash',
-          ratioUsed: '16:9',
-          resolution: '720p',
-          generationResolution: '720p',
-          downloadResolution: project?.settings?.videoDownloadQuality === '1080p' ? '1080p' : '720p',
+          modelUsed: targetModel,
+          ratioUsed: targetRatio,
+          resolution: targetRes,
+          generationResolution: targetRes,
+          downloadResolution: project?.settings?.videoDownloadQuality === '1080p' ? '1080p' : targetRes,
           durationSeconds,
           durationFormatted,
           jobStartTime,

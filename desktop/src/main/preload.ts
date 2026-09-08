@@ -33,6 +33,10 @@ const flowApi: FlowApi = {
   updateProject: (projectId: string, patch: Partial<Omit<ProjectEntity, 'projectId' | 'createdAt' | 'slots'>>) =>
     ipcRenderer.invoke('projects:update', projectId, patch),
   deleteProject: (projectId: string): Promise<void> => ipcRenderer.invoke('projects:delete', projectId),
+  retrySlot: (projectId: string, slotIndex: number): Promise<void> =>
+    ipcRenderer.invoke('projects:retrySlot', projectId, slotIndex),
+  revealAsset: (mediaPath: string): Promise<boolean> =>
+    ipcRenderer.invoke('system:revealAsset', mediaPath),
 
   // Generation
   startProjectGeneration: (projectId: string): Promise<GenerationJobEntity[]> =>

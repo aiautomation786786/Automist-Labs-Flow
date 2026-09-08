@@ -35,7 +35,12 @@ export interface CreateProjectParams {
   autoRetry?: boolean;
   maxRetries?: number;
   imageDownloadQuality?: 'original' | '2k';
-  videoDownloadQuality?: 'original' | '1080p' | '4k';
+  videoDownloadQuality?: 'original' | '1080p';
+  generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'custom';
+  videoModel?: string;
+  videoResolution?: string;
+  videoDuration?: string;
+  selectedProfileIds?: string[];
   prompts: Array<{ text: string; type: 'image' | 'video' }>;
 }
 
@@ -76,6 +81,11 @@ export class ProjectRepository {
       maxRetries: params.maxRetries ?? 2,
       imageDownloadQuality: params.imageDownloadQuality ?? 'original',
       videoDownloadQuality: params.videoDownloadQuality ?? 'original',
+      generationMode: params.generationMode ?? 'custom',
+      videoModel: params.videoModel,
+      videoResolution: params.videoResolution,
+      videoDuration: params.videoDuration,
+      selectedProfileIds: params.selectedProfileIds,
     };
 
     const project: ProjectEntity = {

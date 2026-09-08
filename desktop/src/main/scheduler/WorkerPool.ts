@@ -67,10 +67,15 @@ export class WorkerPool {
    * Returns the next available, idle, and connected worker.
    * Uses FIFO ordering based on registration.
    */
-  getAvailableWorker(): ProfileWorker | null {
+  getAvailableWorker(allowedProfileIds?: string[]): ProfileWorker | null {
     this.syncWithSessionManager();
 
+    const allowedSet = allowedProfileIds && allowedProfileIds.length > 0 ? new Set(allowedProfileIds) : null;
+
     for (const worker of this.workers.values()) {
+      if (allowedSet && !allowedSet.has(worker.profileId)) {
+        continue;
+      }
       if (worker.isAvailable) {
         return worker;
       }

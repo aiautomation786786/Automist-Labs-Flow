@@ -112,6 +112,9 @@ export class GenerationScheduler {
   /**
    * Cancels a specific job if queued or in-flight.
    */
+  /**
+   * Cancels a specific job if queued or in-flight.
+   */
   async cancelJob(projectId: string, jobId: string): Promise<void> {
     const job = await JobRepository.getJob(projectId, jobId);
     if (!job) return;
@@ -126,6 +129,62 @@ export class GenerationScheduler {
 
     generationEventBus.emitTyped('job:cancelled', cancelledJob);
     logger.info('scheduler', `Cancelled job ${jobId}`);
+  }
+
+  /**
+   * Safely retries a failed or cancelled prompt slot in a project without duplicating jobs.
+   */
+  async retrySlot(projectId: string, slotIndex: number): Promise<GenerationJobEntity> {
+    const project = await ProjectRepository.get(projectId);
+    if (!project) {
+      throw new Error(`Project "${projectId}" not found.`);
+    }
+
+    const slot = project.slots.find((s) => s.slotIndex === slotIndex);
+    if (!slot) {
+      throw new Error(`Slot ${slotIndex} not found in project "${projectId}".`);
+    }
+
+    if (slot.status === 'completed') {
+      throw new Error(`Cannot retry already completed slot ${slotIndex}.`);
+    }
+
+    if (slot.status === 'running') {
+      throw new Error(`Slot ${slotIndex} is already running.`);
+    }
+
+    // Create a new job for this slot
+    const job = await JobRepository.createJob({
+      projectId,
+      promptId: slot.promptId,
+      promptType: slot.type,
+      slotIndex: slot.slotIndex,
+      maxRetries: project.settings.maxRetries,
+    });
+
+    const queuedJob = await JobRepository.updateJob(projectId, job.jobId, { status: 'queued' });
+
+    await ProjectRepository.updateSlot(projectId, slot.slotIndex, {
+      status: 'queued',
+      activeJobId: job.jobId,
+      error: undefined,
+    });
+
+    await ProjectRepository.update(projectId, { status: 'running' });
+
+    generationEventBus.emitTyped('job:queued', queuedJob);
+    generationEventBus.emitTyped('slot:updated', {
+      projectId,
+      slotIndex: slot.slotIndex,
+      promptId: slot.promptId,
+      status: 'queued',
+      timestamp: new Date().toISOString(),
+    });
+
+    logger.info('scheduler', `Retrying slot ${slotIndex} in project ${projectId}`);
+    this.triggerDispatch();
+
+    return queuedJob;
   }
 
   /**
@@ -164,30 +223,23 @@ export class GenerationScheduler {
 
     try {
       while (!this.isStopped) {
-        // Step 1: Find next available worker
-        const worker = this.workerPool.getAvailableWorker();
-        if (!worker) {
-          // No free workers available; wait for next worker:available event
+        // Step 1: Find next eligible job and an available worker matching its profile restrictions
+        const match = await this.findNextEligibleJobAndWorker();
+        if (!match) {
+          // No available worker or no queued jobs ready for dispatch
           break;
         }
 
-        // Step 2: Find next eligible job across active projects
-        const jobMatch = await this.findNextEligibleJob();
-        if (!jobMatch) {
-          // No queued jobs ready for dispatch
-          break;
-        }
+        const { job, project, worker } = match;
 
-        const { job, project } = jobMatch;
-
-        // Step 3: Idempotency check: verify job is still queued and slot not completed
+        // Step 2: Idempotency check: verify job is still queued and slot not completed
         const slot = project.slots.find((s) => s.slotIndex === job.slotIndex);
         if (!slot || slot.status === 'completed' || job.status !== 'queued') {
           logger.warn('scheduler', `Skipping non-eligible job ${job.jobId} (Slot ${job.slotIndex})`);
           continue;
         }
 
-        // Step 4: Assign worker
+        // Step 3: Assign worker
         worker.assignJob(job);
 
         const assignedJob = await JobRepository.updateJob(job.projectId, job.jobId, {
@@ -205,7 +257,7 @@ export class GenerationScheduler {
         generationEventBus.emitTyped('job:assigned', assignedJob, worker.profileId);
         generationEventBus.emitTyped('worker:busy', worker.profileId, job.jobId);
 
-        // Step 5: Execute job asynchronously on the worker
+        // Step 4: Execute job asynchronously on the worker
         this.executeJobOnWorker(worker, assignedJob).catch((err) => {
           logger.error('scheduler', `Unhandled error executing job ${job.jobId}`, err as Error);
         });
@@ -288,9 +340,13 @@ export class GenerationScheduler {
   }
 
   /**
-   * Scans active projects and finds the next queued job matching the project's ProcessingOrder.
+   * Scans active projects and finds the next queued job and an available worker matching its profile restrictions.
    */
-  private async findNextEligibleJob(): Promise<{ job: GenerationJobEntity; project: ProjectEntity } | null> {
+  private async findNextEligibleJobAndWorker(): Promise<{
+    job: GenerationJobEntity;
+    project: ProjectEntity;
+    worker: ProfileWorker;
+  } | null> {
     const projects = await ProjectRepository.getAll();
 
     for (const project of projects) {
@@ -303,9 +359,15 @@ export class GenerationScheduler {
 
       if (queuedJobs.length === 0) continue;
 
+      const worker = this.workerPool.getAvailableWorker(project.settings.selectedProfileIds);
+      if (!worker) {
+        // No available worker for this project right now
+        continue;
+      }
+
       const selectedJob = this.sortJobsByProcessingOrder(queuedJobs, project.settings.processingOrder);
       if (selectedJob) {
-        return { job: selectedJob, project };
+        return { job: selectedJob, project, worker };
       }
     }
 

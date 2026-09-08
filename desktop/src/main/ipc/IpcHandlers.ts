@@ -137,6 +137,13 @@ export class IpcHandlers {
       return await JobRepository.getJobsByProject(projectId);
     });
 
+    ipcMain.handle('projects:retrySlot', async (_event, projectId: unknown, slotIndex: unknown) => {
+      if (typeof projectId !== 'string' || typeof slotIndex !== 'number') {
+        throw new Error('Invalid arguments for retrySlot');
+      }
+      return await scheduler.retrySlot(projectId, slotIndex);
+    });
+
     // -------------------------------------------------------------------------
     // Profiles API
     // -------------------------------------------------------------------------
@@ -266,6 +273,20 @@ export class IpcHandlers {
 
     ipcMain.handle('settings:update', async (_event, patch: unknown) => {
       return this.writeSettings(patch as Partial<AppSettings>);
+    });
+
+    ipcMain.handle('system:revealAsset', async (_event, mediaPath: unknown) => {
+      if (typeof mediaPath !== 'string') throw new Error('Invalid mediaPath');
+      try {
+        const electron = require('electron');
+        if (electron?.shell?.showItemInFolder) {
+          electron.shell.showItemInFolder(mediaPath);
+          return true;
+        }
+      } catch (err) {
+        logger.warn('ipc', 'Failed to reveal asset via shell', { error: (err as Error).message });
+      }
+      return false;
     });
 
     // -------------------------------------------------------------------------
