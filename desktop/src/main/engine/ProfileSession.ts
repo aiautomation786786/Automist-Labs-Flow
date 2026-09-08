@@ -603,6 +603,10 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
           email: this.detectedEmail,
           locale: result.locale,
         });
+        // Hide the Chrome window from the normal taskbar view since automation runs headlessly
+        this.hideWindowFromTaskbar(page).catch((e) => {
+          this.log.debug('auth_verify', `Window hide notice: ${(e as Error).message}`);
+        });
         break;
 
       case 'login_required':
@@ -771,6 +775,48 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       throw new Error(`Cannot update config: profileId mismatch.`);
     }
     this.config = config;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private: Window visibility management
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Hides the Chrome window from the user's taskbar/workspace after authentication succeeds.
+   *
+   * Strategy:
+   *  1. Use CDP Browser.setWindowBounds to move the window far off-screen (-30000, -30000).
+   *  2. This ensures the window is invisible in the normal desktop workspace.
+   *  3. The Chrome process and CDP connection remain alive for automation.
+   *  4. When sign-in is needed again (auth_required / CAPTCHA), launchLoginBrowser()
+   *     will reposition the window back on-screen via Browser.setWindowBounds.
+   *
+   * NOTE: --window-position=-2400,-2400 at launch time is also applied for background sessions,
+   * but this method provides an additional runtime hide for already-visible login windows.
+   */
+  private async hideWindowFromTaskbar(page: Page): Promise<void> {
+    if (!this.context || !page || page.isClosed()) return;
+
+    try {
+      const cdp = await this.context.newCDPSession(page);
+      const { windowId } = await cdp.send('Browser.getWindowForTarget');
+      // Move window far off-screen — keeps process alive, hides from taskbar on most systems
+      await cdp.send('Browser.setWindowBounds', {
+        windowId,
+        bounds: {
+          left: -30000,
+          top: -30000,
+          width: 1280,
+          height: 900,
+          windowState: 'normal',
+        },
+      });
+      this.log.info('session', 'Chrome window moved off-screen (hidden from taskbar)', { windowId });
+      await cdp.detach().catch(() => {});
+    } catch (err) {
+      // Non-fatal — some profiles use existing Chrome where we may not control window placement
+      this.log.debug('session', `hideWindowFromTaskbar: ${(err as Error).message}`);
+    }
   }
 
   // ---------------------------------------------------------------------------
