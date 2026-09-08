@@ -20,6 +20,7 @@ import { JobRepository } from '../storage/JobRepository';
 import { AssetManager } from '../storage/AssetManager';
 import { generationEventBus } from '../events/GenerationEventBus';
 import { FlowDriver } from '../engine/FlowDriver';
+import { FlowAutomationSession } from '../engine/FlowAutomationSession';
 import { MediaDetector } from '../engine/MediaDetector';
 import { AppLogger } from '../utils/AppLogger';
 import { ProgressEstimator } from './ProgressEstimator';
@@ -51,12 +52,23 @@ export class ImageExecutionService {
     const log = new AppLogger({ profileId: worker.profileId, mirrorToStderr: false });
     log.info('image_exec', `Starting image execution for Job ${jobId} (Slot ${slotIndex})`);
     let estimator: ProgressEstimator | null = null;
+    let jobPage: import('playwright').Page | null = null;
+    let automation = worker.automation;
 
     try {
       // Step 1: Transition job status to starting
       await this.updateJobStatus(projectId, jobId, 'starting', 'Preparing browser for generation');
 
-      const automation = worker.automation;
+      // Create a dedicated fresh Flow tab if running in live mode with a live session
+      if (triggerClick && typeof worker.session?.createJobPage === 'function') {
+        try {
+          jobPage = await worker.session.createJobPage();
+          automation = new FlowAutomationSession(worker.session, jobPage);
+          log.info('image_exec', 'Dedicated job page instantiated for job tab lifecycle');
+        } catch (tabErr) {
+          log.warn('image_exec', `Could not create dedicated tab, using default session page: ${(tabErr as Error).message}`);
+        }
+      }
 
       // Step 2: Ensure Flow is loaded and authenticated
       const auth = await automation.checkAuthentication();
@@ -74,21 +86,14 @@ export class ImageExecutionService {
       // Ensure project context (anti-stickiness)
       await automation.ensureProject(flowProjectId ? { projectId: flowProjectId } : {});
 
-      // Mandatory image model enforcement (Nano Banana Pro, 2, or 2 Lite)
+      // Mandatory image model & ratio enforcement (Nano Banana Pro, 2, or 2 Lite)
       const modelResult = typeof automation.selectImageModel === 'function'
-        ? await automation.selectImageModel(requestedModel)
-        : await automation.selectNanoBanana2();
+        ? await automation.selectImageModel(requestedModel, requestedRatio, 'x1')
+        : await automation.selectNanoBanana2(requestedRatio);
       if (!modelResult.verified) {
         throw new Error(
           `Mandatory model verification failed: could not verify "${requestedModel}". ` +
           `Detected: "${modelResult.modelDetectedAfter}". ${modelResult.error ?? ''}`
-        );
-      }
-
-      const ratioResult = await automation.selectRatio(requestedRatio);
-      if (!ratioResult.verified) {
-        throw new Error(
-          `Aspect ratio verification failed: could not verify "${requestedRatio}". ${ratioResult.error ?? ''}`
         );
       }
 
@@ -385,7 +390,16 @@ export class ImageExecutionService {
 
       throw err;
     } finally {
-      // Step 12: Always release worker lock
+      // Step 12: Safely close dedicated Flow tab after asset persistence or error
+      if (jobPage && typeof worker.session?.closeJobPage === 'function') {
+        try {
+          await worker.session.closeJobPage(jobPage);
+        } catch (closeErr) {
+          log.debug('image_exec', `Error closing job page: ${(closeErr as Error).message}`);
+        }
+      }
+
+      // Step 13: Always release worker lock
       worker.release();
       generationEventBus.emitTyped('worker:available', worker.profileId);
     }

@@ -678,6 +678,52 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     return this.page;
   }
 
+  /**
+   * Spawns a dedicated fresh Flow tab for an execution job.
+   * Keeps the persistent background browser alive.
+   */
+  async createJobPage(flowUrl?: string): Promise<Page> {
+    if (!this.context) {
+      await this.connectToRunningBrowser();
+    }
+    if (!this.context) {
+      throw new Error(`Profile ${this.profileId} has no active browser context.`);
+    }
+
+    const jobPage = await this.context.newPage();
+    const url = flowUrl || this.flowUrl || (this.config.flowUrlLocale ? `https://labs.google${this.config.flowUrlLocale}` : FLOW_BASE_URL);
+    this.log.info('tab_lifecycle', `Created dedicated job tab, navigating to Flow URL`, { url });
+
+    try {
+      await jobPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await jobPage.waitForTimeout(1000);
+    } catch (navErr) {
+      this.log.warn('tab_lifecycle', `Navigation warning on job tab: ${(navErr as Error).message}`);
+    }
+
+    return jobPage;
+  }
+
+  /**
+   * Closes a dedicated job tab after asset persistence is complete (or on failure).
+   * Ensures at least one tab remains alive so the persistent background Chrome process stays open.
+   */
+  async closeJobPage(jobPage: Page): Promise<void> {
+    try {
+      if (jobPage && !jobPage.isClosed()) {
+        const pages = this.context?.pages() || [];
+        if (pages.length > 1) {
+          this.log.info('tab_lifecycle', 'Closing dedicated job tab after persistence', { url: jobPage.url() });
+          await jobPage.close();
+        } else {
+          this.log.info('tab_lifecycle', 'Job tab is the only active page; keeping as standby tab');
+        }
+      }
+    } catch (err) {
+      this.log.debug('tab_lifecycle', `Error closing job page: ${(err as Error).message}`);
+    }
+  }
+
   /** Returns the active BrowserContext, or null if not connected. */
   getContext(): BrowserContext | null {
     return this.context;

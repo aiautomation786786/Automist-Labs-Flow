@@ -112,6 +112,10 @@ export class IpcHandlers {
 
     ipcMain.handle('projects:delete', async (_event, projectId: unknown) => {
       if (typeof projectId !== 'string') throw new Error('Invalid projectId');
+      // Safely cancel any active or queued jobs first
+      if (scheduler && typeof (scheduler as any).cancelProject === 'function') {
+        await (scheduler as any).cancelProject(projectId).catch(() => {});
+      }
       await ProjectRepository.delete(projectId);
       return { success: true };
     });

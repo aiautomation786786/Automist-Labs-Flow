@@ -20,6 +20,7 @@ import { ProjectRepository } from '../storage/ProjectRepository';
 import { JobRepository } from '../storage/JobRepository';
 import { AssetManager } from '../storage/AssetManager';
 import { FlowDriver } from '../engine/FlowDriver';
+import { FlowAutomationSession } from '../engine/FlowAutomationSession';
 import { ModelSelector } from '../engine/ModelSelector';
 import { MediaDetector } from '../engine/MediaDetector';
 import { SafeDownloader } from '../engine/SafeDownloader';
@@ -55,6 +56,7 @@ export class VideoExecutionService {
     const startMs = Date.now();
     let generationClickTime = jobStartTime;
     let estimator: ProgressEstimator | null = null;
+    let jobPage: import('playwright').Page | null = null;
 
     const project = await ProjectRepository.get(projectId);
     const targetModel = project?.settings?.videoModel || 'Omni 1.1 Flash';
@@ -143,7 +145,17 @@ export class VideoExecutionService {
       }
 
       // --- LIVE EXECUTION MODE ---
-      const automation = worker.automation;
+      jobPage = null;
+      let automation = worker.automation;
+      if (typeof worker.session?.createJobPage === 'function') {
+        try {
+          jobPage = await worker.session.createJobPage();
+          automation = new FlowAutomationSession(worker.session, jobPage);
+          log.info('video_exec', 'Dedicated job page instantiated for video job tab lifecycle');
+        } catch (tabErr) {
+          log.warn('video_exec', `Could not create dedicated tab, using default session page: ${(tabErr as Error).message}`);
+        }
+      }
       const page = automation.getPage();
 
       // Check authentication
@@ -476,6 +488,13 @@ export class VideoExecutionService {
 
       throw err;
     } finally {
+      if (jobPage && typeof worker.session?.closeJobPage === 'function') {
+        try {
+          await worker.session.closeJobPage(jobPage);
+        } catch (closeErr) {
+          log.debug('video_exec', `Error closing video job page: ${(closeErr as Error).message}`);
+        }
+      }
       worker.release();
       generationEventBus.emitTyped('worker:available', worker.profileId);
     }

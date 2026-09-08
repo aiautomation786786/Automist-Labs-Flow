@@ -40,17 +40,20 @@ import { SafeDownloader } from './SafeDownloader';
 export class FlowAutomationSession {
   readonly profileId: string;
   private readonly profileSession: ProfileSession;
+  private readonly scopedPage?: Page;
   private readonly log: AppLogger;
   private _status: FlowAutomationStatus = 'idle';
   private currentProject: FlowProjectInfo | null = null;
 
-  constructor(profileSession: ProfileSession) {
+  constructor(profileSession: ProfileSession, scopedPage?: Page) {
     this.profileSession = profileSession;
+    this.scopedPage = scopedPage;
     this.profileId = profileSession.profileId;
     this.log = new AppLogger({ profileId: this.profileId, mirrorToStderr: false });
 
     this.log.info('flow_automation', 'FlowAutomationSession created for profile', {
       profileId: this.profileId,
+      hasScopedPage: !!scopedPage,
     });
   }
 
@@ -59,10 +62,13 @@ export class FlowAutomationSession {
   // ---------------------------------------------------------------------------
 
   /**
-   * Retrieves the active Playwright Page from the underlying ProfileSession.
+   * Retrieves the active Playwright Page from the scoped tab or underlying ProfileSession.
    * Throws if the session has not been started or page is unavailable.
    */
   getPage(): Page {
+    if (this.scopedPage && !this.scopedPage.isClosed()) {
+      return this.scopedPage;
+    }
     const page = this.profileSession.getPage();
     if (!page) {
       throw new Error(
@@ -201,12 +207,12 @@ export class FlowAutomationSession {
    * Inspects the current model and actively switches the Flow dropdown
    * to the requested image model (Nano Banana Pro, 2, or 2 Lite), verifying the change in the UI.
    */
-  async selectImageModel(modelName = NANO_BANANA_2, quantity = 'x1'): Promise<ModelSelectionResult> {
+  async selectImageModel(modelName = NANO_BANANA_2, ratio?: SupportedAspectRatio, quantity = 'x1'): Promise<ModelSelectionResult> {
     this.setStatus('selecting_model');
     const page = this.getPage();
 
     try {
-      const result = await ModelSelector.ensureImageModel(page, { modelName, quantity });
+      const result = await ModelSelector.ensureImageModel(page, { modelName, ratio, quantity });
       this.setStatus('idle');
       return result;
     } catch (err) {
@@ -226,8 +232,8 @@ export class FlowAutomationSession {
    * Inspects the current model and actively switches the Flow dropdown
    * to Nano Banana 2, verifying the change in the UI.
    */
-  async selectNanoBanana2(): Promise<ModelSelectionResult> {
-    return this.selectImageModel(NANO_BANANA_2, 'x1');
+  async selectNanoBanana2(ratio?: SupportedAspectRatio): Promise<ModelSelectionResult> {
+    return this.selectImageModel(NANO_BANANA_2, ratio, 'x1');
   }
 
   /**

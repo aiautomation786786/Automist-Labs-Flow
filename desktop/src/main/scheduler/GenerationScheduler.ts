@@ -130,6 +130,23 @@ export class GenerationScheduler {
   }
 
   /**
+   * Safely cancels all queued or in-flight jobs for a project before deletion.
+   */
+  async cancelProject(projectId: string): Promise<void> {
+    try {
+      const jobs = await JobRepository.getJobsByProject(projectId).catch(() => []);
+      for (const job of jobs) {
+        if (job.status !== 'completed' && job.status !== 'cancelled' && job.status !== 'failed') {
+          await this.cancelJob(projectId, job.jobId).catch(() => {});
+        }
+      }
+      logger.info('scheduler', `Cancelled all pending/active jobs for project ${projectId}`);
+    } catch (err) {
+      logger.warn('scheduler', `Error cancelling project ${projectId}: ${(err as Error).message}`);
+    }
+  }
+
+  /**
    * Safely retries a failed or cancelled prompt slot in a project without duplicating jobs.
    */
   async retrySlot(projectId: string, slotIndex: number): Promise<GenerationJobEntity> {

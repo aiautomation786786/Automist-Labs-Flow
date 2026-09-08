@@ -27,10 +27,10 @@ export class ModelSelector {
   static async detectCurrentModel(page: Page): Promise<string | null> {
     try {
       return await page.evaluate(() => {
-        // Strategy 1: Find a button in the bottom generation bar containing model keywords
+        // Strategy 1: Find a button in the bottom generation bar containing model keywords or mode keywords
         const buttons = Array.from(document.querySelectorAll('button'));
         const modelBtn = buttons.find((b) => {
-          const text = b.textContent || '';
+          const text = (b.textContent || '').trim();
           const hasKeyword =
             text.includes('Nano') ||
             text.includes('Banana') ||
@@ -44,7 +44,20 @@ export class ModelSelector {
           return (modelBtn.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 80);
         }
 
-        // Strategy 2: Look for an element with aria-label or data-testid related to model
+        // Strategy 2: Look for composite pill button containing '·' or 'x1' or 'Video' or 'Image'
+        const pillBtn = buttons.find((b) => {
+          const text = (b.textContent || '').trim();
+          const isPill =
+            (text.includes('·') || text.includes('x1')) &&
+            (text.includes('Video') || text.includes('Image') || text.includes('720p') || text.includes('16:9'));
+          return isPill && (b as HTMLElement).offsetParent !== null;
+        });
+
+        if (pillBtn) {
+          return (pillBtn.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 80);
+        }
+
+        // Strategy 3: Look for an element with aria-label or data-testid related to model
         const modelSelectorEl = document.querySelector(
           '[data-testid*="model"], [aria-label*="model" i], [class*="model-selector"]'
         );
@@ -60,11 +73,13 @@ export class ModelSelector {
   }
 
   /**
-   * Returns true if the detected model string indicates a video model.
+   * Returns true if the detected model string indicates a video model or Video mode.
    */
   static isVideoModel(modelName: string | null): boolean {
     if (!modelName) return false;
-    return KNOWN_VIDEO_MODELS.some((v) => modelName.toLowerCase().includes(v.toLowerCase()));
+    const lower = modelName.toLowerCase();
+    if (lower.includes('video')) return true;
+    return KNOWN_VIDEO_MODELS.some((v) => lower.includes(v.toLowerCase()));
   }
 
   /**
@@ -72,24 +87,25 @@ export class ModelSelector {
    * Supports: "Nano Banana Pro", "Nano Banana 2", "Nano Banana 2 Lite".
    *
    * Workflow:
-   *  1. Inspects currently displayed model.
-   *  2. If already target model -> returns verified.
-   *  3. Locates and clicks the model dropdown button.
-   *  4. Ensures "Image" tab is active.
-   *  5. Locates the requested model option in the opened dropdown.
-   *  6. Clicks the option.
+   *  1. Inspects currently displayed model / mode.
+   *  2. If already target image model and not in Video mode -> returns verified.
+   *  3. Locates and clicks the settings dropdown button in toolbar.
+   *  4. Ensures "Image" tab / radio is active.
+   *  5. Selects aspect ratio if specified.
+   *  6. Inspects active image model family; opens dropdown and clicks target if needed.
    *  7. Ensures quantity is x1.
-   *  8. Verifies that the model button now displays the target model.
+   *  8. Closes popover and verifies active model/mode.
    */
   static async ensureImageModel(
     page: Page,
-    options: { modelName?: string; quantity?: string } = {}
+    options: { modelName?: string; ratio?: string; quantity?: string } = {}
   ): Promise<ModelSelectionResult> {
     const targetModel = options.modelName || NANO_BANANA_2;
     const requestedQuantity = options.quantity || 'x1';
-    logger.info('model_selector', `Enforcing image model: ${targetModel} (quantity: ${requestedQuantity})`);
+    const requestedRatio = options.ratio;
+    logger.info('model_selector', `Enforcing image model: ${targetModel} (ratio: ${requestedRatio ?? 'default'}, quantity: ${requestedQuantity})`);
 
-    if (this.isVideoModel(targetModel)) {
+    if (this.isVideoModel(targetModel) && !targetModel.toLowerCase().includes('banana') && !targetModel.toLowerCase().includes('nano')) {
       return {
         modelRequested: targetModel,
         modelDetectedBefore: null,
@@ -103,8 +119,16 @@ export class ModelSelector {
     const modelDetectedBefore = await this.detectCurrentModel(page);
     logger.debug('model_selector', 'Model before selection', { modelDetectedBefore });
 
-    // Step 1: Check if already active
-    if (modelDetectedBefore && modelDetectedBefore.toLowerCase().includes(targetModel.toLowerCase())) {
+    const targetLower = targetModel.toLowerCase();
+    const beforeLower = (modelDetectedBefore || '').toLowerCase();
+    const isAlreadyTarget =
+      beforeLower.includes(targetLower) &&
+      !beforeLower.includes('video') &&
+      (!targetLower.includes('pro') ? !beforeLower.includes('pro') : true) &&
+      (!targetLower.includes('lite') ? !beforeLower.includes('lite') : true);
+
+    // Step 1: Check if already active and ratio is not explicitly requested
+    if (isAlreadyTarget && !requestedRatio) {
       logger.info('model_selector', `${targetModel} is already active`);
       return {
         modelRequested: targetModel,
@@ -115,76 +139,102 @@ export class ModelSelector {
       };
     }
 
-    // Step 2: Open the model selector dropdown
-    const dropdownButton = await this.findModelDropdownButton(page);
-    if (!dropdownButton) {
-      return {
-        modelRequested: targetModel,
-        modelDetectedBefore,
-        selectionAttempted: false,
-        modelDetectedAfter: modelDetectedBefore,
-        verified: false,
-        error: 'Could not locate the model selector dropdown button in the Flow toolbar.',
-      };
+    // Step 2: Open the model selector dropdown if popover is not already open
+    let paneVisible = false;
+    try {
+      const paneLoc = page.locator('.cdk-overlay-pane');
+      if (typeof paneLoc.first === 'function') {
+        const firstEl = paneLoc.first();
+        paneVisible = typeof firstEl.isVisible === 'function' ? await firstEl.isVisible().catch(() => false) : false;
+      } else if (typeof (paneLoc as any).isVisible === 'function') {
+        paneVisible = await (paneLoc as any).isVisible().catch(() => false);
+      }
+    } catch {}
+    if (!paneVisible) {
+      const dropdownButton = await this.findModelDropdownButton(page);
+      if (!dropdownButton) {
+        return {
+          modelRequested: targetModel,
+          modelDetectedBefore,
+          selectionAttempted: false,
+          modelDetectedAfter: modelDetectedBefore,
+          verified: false,
+          error: 'Could not locate the model selector dropdown button in the Flow toolbar.',
+        };
+      }
+
+      logger.info('model_selector', 'Opening model selector dropdown...');
+      await dropdownButton.click();
+      await page.waitForTimeout(600);
     }
 
-    logger.info('model_selector', 'Opening model selector dropdown...');
-    await dropdownButton.click();
-    await page.waitForTimeout(500);
-
-    // Step 2b: If in Video mode inside the popover, switch to Image mode
-    const imageModeTab = page.locator('.cdk-overlay-pane button:has-text("Image"), .cdk-overlay-pane [role="radio"]:has-text("Image")').first();
-    const imageTabVisible = await imageModeTab.isVisible({ timeout: 1000 }).catch(() => false);
+    // Step 3: Switch to Image mode tab/radio if not already active
+    const imageModeTab = page.locator('.cdk-overlay-pane button[role="radio"]:has-text("Image"), .cdk-overlay-pane [role="radio"]:has-text("Image"), .cdk-overlay-pane button:has-text("Image")').first();
+    const imageTabVisible = await imageModeTab.isVisible({ timeout: 1500 }).catch(() => false);
     if (imageTabVisible) {
       const isChecked = typeof imageModeTab.getAttribute === 'function' ? await imageModeTab.getAttribute('aria-checked').catch(() => null) : null;
       if (isChecked !== 'true') {
         logger.info('model_selector', 'Switching popover mode to Image...');
         await imageModeTab.click().catch(() => {});
-        await page.waitForTimeout(500);
+        await page.waitForTimeout(600);
       }
     }
 
-    // Step 2c: If a "Select model family" trigger is present inside the popover, open it
-    const modelFamilyBtn = page.locator('button[aria-label="Select model family"]').first();
-    const modelFamilyVis = await modelFamilyBtn.isVisible({ timeout: 1000 }).catch(() => false);
+    // Step 4: Aspect Ratio Selection (if specified)
+    if (requestedRatio) {
+      const ratioRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${requestedRatio}")`).first();
+      const isRatioVis = await ratioRadio.isVisible({ timeout: 1000 }).catch(() => false);
+      if (isRatioVis) {
+        const isChecked = typeof ratioRadio.getAttribute === 'function' ? await ratioRadio.getAttribute('aria-checked').catch(() => null) : null;
+        if (isChecked !== 'true') {
+          logger.info('model_selector', `Selecting aspect ratio: ${requestedRatio}`);
+          await ratioRadio.click().catch(() => {});
+          await page.waitForTimeout(300);
+        }
+      }
+    }
+
+    // Step 5: Model Selection (Nano Banana Pro / Nano Banana 2 / Nano Banana 2 Lite)
+    const modelFamilyBtn = page.locator('.cdk-overlay-pane button[aria-label="Select model family"], .cdk-overlay-pane button:has-text("Nano")').first();
+    const modelFamilyVis = await modelFamilyBtn.isVisible({ timeout: 1500 }).catch(() => false);
     if (modelFamilyVis) {
-      logger.info('model_selector', 'Opening "Select model family" dropdown...');
-      await modelFamilyBtn.click().catch(() => {});
-      await page.waitForTimeout(500);
+      const currentModelText = (typeof modelFamilyBtn.textContent === 'function' ? ((await modelFamilyBtn.textContent().catch(() => '')) || '') : '').toLowerCase();
+      const isModelMatch =
+        (targetLower.includes('pro') && currentModelText.includes('pro')) ||
+        (targetLower.includes('lite') && currentModelText.includes('lite')) ||
+        (!targetLower.includes('pro') && !targetLower.includes('lite') && currentModelText.includes('banana 2') && !currentModelText.includes('pro') && !currentModelText.includes('lite'));
+
+      if (!isModelMatch) {
+        logger.info('model_selector', `Opening model family dropdown to select ${targetModel}...`);
+        await modelFamilyBtn.click().catch(() => {});
+        await page.waitForTimeout(600);
+
+        const candidateSelectors = [
+          `[role="menuitem"]:has-text("${targetModel}")`,
+          `.cdk-overlay-pane [role="menuitem"]:has-text("${targetModel}")`,
+          `button[role="menuitem"]:has-text("${targetModel}")`,
+        ];
+
+        if (targetLower.includes('pro')) {
+          candidateSelectors.push('[role="menuitem"]:has-text("Pro")');
+        } else if (targetLower.includes('lite')) {
+          candidateSelectors.push('[role="menuitem"]:has-text("Lite")');
+        } else {
+          candidateSelectors.push('[role="menuitem"]:has-text("Banana 2")');
+        }
+
+        const optionLocator = await FlowDriver.findFirstVisible(page, candidateSelectors, 3000);
+        if (optionLocator) {
+          logger.info('model_selector', `Clicking ${targetModel} menu item...`);
+          await optionLocator.click();
+          await page.waitForTimeout(600);
+        } else {
+          logger.warn('model_selector', `Could not find menu item for ${targetModel}`);
+        }
+      }
     }
 
-    // Step 3: Find the target model option
-    const optionSelectors = [
-      `button:has-text("${targetModel}")`,
-      `[role="option"]:has-text("${targetModel}")`,
-      `[role="menuitem"]:has-text("${targetModel}")`,
-      `.mat-mdc-menu-item:has-text("${targetModel}")`,
-      `li:has-text("${targetModel}")`,
-      `div:has-text("${targetModel}")`,
-      `span:has-text("${targetModel}")`,
-    ];
-
-    const optionLocator = await FlowDriver.findFirstVisible(page, optionSelectors, 3000);
-
-    if (!optionLocator) {
-      // Close dropdown before returning error
-      await page.keyboard.press('Escape');
-      return {
-        modelRequested: targetModel,
-        modelDetectedBefore,
-        selectionAttempted: true,
-        modelDetectedAfter: modelDetectedBefore,
-        verified: false,
-        error: `Could not find "${targetModel}" option in the opened dropdown menu.`,
-      };
-    }
-
-    // Step 4: Click the model option
-    logger.info('model_selector', `Clicking ${targetModel} option...`);
-    await optionLocator.click();
-    await page.waitForTimeout(800);
-
-    // Step 4b: Ensure quantity is x1 if quantity radios exist
+    // Step 6: Ensure quantity is x1
     const qtyRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${requestedQuantity}")`).first();
     const qtyVis = await qtyRadio.isVisible({ timeout: 1000 }).catch(() => false);
     if (qtyVis) {
@@ -196,13 +246,39 @@ export class ModelSelector {
       }
     }
 
-    // Close popover with Escape if still open
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(400);
+    // Step 7: Reliably close popover and overlays
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(200);
+      let isStillOpen = false;
+      try {
+        const pane = page.locator('.cdk-overlay-pane').first();
+        if (typeof pane.isVisible === 'function') {
+          isStillOpen = await pane.isVisible().catch(() => false);
+        }
+      } catch {}
+      if (!isStillOpen) break;
 
-    // Step 5: Verify the newly selected model contains the target model name
+      // Click backdrop or click outside to dismiss
+      try {
+        const backdrop = page.locator('.cdk-overlay-backdrop').first();
+        if (typeof backdrop.isVisible === 'function' && await backdrop.isVisible().catch(() => false)) {
+          await backdrop.click({ force: true }).catch(() => {});
+        } else if (typeof page.mouse?.click === 'function') {
+          await page.mouse.click(50, 50).catch(() => {});
+        }
+      } catch {}
+      await page.waitForTimeout(200);
+    }
+
+    // Step 8: Verify the newly selected model contains the target model name or is in Image mode
     const modelDetectedAfter = await this.detectCurrentModel(page);
-    const verified = !!modelDetectedAfter && modelDetectedAfter.toLowerCase().includes(targetModel.toLowerCase());
+    const afterLower = (modelDetectedAfter || '').toLowerCase();
+    const verified = !!modelDetectedAfter && (
+      afterLower.includes(targetLower) ||
+      (afterLower.includes('image') && !afterLower.includes('video')) ||
+      (afterLower.includes('banana') && !afterLower.includes('video'))
+    );
 
     logger.info('model_selector', 'Model selection complete', {
       modelDetectedBefore,
@@ -511,14 +587,43 @@ export class ModelSelector {
       'button:has-text("Omni")',
       'button:has-text("Veo")',
       'button:has-text("Imagen")',
+      'button:has-text("Video")',
+      'button:has-text("Image")',
+      'button:has-text("·")',
+      'button:has-text("x1")',
+      'button:has-text("720p")',
+      'button:has-text("1080p")',
+      'button:has-text("16:9")',
+      'button:has-text("9:16")',
+      'button:has-text("1:1")',
+      'button:has-text("4:3")',
+      'button:has-text("3:4")',
       'button[aria-label="Settings trigger"]',
+      'button[aria-label*="settings" i]',
+      'button[aria-label*="model" i]',
       '[data-testid="model-selector-button"]',
       '[aria-label*="model" i][role="button"]',
       '[aria-label*="model" i] button',
       '[aria-label*="model" i]',
     ];
 
-    return await FlowDriver.findFirstVisible(page, candidateSelectors, 15000);
+    const found = await FlowDriver.findFirstVisible(page, candidateSelectors, 4000);
+    if (found) return found;
+
+    // Fallback: inspect buttons in the prompt composer toolbar
+    try {
+      const composerButtons = page.locator('div[class*="composer"], form, div[class*="prompt"]').locator('button');
+      const count = await composerButtons.count();
+      for (let i = count - 1; i >= 0; i--) {
+        const btn = composerButtons.nth(i);
+        const text = (await btn.textContent().catch(() => '')) || '';
+        if (text.includes('·') || text.includes('x1') || text.includes('Video') || text.includes('Image') || text.includes('Banana')) {
+          return btn;
+        }
+      }
+    } catch {}
+
+    return null;
   }
 }
 

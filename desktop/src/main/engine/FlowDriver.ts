@@ -79,7 +79,24 @@ export class FlowDriver {
       : selectorOrLocator;
 
     await locator.waitFor({ state: 'visible', timeout });
-    await locator.click();
+
+    // Dismiss any lingering overlay popovers before clicking input
+    try {
+      const pane = page.locator('.cdk-overlay-pane').first();
+      if (typeof pane.isVisible === 'function' && await pane.isVisible().catch(() => false)) {
+        await page.keyboard.press('Escape').catch(() => {});
+        await delay(150);
+      }
+    } catch {}
+
+    try {
+      await locator.click({ timeout: 4000 });
+    } catch {
+      if (typeof locator.focus === 'function') {
+        await locator.focus().catch(() => {});
+      }
+      await locator.click({ force: true }).catch(() => {});
+    }
 
     // Check if the element is contenteditable
     const isContentEditable = await locator.evaluate(

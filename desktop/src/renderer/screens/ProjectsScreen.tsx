@@ -235,7 +235,11 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
       <ConfirmModal
         isOpen={projectToDelete !== null}
         title="Delete Project"
-        message={`Are you sure you want to delete "${projectToDelete?.name}"? All associated output files and slots will be permanently removed.`}
+        message={
+          projectToDelete?.status === 'running'
+            ? `WARNING: "${projectToDelete?.name}" is currently generating! Deleting will cancel all in-flight generation jobs, close active automation tabs, and permanently delete all output media files from disk. Are you sure?`
+            : `Are you sure you want to delete "${projectToDelete?.name}"? All associated generated media, thumbnails, and slot records will be permanently deleted from disk.`
+        }
         confirmLabel="Delete Project"
         isDanger={true}
         onConfirm={handleDeleteConfirm}
