@@ -697,7 +697,18 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                 )}
               </div>
 
-              {!isBulkMode ? (
+              {profiles.length === 0 ? (
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  No Flow profiles configured.{' '}
+                  <button
+                    type="button"
+                    onClick={onNavigateProfiles}
+                    style={{ color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                  >
+                    Manage Profiles
+                  </button>
+                </div>
+              ) : !isBulkMode ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <select
                     aria-label="Execution Account"
