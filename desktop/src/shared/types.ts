@@ -489,8 +489,14 @@ export interface SlotMediaResult {
   durationSeconds?: number;
   durationFormatted?: string;  // e.g. "4.0s"
   resolution?: string;         // e.g. "720p"
+  generationResolution?: string; // e.g. "360p", "720p"
+  downloadResolution?: string;   // e.g. "1080p", "2K"
+  durationControl?: 'available' | 'unavailable';
+  actualDuration?: string;     // e.g. "6.02s"
+  upscaledAssetPath?: string;  // e.g. path to 1080p / 2K export
   modelUsed: string;           // e.g. "Nano Banana 2"
   ratioUsed: string;           // e.g. "16:9"
+  quantityUsed?: string;        // e.g. "x1"
   completedAt: string;         // ISO 8601
   fileSizeBytes: number;
   mimeType?: string;           // e.g. "image/png", "image/webp", "image/jpeg", "video/mp4"

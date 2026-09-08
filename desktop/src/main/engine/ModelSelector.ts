@@ -210,7 +210,7 @@ export class ModelSelector {
    *  - Selects aspect ratio (e.g. "16:9")
    *  - Enforces quantity (e.g. "x1")
    */
-  static async ensureVideoModel(
+   public static async ensureVideoModel(
     page: Page,
     options: {
       modelName?: string;
@@ -225,6 +225,7 @@ export class ModelSelector {
     model: string;
     resolution: string;
     duration: string;
+    durationControl: 'available' | 'unavailable';
     ratio: string;
     quantity: string;
     error?: string;
@@ -254,6 +255,7 @@ export class ModelSelector {
           model: 'unknown',
           resolution: 'unknown',
           duration: 'unknown',
+          durationControl: 'unavailable',
           ratio: 'unknown',
           quantity: 'unknown',
           error: 'Could not locate settings trigger button on Flow toolbar.',
@@ -287,17 +289,23 @@ export class ModelSelector {
       }
     }
 
-    // Step 4: Model Selection (Omni 1.1 Flash)
+    // Step 4: Model Selection (Omni 1.1 Flash / Veo 3.1 - Lite / Veo 3.1 - Fast)
     const modelFamilyBtn = page.locator('.cdk-overlay-pane button[aria-label="Select model family"]').first();
     const isModelFamilyVis = await modelFamilyBtn.isVisible({ timeout: 1000 }).catch(() => false);
     if (isModelFamilyVis) {
-      const currentModelText = (await modelFamilyBtn.textContent().catch(() => '')) || '';
-      if (!currentModelText.includes('Omni')) {
+      const currentModelText = ((await modelFamilyBtn.textContent().catch(() => '')) || '').toLowerCase();
+      const targetLower = targetModel.toLowerCase();
+      const isAlreadySelected =
+        (targetLower.includes('lite') && currentModelText.includes('lite')) ||
+        (targetLower.includes('fast') && currentModelText.includes('fast')) ||
+        (targetLower.includes('omni') && currentModelText.includes('omni'));
+
+      if (!isAlreadySelected) {
         logger.info('model_selector', `Opening model family dropdown to select ${targetModel}...`);
         await modelFamilyBtn.click().catch(() => {});
         await page.waitForTimeout(600);
 
-        const modelOption = page.locator(`.cdk-overlay-pane [role="menuitem"]:has-text("Omni 1.1 Flash"), .cdk-overlay-pane button:has-text("Omni 1.1 Flash")`).first();
+        const modelOption = page.locator(`.cdk-overlay-pane [role="menuitem"]:has-text("${targetModel}"), .cdk-overlay-pane button:has-text("${targetModel}")`).first();
         if (await modelOption.isVisible({ timeout: 1500 }).catch(() => false)) {
           await modelOption.click().catch(() => {});
           await page.waitForTimeout(600);
@@ -307,9 +315,9 @@ export class ModelSelector {
       }
     }
 
-    // Step 5: Resolution
+    // Step 5: Resolution (if visible in live UI)
     const resRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${targetRes}")`).first();
-    if (await resRadio.isVisible({ timeout: 1000 }).catch(() => false)) {
+    if (await resRadio.isVisible({ timeout: 500 }).catch(() => false)) {
       const isChecked = await resRadio.getAttribute('aria-checked').catch(() => null);
       if (isChecked !== 'true') {
         logger.info('model_selector', `Selecting resolution: ${targetRes}`);
@@ -318,9 +326,9 @@ export class ModelSelector {
       }
     }
 
-    // Step 6: Duration
+    // Step 6: Duration (if visible in live UI)
     const durRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${targetDur}")`).first();
-    if (await durRadio.isVisible({ timeout: 1000 }).catch(() => false)) {
+    if (await durRadio.isVisible({ timeout: 500 }).catch(() => false)) {
       const isChecked = await durRadio.getAttribute('aria-checked').catch(() => null);
       if (isChecked !== 'true') {
         logger.info('model_selector', `Selecting duration: ${targetDur}`);
@@ -358,15 +366,21 @@ export class ModelSelector {
       const modelBtn = pane.querySelector('button[aria-label="Select model family"]');
       const modelText = modelBtn ? (modelBtn.textContent || '').trim() : '';
 
-      const resText = getActiveRadioMatch(/(360p|720p|1080p)/);
-      const durText = getActiveRadioMatch(/\b(\d+s)\b/);
+      const hasResRadios = radios.some(r => /(360p|720p|1080p)/.test(r.textContent || ''));
+      const resText = hasResRadios ? getActiveRadioMatch(/(360p|720p|1080p)/) : 'Default';
+
+      const hasDurRadios = radios.some(r => /\b(\d+s)\b/.test(r.textContent || ''));
+      const durText = hasDurRadios ? getActiveRadioMatch(/\b(\d+s)\b/) : 'Default';
+
       const ratioText = getActiveRadioMatch(/(16:9|9:16|4:3|3:4|1:1)/);
       const qtyText = getActiveRadioMatch(/\b(x\d+)\b/);
 
       return {
         isVideo: videoActive,
         modelText,
+        hasResRadios,
         resText,
+        hasDurRadios,
         durText,
         ratioText,
         qtyText,
@@ -379,13 +393,20 @@ export class ModelSelector {
 
     // Step 9: Positively verify each setting
     const modeVerified = paneState?.isVideo ?? false;
-    const modelVerified = (paneState?.modelText || '').toLowerCase().includes('omni');
-    const resVerified = (paneState?.resText || '').includes(targetRes);
-    const durVerified = (paneState?.durText || '').includes(targetDur);
+    const targetLower = targetModel.toLowerCase();
+    const modelTextLower = (paneState?.modelText || '').toLowerCase();
+    const modelVerified =
+      (targetLower.includes('lite') && modelTextLower.includes('lite')) ||
+      (targetLower.includes('fast') && modelTextLower.includes('fast')) ||
+      (targetLower.includes('omni') && modelTextLower.includes('omni'));
+
+    const resVerified = paneState?.hasResRadios ? (paneState?.resText || '').includes(targetRes) : true;
+    const durVerified = paneState?.hasDurRadios ? (paneState?.durText || '').includes(targetDur) : true;
     const ratioVerified = (paneState?.ratioText || '').includes(targetRatio);
     const qtyVerified = (paneState?.qtyText || '').includes(targetQty);
 
     const allVerified = modeVerified && modelVerified && resVerified && durVerified && ratioVerified && qtyVerified;
+    const durationControl: 'available' | 'unavailable' = paneState?.hasDurRadios ? 'available' : 'unavailable';
 
     logger.info('model_selector', 'Video settings verification complete', {
       allVerified,
@@ -395,6 +416,7 @@ export class ModelSelector {
       durVerified,
       ratioVerified,
       qtyVerified,
+      durationControl,
       paneState,
     });
 
@@ -402,8 +424,9 @@ export class ModelSelector {
       verified: allVerified,
       mode: modeVerified ? 'Video' : 'Unknown',
       model: paneState?.modelText || 'Unknown',
-      resolution: paneState?.resText || 'Unknown',
-      duration: paneState?.durText || 'Unknown',
+      resolution: paneState?.resText || 'Default',
+      duration: paneState?.durText || 'Default',
+      durationControl,
       ratio: paneState?.ratioText || 'Unknown',
       quantity: paneState?.qtyText || 'Unknown',
       ...(allVerified ? {} : {

@@ -407,7 +407,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       this.setStatus('connecting');
       this.log.info('reconnect', 'Connecting Playwright to running browser over CDP', { endpoint: cdpEndpoint });
       try {
-        this.browser = await chromium.connectOverCDP(cdpEndpoint, { timeout: 15000 });
+        this.browser = await chromium.connectOverCDP(cdpEndpoint, { timeout: 30000 });
       } catch (err) {
         throw new Error(
           `Failed to connect Playwright to running Chrome on port ${cdpPort}: ${(err as Error).message}`
@@ -422,19 +422,36 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     const allPages = this.context.pages();
     this.log.info('reconnect', `Inspect existing tabs: found ${allPages.length} tabs`);
 
-    // First priority: find a page already on Google Flow (labs.google or flow.google.com)
+    // Priority 1: find a page already on a Flow project (/project/)
     let flowPage: Page | null = null;
     for (const p of allPages) {
       try {
         const url = p.url();
-        if (url.includes('labs.google') || url.includes('flow.google.com')) {
+        if (url.includes('flow.google.com/project/') || url.includes('labs.google/fx/project/')) {
           flowPage = p;
-          this.log.info('reconnect', `Found and reusing existing Flow tab: ${url}`);
+          this.log.info('reconnect', `Found and reusing existing Flow project tab: ${url}`);
           await flowPage.bringToFront().catch(() => {});
           break;
         }
       } catch {
         /* page may be closing */
+      }
+    }
+
+    // Priority 2: find any page on Google Flow (labs.google or flow.google.com)
+    if (!flowPage) {
+      for (const p of allPages) {
+        try {
+          const url = p.url();
+          if (url.includes('labs.google') || url.includes('flow.google.com')) {
+            flowPage = p;
+            this.log.info('reconnect', `Found and reusing existing Flow tab: ${url}`);
+            await flowPage.bringToFront().catch(() => {});
+            break;
+          }
+        } catch {
+          /* page may be closing */
+        }
       }
     }
 
