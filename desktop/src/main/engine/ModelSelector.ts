@@ -20,6 +20,35 @@ export const NANO_BANANA_2 = 'Nano Banana 2';
 /** Known video models that must NOT be selected during image workflows */
 const KNOWN_VIDEO_MODELS = ['Omni Flash', 'Veo 3.1', 'Veo', 'Omni'];
 
+/**
+ * Normalizes a model name for exact comparison:
+ *  - Trim whitespace
+ *  - Lowercase
+ *  - Collapse runs of whitespace to single space
+ *  - Strip emoji / icon characters (e.g. 🍌)
+ *  - Strip trailing "arrow_drop_down" (appears in button text content)
+ */
+function normalizeModel(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    // Remove emoji / non-ASCII symbols
+    .replace(/[^\u0000-\u007F]/g, '')
+    // Remove Angular Material icon ligature text (e.g. arrow_drop_down)
+    .replace(/\barrow_drop_down\b/g, '')
+    // Collapse whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Returns true iff the normalized detected model is an exact match for the
+ * normalized target model. "Nano Banana 2" must NOT match "Nano Banana 2 Lite".
+ */
+function isExactModelMatch(detected: string, target: string): boolean {
+  return normalizeModel(detected) === normalizeModel(target);
+}
+
 export class ModelSelector {
   /**
    * Reads the currently selected model string from the Flow bottom toolbar.
@@ -119,17 +148,15 @@ export class ModelSelector {
     const modelDetectedBefore = await this.detectCurrentModel(page);
     logger.debug('model_selector', 'Model before selection', { modelDetectedBefore });
 
-    const targetLower = targetModel.toLowerCase();
-    const beforeLower = (modelDetectedBefore || '').toLowerCase();
+    // STRICT exact-match: "Nano Banana 2" must NOT match "Nano Banana 2 Lite"
     const isAlreadyTarget =
-      beforeLower.includes(targetLower) &&
-      !beforeLower.includes('video') &&
-      (!targetLower.includes('pro') ? !beforeLower.includes('pro') : true) &&
-      (!targetLower.includes('lite') ? !beforeLower.includes('lite') : true);
+      !!modelDetectedBefore &&
+      !this.isVideoModel(modelDetectedBefore) &&
+      isExactModelMatch(modelDetectedBefore, targetModel);
 
     // Step 1: Check if already active and ratio is not explicitly requested
     if (isAlreadyTarget && !requestedRatio) {
-      logger.info('model_selector', `${targetModel} is already active`);
+      logger.info('model_selector', `${targetModel} is already active (exact match confirmed)`);
       return {
         modelRequested: targetModel,
         modelDetectedBefore,
@@ -153,13 +180,34 @@ export class ModelSelector {
     if (!paneVisible) {
       const dropdownButton = await this.findModelDropdownButton(page);
       if (!dropdownButton) {
+        // Rich diagnostics on dropdown-not-found
+        let diagUrl = '';
+        let diagTitle = '';
+        let diagButtons: string[] = [];
+        try { diagUrl = page.url(); } catch {}
+        try { diagTitle = await page.title().catch(() => ''); } catch {}
+        try {
+          diagButtons = await page.evaluate(() =>
+            Array.from(document.querySelectorAll('button'))
+              .filter((b) => (b as HTMLElement).offsetParent !== null)
+              .map((b) => `[${b.getAttribute('aria-label') || ''}] ${(b.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 50)}`)
+              .slice(0, 25)
+          ).catch(() => []);
+        } catch {}
+        logger.error('model_selector', '❌ Could not locate model selector dropdown button', {
+          targetModel,
+          modelDetectedBefore,
+          diagUrl,
+          diagTitle,
+          diagButtons,
+        });
         return {
           modelRequested: targetModel,
           modelDetectedBefore,
           selectionAttempted: false,
           modelDetectedAfter: modelDetectedBefore,
           verified: false,
-          error: 'Could not locate the model selector dropdown button in the Flow toolbar.',
+          error: `Could not locate the model selector dropdown button in the Flow toolbar. URL: ${diagUrl}, Title: ${diagTitle}`,
         };
       }
 
@@ -195,14 +243,13 @@ export class ModelSelector {
     }
 
     // Step 5: Model Selection (Nano Banana Pro / Nano Banana 2 / Nano Banana 2 Lite)
+    const targetLower = normalizeModel(targetModel);
     const modelFamilyBtn = page.locator('.cdk-overlay-pane button[aria-label="Select model family"], .cdk-overlay-pane button:has-text("Nano")').first();
     const modelFamilyVis = await modelFamilyBtn.isVisible({ timeout: 1500 }).catch(() => false);
     if (modelFamilyVis) {
-      const currentModelText = (typeof modelFamilyBtn.textContent === 'function' ? ((await modelFamilyBtn.textContent().catch(() => '')) || '') : '').toLowerCase();
-      const isModelMatch =
-        (targetLower.includes('pro') && currentModelText.includes('pro')) ||
-        (targetLower.includes('lite') && currentModelText.includes('lite')) ||
-        (!targetLower.includes('pro') && !targetLower.includes('lite') && currentModelText.includes('banana 2') && !currentModelText.includes('pro') && !currentModelText.includes('lite'));
+      const currentModelText = (typeof modelFamilyBtn.textContent === 'function' ? ((await modelFamilyBtn.textContent().catch(() => '')) || '') : '');
+      // Use isExactModelMatch for model family button check
+      const isModelMatch = isExactModelMatch(currentModelText, targetModel);
 
       if (!isModelMatch) {
         logger.info('model_selector', `Opening model family dropdown to select ${targetModel}...`);
@@ -230,6 +277,7 @@ export class ModelSelector {
           await page.waitForTimeout(600);
         } else {
           logger.warn('model_selector', `Could not find menu item for ${targetModel}`);
+
         }
       }
     }
@@ -271,20 +319,63 @@ export class ModelSelector {
       await page.waitForTimeout(200);
     }
 
-    // Step 8: Verify the newly selected model contains the target model name or is in Image mode
+    // Step 8: Verify the newly selected model — STRICT exact match required
     const modelDetectedAfter = await this.detectCurrentModel(page);
-    const afterLower = (modelDetectedAfter || '').toLowerCase();
+    // Primary: exact normalized match against the target
+    // Fallback: if the pill reads Image mode (not Video), that is still a pass when
+    // detectCurrentModel returns a composite pill text rather than just the model name
     const verified = !!modelDetectedAfter && (
-      afterLower.includes(targetLower) ||
-      (afterLower.includes('image') && !afterLower.includes('video')) ||
-      (afterLower.includes('banana') && !afterLower.includes('video'))
+      isExactModelMatch(modelDetectedAfter, targetModel) ||
+      // Composite pill with banana model text present and not video
+      (normalizeModel(modelDetectedAfter).includes('banana') &&
+        !this.isVideoModel(modelDetectedAfter) &&
+        // Additional safety: normalize the detected text MUST NOT contain a more-specific
+        // variant when requesting the base model (e.g. must not be "lite" when we want "2")
+        (() => {
+          const nm = normalizeModel(modelDetectedAfter);
+          const nt = normalizeModel(targetModel);
+          // If target does not contain "lite" the detected must not contain "lite"
+          if (!nt.includes('lite') && nm.includes('lite')) return false;
+          // If target does not contain "pro" the detected must not contain "pro"
+          if (!nt.includes('pro') && nm.includes('pro')) return false;
+          return true;
+        })()
+      )
     );
 
-    logger.info('model_selector', 'Model selection complete', {
-      modelDetectedBefore,
-      modelDetectedAfter,
-      verified,
-    });
+    if (verified) {
+      logger.info('model_selector', 'Model selection verified ✓', {
+        targetModel,
+        modelDetectedBefore,
+        modelDetectedAfter,
+      });
+    } else {
+      // Rich diagnostic log on failure
+      let pageUrl = '';
+      let pageTitle = '';
+      let visibleButtons: string[] = [];
+      try { pageUrl = page.url(); } catch {}
+      try { pageTitle = await page.title().catch(() => ''); } catch {}
+      try {
+        visibleButtons = await page.evaluate(() => {
+          return Array.from(document.querySelectorAll('button'))
+            .filter((b) => (b as HTMLElement).offsetParent !== null)
+            .map((b) => (b.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 60))
+            .filter(Boolean)
+            .slice(0, 20);
+        }).catch(() => []);
+      } catch {}
+      logger.error('model_selector', '❌ Model verification FAILED — diagnostic dump', {
+        targetModel,
+        modelDetectedBefore,
+        modelDetectedAfter,
+        normalizedDetected: modelDetectedAfter ? normalizeModel(modelDetectedAfter) : null,
+        normalizedTarget: normalizeModel(targetModel),
+        pageUrl,
+        pageTitle,
+        visibleButtons,
+      });
+    }
 
     return {
       modelRequested: targetModel,
@@ -292,7 +383,7 @@ export class ModelSelector {
       selectionAttempted: true,
       modelDetectedAfter,
       verified,
-      ...(verified ? {} : { error: `Model verification failed. Expected "${targetModel}", found: "${modelDetectedAfter}"` }),
+      ...(verified ? {} : { error: `Model verification failed. Expected \"${targetModel}\" (normalized: \"${normalizeModel(targetModel)}\"), detected: \"${modelDetectedAfter}\" (normalized: \"${modelDetectedAfter ? normalizeModel(modelDetectedAfter) : 'null'}\")` }),
     };
   }
 
