@@ -113,10 +113,14 @@ export class ImageExecutionService {
       await FlowDriver.safeFill(page, promptInput, promptText);
       log.info('image_exec', 'Prompt filled successfully', { promptLength: promptText.length });
 
-      // Step 6: Trigger Generation
+      // Step 6: Trigger Generation (with Duplicate-Click Lock)
       await this.updateJobStatus(projectId, jobId, 'generating', 'Triggering image generation');
 
-      if (triggerClick) {
+      const isAlreadySubmitted = job.submissionState === 'submitted';
+      if (isAlreadySubmitted) {
+        log.info('image_exec', `Job ${jobId} was already submitted; bypassing duplicate Generate click to protect credits.`);
+        generationClickTime = job.startedAt ?? new Date().toISOString();
+      } else if (triggerClick) {
         const generateBtnCandidates = [
           'button[aria-label="Start generation"]',
           'button:has-text("arrow_forward")',
@@ -130,9 +134,13 @@ export class ImageExecutionService {
           throw new Error('Generate button not found on Google Flow page.');
         }
 
+        // Lock submission state to prevent duplicate submissions
+        await JobRepository.updateJob(projectId, jobId, { submissionState: 'submitting' });
         await generateBtn.click();
+        await JobRepository.updateJob(projectId, jobId, { submissionState: 'submitted' });
+
         generationClickTime = new Date().toISOString();
-        log.info('image_exec', 'Clicked generate button');
+        log.info('image_exec', 'Clicked generate button and locked submission state');
       } else {
         generationClickTime = new Date().toISOString();
       }
@@ -140,44 +148,88 @@ export class ImageExecutionService {
       // Step 7: Transition to waiting_for_result and poll for delta media
       await this.updateJobStatus(projectId, jobId, 'waiting_for_result', 'Waiting for generated output');
 
+      // Layered Sniffer: listen for image media responses over the network
+      let capturedNetworkImageUrl: string | null = null;
+      let sniffedUuid: string | null = null;
+      const imageResponseHandler = (res: any) => {
+        try {
+          const url = typeof res.url === 'function' ? res.url() : '';
+          const contentType = typeof res.headers === 'function' ? (res.headers()['content-type'] || '') : '';
+          if (
+            (contentType.startsWith('image/') ||
+             url.includes('flow-content.google/image') ||
+             url.includes('media.getMediaUrlRedirect') ||
+             (url.includes('/asb/') && !url.includes('=mm,22,15'))) &&
+            !beforeUuids.has(url)
+          ) {
+            log.info('image_exec', `Sniffed image media response: ${url} (${contentType})`);
+            capturedNetworkImageUrl = url;
+            const parsed = MediaDetector.parseMediaUuids([url]).uuids;
+            if (parsed.length > 0 && !beforeUuids.has(parsed[0])) {
+              sniffedUuid = parsed[0];
+            }
+          }
+        } catch {
+          // ignore
+        }
+      };
+
+      if (typeof page?.on === 'function') {
+        page.on('response', imageResponseHandler);
+      }
+
       let newUuid: string | null = null;
       let lastDetectedMedia: import('../../shared/types').MediaDetectionResult | null = null;
       const pollStart = Date.now();
 
-      while (Date.now() - pollStart < pollTimeoutMs) {
-        await page.waitForTimeout(2500);
+      try {
+        while (Date.now() - pollStart < pollTimeoutMs) {
+          // Check network sniffer first for instant breakout
+          if (sniffedUuid && !beforeUuids.has(sniffedUuid)) {
+            newUuid = sniffedUuid;
+            log.info('image_exec', `Instant media match via network sniffer: ${newUuid}`);
+            break;
+          }
 
-        const currentMedia = await automation.detectGeneratedMedia();
-        lastDetectedMedia = currentMedia;
-        const deltaUuids = options.mockDeltaUuids !== undefined
-          ? options.mockDeltaUuids
-          : currentMedia.imageUuids.filter((id) => !beforeUuids.has(id));
+          const currentMedia = await automation.detectGeneratedMedia();
+          lastDetectedMedia = currentMedia;
+          const deltaUuids = options.mockDeltaUuids !== undefined
+            ? options.mockDeltaUuids
+            : currentMedia.imageUuids.filter((id) => !beforeUuids.has(id));
 
-        if (deltaUuids.length === 1) {
-          newUuid = deltaUuids[0]!;
-          log.info('image_exec', `New generated media detected unambiguously: ${newUuid}`);
-          break;
-        } else if (deltaUuids.length > 1) {
-          log.warn('image_exec', `Ambiguous media result: ${deltaUuids.length} new images appeared simultaneously.`);
-          await this.updateJobStatus(
-            projectId,
-            jobId,
-            'manual_action_required',
-            `Ambiguous result: ${deltaUuids.length} new images detected simultaneously. Manual selection required.`
-          );
-          await ProjectRepository.updateSlot(projectId, slotIndex, {
-            status: 'failed',
-            error: {
-              code: 'AMBIGUOUS_MEDIA_RESULT',
-              message: `Multiple (${deltaUuids.length}) new images detected. Manual selection required.`,
-              timestamp: new Date().toISOString(),
-              retryCount: job.retryCount,
-              profileId: worker.profileId,
-            },
-          });
-          throw new Error(
-            `Ambiguous media result: ${deltaUuids.length} new images detected. Manual action required.`
-          );
+          if (deltaUuids.length === 1) {
+            newUuid = deltaUuids[0]!;
+            log.info('image_exec', `New generated media detected unambiguously: ${newUuid}`);
+            break;
+          } else if (deltaUuids.length > 1) {
+            log.warn('image_exec', `Ambiguous media result: ${deltaUuids.length} new images appeared simultaneously.`);
+            await this.updateJobStatus(
+              projectId,
+              jobId,
+              'manual_action_required',
+              `Ambiguous result: ${deltaUuids.length} new images detected simultaneously. Manual selection required.`
+            );
+            await ProjectRepository.updateSlot(projectId, slotIndex, {
+              status: 'failed',
+              error: {
+                code: 'AMBIGUOUS_MEDIA_RESULT',
+                message: `Multiple (${deltaUuids.length}) new images detected. Manual selection required.`,
+                timestamp: new Date().toISOString(),
+                retryCount: job.retryCount,
+                profileId: worker.profileId,
+              },
+            });
+            throw new Error(
+              `Ambiguous media result: ${deltaUuids.length} new images detected. Manual action required.`
+            );
+          }
+
+          // Adaptive polling: 400ms interval for near-instant detection (reduced from 2500ms)
+          await page.waitForTimeout(400);
+        }
+      } finally {
+        if (typeof page?.off === 'function') {
+          page.off('response', imageResponseHandler);
         }
       }
 

@@ -651,6 +651,7 @@ export interface GenerationJobEntity {
   errorMessage?: string;
   retryCount: number;
   maxRetries: number;
+  submissionState?: 'none' | 'submitting' | 'submitted';
   metadata: Record<string, unknown>;
 }
 

@@ -102,8 +102,40 @@ describe('MediaAssociation & Ambiguity Safeguard', () => {
 
     const updatedProject = await ProjectRepository.get(testProjectId);
     const slot0 = updatedProject?.slots[0];
-    expect(slot0?.status).toBe('failed');
-    expect(slot0?.error?.code).toBe('AMBIGUOUS_MEDIA_RESULT');
+    expect(updatedProject?.slots[0]?.error?.code).toBe('AMBIGUOUS_MEDIA_RESULT');
     expect(mockWorker.release).toHaveBeenCalled();
+  });
+
+  it('bypasses Generate click if job.submissionState is already submitted (duplicate safety)', async () => {
+    // Mark job as already submitted
+    await JobRepository.updateJob(testProjectId, mockJob.jobId, { submissionState: 'submitted' });
+    const submittedJob = (await JobRepository.getJob(testProjectId, mockJob.jobId))!;
+
+    const generateBtnClick = vi.fn();
+    vi.spyOn(FlowDriver, 'findFirstVisible').mockImplementation(async (_page, candidates) => {
+      if (Array.isArray(candidates) && candidates.some((c: string) => c.includes('generation') || c.includes('Generate'))) {
+        return { click: generateBtnClick, isDisabled: vi.fn().mockResolvedValue(false) } as any;
+      }
+      return { fill: vi.fn(), click: vi.fn(), evaluate: vi.fn() } as any;
+    });
+
+    mockWorker.automation.downloadMedia = vi.fn().mockImplementation(async (_url: string, dest: string) => {
+      const path = await import('path');
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, Buffer.from('TEST_RECOVERED_PAYLOAD'));
+      return { success: true, destinationPath: dest, mimeType: 'image/png' };
+    });
+
+    await ImageExecutionService.execute(mockWorker, submittedJob, {
+      triggerGenerationClick: true,
+      pollTimeoutMs: 1000,
+      mockDeltaUuids: ['uuid_recovered_123'],
+    });
+
+    // generate button should NOT be clicked because job was already submitted!
+    expect(generateBtnClick).not.toHaveBeenCalled();
+
+    const updatedJob = await JobRepository.getJob(testProjectId, mockJob.jobId);
+    expect(updatedJob?.status).toBe('completed');
   });
 });

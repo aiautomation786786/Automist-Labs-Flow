@@ -241,11 +241,14 @@ export class VideoExecutionService {
       };
       page.on('response', responseHandler);
 
-      // Transition to generating
+      // Transition to generating (with Duplicate-Click Lock)
       await JobRepository.updateJob(projectId, jobId, { status: 'generating' });
 
-      // Click Generate exactly once
-      if (triggerClick) {
+      const isAlreadySubmitted = job.submissionState === 'submitted';
+      if (isAlreadySubmitted) {
+        log.info('video_exec', `Job ${jobId} was already submitted; bypassing duplicate Generate click to protect credits.`);
+        generationClickTime = job.startedAt ?? new Date().toISOString();
+      } else if (triggerClick) {
         const generateSelectors = [
           'button[aria-label="Start generation"]',
           'button:has-text("arrow_forward")',
@@ -263,7 +266,9 @@ export class VideoExecutionService {
         }
 
         log.info('video_exec', 'Clicking Generate button (EXACTLY ONCE)...');
+        await JobRepository.updateJob(projectId, jobId, { submissionState: 'submitting' });
         await generateButton.click();
+        await JobRepository.updateJob(projectId, jobId, { submissionState: 'submitted' });
         generationClickTime = new Date().toISOString();
         log.info('video_exec', 'Generate button clicked once. Transitioning to waiting_for_result.');
       } else {
@@ -328,7 +333,8 @@ export class VideoExecutionService {
           break;
         }
 
-        await page.waitForTimeout(1000);
+        // Adaptive polling: 400ms for fast detection
+        await page.waitForTimeout(400);
       }
 
       page.off('response', responseHandler);
