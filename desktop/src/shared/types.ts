@@ -709,6 +709,7 @@ export interface CreateProjectParams {
   imageDownloadQuality?: 'original' | '2k';
   videoDownloadQuality?: 'original' | '1080p';
   generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'custom';
+  imageModel?: string;
   videoModel?: string;
   videoResolution?: string;
   videoDuration?: string;

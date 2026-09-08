@@ -26,6 +26,7 @@ import { SafeDownloader } from '../engine/SafeDownloader';
 import { VideoDuration } from '../utils/VideoDuration';
 import { generationEventBus } from '../events/GenerationEventBus';
 import { AppLogger } from '../utils/AppLogger';
+import { ProgressEstimator } from './ProgressEstimator';
 
 export interface VideoExecutionOptions {
   mockMode?: boolean;
@@ -52,6 +53,7 @@ export class VideoExecutionService {
     const jobStartTime = new Date().toISOString();
     const startMs = Date.now();
     let generationClickTime = jobStartTime;
+    let estimator: ProgressEstimator | null = null;
 
     const project = await ProjectRepository.get(projectId);
     const targetModel = project?.settings?.videoModel || 'Omni 1.1 Flash';
@@ -241,8 +243,19 @@ export class VideoExecutionService {
       };
       page.on('response', responseHandler);
 
-      // Transition to generating (with Duplicate-Click Lock)
+      // Transition to generating (with Duplicate-Click Lock & Live Progress Estimator)
+      estimator = new ProgressEstimator({
+        jobId,
+        projectId,
+        promptId,
+        slotIndex,
+        promptType: 'video',
+        modelName: targetModel,
+        resolution: targetRes,
+      });
+
       await JobRepository.updateJob(projectId, jobId, { status: 'generating' });
+      estimator.start();
 
       const isAlreadySubmitted = job.submissionState === 'submitted';
       if (isAlreadySubmitted) {
@@ -346,6 +359,7 @@ export class VideoExecutionService {
       log.info('video_exec', 'New video detected from Flow', { detectedVideoUrl, detectedUuid });
 
       // Transition to downloading
+      estimator?.setDownloading();
       await JobRepository.updateJob(projectId, jobId, { status: 'downloading' });
 
       // Non-navigating safe download
@@ -416,8 +430,10 @@ export class VideoExecutionService {
         timestamp: new Date().toISOString(),
       });
 
+      estimator?.setCompleted();
       log.info('video_exec', `Completed video job ${jobId} -> Slot ${slotIndex}`);
     } catch (err) {
+      estimator?.setFailed((err as Error).message);
       log.error('video_exec', `Video job ${jobId} failed`, err as Error);
 
       const failedJob = await JobRepository.updateJob(projectId, jobId, {

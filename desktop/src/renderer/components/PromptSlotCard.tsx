@@ -6,6 +6,12 @@ import { formatAssetUrl } from '../utils/assetUrl';
 interface PromptSlotCardProps {
   slot: PromptSlotEntity;
   aspectRatio?: string;
+  progress?: {
+    percent: number;
+    stage: string;
+    elapsedSeconds?: number;
+    description?: string;
+  };
   onViewPrompt: (slot: PromptSlotEntity) => void;
   onPreviewMedia: (slot: PromptSlotEntity) => void;
   onRetry?: (slot: PromptSlotEntity) => void;
@@ -23,6 +29,7 @@ const KNOWN_PROFILES: Record<string, string> = {
 export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
   slot,
   aspectRatio,
+  progress,
   onViewPrompt,
   onPreviewMedia,
   onRetry,
@@ -276,26 +283,69 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
           <div
             className="skeleton-pulse"
             style={{
+              width: '100%',
+              height: '100%',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
-              gap: '10px',
-              color: 'var(--primary)',
+              justifyContent: 'center',
+              padding: '18px 16px',
+              boxSizing: 'border-box',
+              background: 'radial-gradient(circle at center, rgba(99, 102, 241, 0.08) 0%, rgba(9, 12, 19, 0.95) 100%)',
             }}
           >
-            <div
-              style={{
-                width: '26px',
-                height: '26px',
-                border: '2.5px solid var(--primary-border)',
-                borderTopColor: 'var(--primary)',
-                borderRadius: '50%',
-                animation: 'spin 0.8s linear infinite',
-              }}
-            />
-            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
-              Generating...
-            </span>
+            <div style={{ width: '90%', maxWidth: '240px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12px' }}>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span
+                    style={{
+                      width: '8px',
+                      height: '8px',
+                      borderRadius: '50%',
+                      backgroundColor: progress?.stage === 'downloading' ? '#38bdf8' : 'var(--primary)',
+                      boxShadow: '0 0 8px currentColor',
+                      animation: 'pulse 1.2s ease-in-out infinite',
+                    }}
+                  />
+                  {progress?.stage === 'downloading' ? 'Downloading...' : 'Generating...'}
+                </span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--primary)', fontSize: '12px' }}>
+                  {progress?.percent !== undefined ? `${progress.percent}%` : ''}
+                </span>
+              </div>
+
+              {/* Progress Bar Container */}
+              <div
+                style={{
+                  width: '100%',
+                  height: '6px',
+                  backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                  borderRadius: '999px',
+                  overflow: 'hidden',
+                  position: 'relative',
+                }}
+              >
+                <div
+                  style={{
+                    height: '100%',
+                    width: `${progress?.percent ?? 15}%`,
+                    background: progress?.stage === 'downloading'
+                      ? 'linear-gradient(90deg, #0284c7, #38bdf8)'
+                      : 'linear-gradient(90deg, #6366f1, #a855f7)',
+                    borderRadius: '999px',
+                    transition: 'width 0.4s ease-out',
+                    boxShadow: '0 0 10px rgba(99, 102, 241, 0.4)',
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
+                <span>{progress?.stage === 'downloading' ? 'Verifying asset' : 'Google Flow'}</span>
+                {progress?.elapsedSeconds !== undefined && (
+                  <span>{progress.elapsedSeconds}s elapsed</span>
+                )}
+              </div>
+            </div>
           </div>
         ) : slot.status === 'failed' ? (
           <div style={{ textAlign: 'center', padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>

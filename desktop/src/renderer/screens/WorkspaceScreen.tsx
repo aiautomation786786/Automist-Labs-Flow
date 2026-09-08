@@ -32,6 +32,14 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
   // Filter: 'all' | 'images' | 'videos'
   const [typeFilter, setTypeFilter] = useState<'all' | 'images' | 'videos'>('all');
 
+  // Live progress tracking per slot index
+  const [slotProgress, setSlotProgress] = useState<Record<number, {
+    percent: number;
+    stage: string;
+    elapsedSeconds?: number;
+    description?: string;
+  }>>({});
+
   // Load project initially
   const loadProject = useCallback(async () => {
     if (!window.flowApi) return;
@@ -99,6 +107,18 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
     const unsubProgress = window.flowApi.onJobProgress((event: JobProgressEvent) => {
       if (event.projectId !== projectId) return;
 
+      if (event.slotIndex !== undefined) {
+        setSlotProgress((prev) => ({
+          ...prev,
+          [event.slotIndex]: {
+            percent: event.progressPercent ?? 15,
+            stage: event.stage ?? (event.status === 'downloading' ? 'downloading' : 'generating'),
+            elapsedSeconds: event.elapsedSeconds,
+            description: event.stepDescription,
+          },
+        }));
+      }
+
       setProject((prev) => {
         if (!prev) return prev;
         const newSlots = prev.slots.map((s) => {
@@ -106,7 +126,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
             return {
               ...s,
               status: event.status === 'downloading' || event.status === 'generating' || event.status === 'starting' || event.status === 'configuring' ? 'running' : s.status,
-              assignedProfileId: event.profileId ?? s.assignedProfileId,
+              assignedProfileId: (event as any).profileId ?? s.assignedProfileId,
             };
           }
           return s;
@@ -287,6 +307,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
               <PromptSlotCard
                 key={slot.promptId}
                 slot={slot}
+                progress={slotProgress[slot.slotIndex]}
                 aspectRatio={project.settings.imageRatio}
                 onViewPrompt={(s) => setSelectedSlotForPrompt(s)}
                 onPreviewMedia={(s) => setSelectedSlotForMedia(s)}
@@ -313,6 +334,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
               <PromptSlotCard
                 key={slot.promptId}
                 slot={slot}
+                progress={slotProgress[slot.slotIndex]}
                 aspectRatio={project.settings.videoRatio || project.settings.imageRatio}
                 onViewPrompt={(s) => setSelectedSlotForPrompt(s)}
                 onPreviewMedia={(s) => setSelectedSlotForMedia(s)}

@@ -20,7 +20,9 @@ import { JobRepository } from '../storage/JobRepository';
 import { AssetManager } from '../storage/AssetManager';
 import { generationEventBus } from '../events/GenerationEventBus';
 import { FlowDriver } from '../engine/FlowDriver';
+import { MediaDetector } from '../engine/MediaDetector';
 import { AppLogger } from '../utils/AppLogger';
+import { ProgressEstimator } from './ProgressEstimator';
 
 export interface ExecutionOptions {
   triggerGenerationClick?: boolean; // Default true; false for dry-run/mock tests
@@ -47,6 +49,7 @@ export class ImageExecutionService {
 
     const log = new AppLogger({ profileId: worker.profileId, mirrorToStderr: false });
     log.info('image_exec', `Starting image execution for Job ${jobId} (Slot ${slotIndex})`);
+    let estimator: ProgressEstimator | null = null;
 
     try {
       // Step 1: Transition job status to starting
@@ -113,8 +116,18 @@ export class ImageExecutionService {
       await FlowDriver.safeFill(page, promptInput, promptText);
       log.info('image_exec', 'Prompt filled successfully', { promptLength: promptText.length });
 
-      // Step 6: Trigger Generation (with Duplicate-Click Lock)
+      // Step 6: Trigger Generation (with Duplicate-Click Lock & Live Progress Estimator)
+      estimator = new ProgressEstimator({
+        jobId,
+        projectId,
+        promptId,
+        slotIndex,
+        promptType: 'image',
+        modelName: requestedModel,
+      });
+
       await this.updateJobStatus(projectId, jobId, 'generating', 'Triggering image generation');
+      estimator.start();
 
       const isAlreadySubmitted = job.submissionState === 'submitted';
       if (isAlreadySubmitted) {
@@ -245,13 +258,17 @@ export class ImageExecutionService {
       }
 
       // Step 8: Non-Navigating Background Download via SafeDownloader
+      estimator?.setDownloading();
       await this.updateJobStatus(projectId, jobId, 'downloading', 'Downloading generated image in background');
 
       let destinationPath = AssetManager.getImageDestinationPath(projectId, slotIndex, promptId, jobId);
       let detectedMimeType: string | undefined;
 
       if (triggerClick) {
-        const fullMediaUrl = lastDetectedMedia?.mediaUrls.find((u) => u.includes(newUuid!)) ?? newUuid!;
+        const fullMediaUrl =
+          lastDetectedMedia?.mediaUrls.find((u) => u.includes(newUuid!)) ??
+          capturedNetworkImageUrl ??
+          newUuid!;
         const downloadResult = await automation.downloadMedia(fullMediaUrl, destinationPath);
         if (downloadResult.destinationPath) {
           destinationPath = downloadResult.destinationPath;
@@ -321,8 +338,10 @@ export class ImageExecutionService {
       });
 
       log.info('image_exec', `Successfully completed Job ${jobId} -> Slot ${slotIndex}`);
+      estimator?.setCompleted();
     } catch (err) {
       const errorMsg = (err as Error).message;
+      estimator?.setFailed(errorMsg);
       log.error('image_exec', `Execution failed for Job ${jobId}`, err as Error);
 
       // Check if job was already marked with a specialized status (e.g. manual_action_required)
