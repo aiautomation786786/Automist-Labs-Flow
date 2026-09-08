@@ -57,10 +57,13 @@ export class ImageExecutionService {
       }
 
       // Step 3: Transition to configuring (ensuring project, model, ratio)
-      await this.updateJobStatus(projectId, jobId, 'configuring', 'Configuring project, model, and ratio');
+      // Read project settings to determine requested ratio and Flow project context
+      const project = await ProjectRepository.get(projectId);
+      const requestedRatio: SupportedAspectRatio = project?.settings.imageRatio ?? '16:9';
+      const flowProjectId = (project?.settings as any)?.flowProjectId;
 
       // Ensure project context (anti-stickiness)
-      await automation.ensureProject({ projectId });
+      await automation.ensureProject(flowProjectId ? { projectId: flowProjectId } : {});
 
       // Mandatory Nano Banana 2 enforcement
       const modelResult = await automation.selectNanoBanana2();
@@ -70,10 +73,6 @@ export class ImageExecutionService {
           `Detected: "${modelResult.modelDetectedAfter}". ${modelResult.error ?? ''}`
         );
       }
-
-      // Read project settings to determine requested ratio
-      const project = await ProjectRepository.get(projectId);
-      const requestedRatio: SupportedAspectRatio = project?.settings.imageRatio ?? '16:9';
 
       const ratioResult = await automation.selectRatio(requestedRatio);
       if (!ratioResult.verified) {
@@ -112,9 +111,11 @@ export class ImageExecutionService {
 
       if (triggerClick) {
         const generateBtnCandidates = [
+          'button[aria-label="Start generation"]',
           'button:has-text("arrow_forward")',
           'button:has-text("Generate")',
           'button:has-text("Créer")',
+          '[aria-label*="generation" i]',
           '[aria-label*="generate" i]',
         ];
         const generateBtn = await FlowDriver.findFirstVisible(page, generateBtnCandidates, 2000);
@@ -130,12 +131,14 @@ export class ImageExecutionService {
       await this.updateJobStatus(projectId, jobId, 'waiting_for_result', 'Waiting for generated output');
 
       let newUuid: string | null = null;
+      let lastDetectedMedia: import('../../shared/types').MediaDetectionResult | null = null;
       const pollStart = Date.now();
 
       while (Date.now() - pollStart < pollTimeoutMs) {
         await page.waitForTimeout(2500);
 
         const currentMedia = await automation.detectGeneratedMedia();
+        lastDetectedMedia = currentMedia;
         const deltaUuids = options.mockDeltaUuids !== undefined
           ? options.mockDeltaUuids
           : currentMedia.imageUuids.filter((id) => !beforeUuids.has(id));
@@ -186,7 +189,8 @@ export class ImageExecutionService {
       let detectedMimeType: string | undefined;
 
       if (triggerClick) {
-        const downloadResult = await automation.downloadMedia(newUuid, destinationPath);
+        const fullMediaUrl = lastDetectedMedia?.mediaUrls.find((u) => u.includes(newUuid!)) ?? newUuid!;
+        const downloadResult = await automation.downloadMedia(fullMediaUrl, destinationPath);
         if (downloadResult.destinationPath) {
           destinationPath = downloadResult.destinationPath;
         }

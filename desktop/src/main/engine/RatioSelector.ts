@@ -40,11 +40,13 @@ export class RatioSelector {
           }
         }
 
-        // Strategy 2: Ratio button in toolbar showing ratio text
+        // Strategy 2: Ratio button in toolbar showing ratio text or Material crop icon
         for (const btn of activeButtons) {
           const text = (btn.textContent || '').trim();
-          if ((text === '16:9' || text === '9:16') && (btn as HTMLElement).offsetParent !== null) {
-            return text;
+          if ((btn as HTMLElement).offsetParent !== null) {
+            if (text.includes('crop_16_9') || text.includes('16:9')) return '16:9';
+            if (text.includes('crop_9_16') || text.includes('9:16')) return '9:16';
+            if (text.includes('crop_square') || text.includes('1:1')) return '1:1';
           }
         }
 
@@ -78,11 +80,13 @@ export class RatioSelector {
       };
     }
 
-    // Attempt 1: Direct button on toolbar (segmented toggle: [16:9] [9:16])
+    const iconSuffix = targetRatio.replace(':', '_');
+    // Attempt 1: Direct button on toolbar (segmented toggle or popover radio)
     const directButtonSelectors = [
+      `[role="radio"]:has-text("${targetRatio}")`,
+      `[role="radio"]:has-text("crop_${iconSuffix}")`,
       `button:has-text("${targetRatio}")`,
       `[role="tab"]:has-text("${targetRatio}")`,
-      `[role="radio"]:has-text("${targetRatio}")`,
       `[aria-label*="${targetRatio}"]`,
       `[data-testid*="${targetRatio}"]`,
     ];
@@ -92,6 +96,7 @@ export class RatioSelector {
     // Attempt 2: If direct button is not visible, ratio control might be behind a dropdown or menu
     if (!ratioButton) {
       const ratioDropdownTriggerSelectors = [
+        'button[aria-label="Settings trigger"]',
         'button[aria-label*="ratio" i]',
         'button[aria-label*="format" i]',
         'button:has-text("Ratio")',
@@ -104,7 +109,7 @@ export class RatioSelector {
       if (dropdownTrigger) {
         logger.debug('ratio_selector', 'Opening ratio dropdown...');
         await dropdownTrigger.click();
-        await page.waitForTimeout(400);
+        await page.waitForTimeout(600);
 
         // Now look for the target ratio option inside the opened menu
         ratioButton = await FlowDriver.findFirstVisible(page, directButtonSelectors, 2000);
@@ -125,6 +130,8 @@ export class RatioSelector {
     logger.info('ratio_selector', `Clicking ratio control for ${targetRatio}...`);
     await ratioButton.click();
     await page.waitForTimeout(500);
+    await page.keyboard?.press('Escape').catch(() => {});
+    await page.waitForTimeout(300);
 
     const detectedAfter = await this.detectCurrentRatio(page);
     const verified = detectedAfter === targetRatio;

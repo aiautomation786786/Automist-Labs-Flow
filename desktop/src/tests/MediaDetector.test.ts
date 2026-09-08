@@ -34,16 +34,18 @@ describe('MediaDetector', () => {
       const urls = [
         'https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name=uuid-1111-2222-3333-444455556666',
         'https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name=uuid-aaaa-bbbb-cccc-ddddeeeeffff',
+        'https://flow-content.google/image/debef7d6-40f4-4f13-9e27-b284095ce1d6?Expires=1788872677&KeyName=la',
         'https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name=uuid-1111-2222-3333-444455556666', // duplicate
         'https://fonts.googleapis.com/css2?family=Roboto', // unrelated
       ];
 
       const { uuids, matchedUrls } = MediaDetector.parseMediaUuids(urls);
 
-      expect(uuids).toHaveLength(2);
+      expect(uuids).toHaveLength(3);
       expect(uuids).toContain('uuid-1111-2222-3333-444455556666');
       expect(uuids).toContain('uuid-aaaa-bbbb-cccc-ddddeeeeffff');
-      expect(matchedUrls).toHaveLength(2);
+      expect(uuids).toContain('debef7d6-40f4-4f13-9e27-b284095ce1d6');
+      expect(matchedUrls).toHaveLength(3);
     });
 
     it('should return empty arrays when no URLs match', () => {

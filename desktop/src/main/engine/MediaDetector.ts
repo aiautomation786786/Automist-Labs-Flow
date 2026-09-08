@@ -21,6 +21,7 @@ const logger = new AppLogger({ mirrorToStderr: false });
  *   -> match[1] = "12345678-abcd-1234-abcd-1234567890ab"
  */
 export const TRPC_IMAGE_REDIRECT_REGEX = /media\.getMediaUrlRedirect\?name=([a-zA-Z0-9_-]+)/;
+export const FLOW_CONTENT_MEDIA_REGEX = /flow-content\.google\/(?:image|video)\/([a-zA-Z0-9_-]+)/;
 
 export class MediaDetector {
   /**
@@ -32,9 +33,15 @@ export class MediaDetector {
     const matchedUrls: string[] = [];
 
     for (const url of urls) {
-      const match = url.match(TRPC_IMAGE_REDIRECT_REGEX);
-      if (match?.[1]) {
-        uuids.push(match[1]);
+      const trpcMatch = url.match(TRPC_IMAGE_REDIRECT_REGEX);
+      if (trpcMatch?.[1]) {
+        uuids.push(trpcMatch[1]);
+        matchedUrls.push(url);
+        continue;
+      }
+      const flowContentMatch = url.match(FLOW_CONTENT_MEDIA_REGEX);
+      if (flowContentMatch?.[1]) {
+        uuids.push(flowContentMatch[1]);
         matchedUrls.push(url);
       }
     }

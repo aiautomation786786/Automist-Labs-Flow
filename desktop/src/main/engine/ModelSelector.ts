@@ -173,9 +173,11 @@ export class ModelSelector {
       'button:has-text("Omni")',
       'button:has-text("Veo")',
       'button:has-text("Imagen")',
+      'button[aria-label="Settings trigger"]',
       '[data-testid="model-selector-button"]',
       '[aria-label*="model" i][role="button"]',
       '[aria-label*="model" i] button',
+      '[aria-label*="model" i]',
     ];
 
     return await FlowDriver.findFirstVisible(page, candidateSelectors, 2000);
