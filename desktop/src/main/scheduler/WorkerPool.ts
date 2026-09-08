@@ -7,6 +7,7 @@
 
 import { ProfileWorker } from './ProfileWorker';
 import { ProfileSessionManager } from '../engine/ProfileSessionManager';
+import { generationEventBus } from '../events/GenerationEventBus';
 import { AppLogger } from '../utils/AppLogger';
 
 const logger = new AppLogger({ mirrorToStderr: false });
@@ -17,7 +18,7 @@ export class WorkerPool {
 
   constructor(sessionManager?: ProfileSessionManager) {
     if (sessionManager) {
-      this.sessionManager = sessionManager;
+      this.attachSessionManager(sessionManager);
     }
   }
 
@@ -26,6 +27,16 @@ export class WorkerPool {
    */
   attachSessionManager(sessionManager: ProfileSessionManager): void {
     this.sessionManager = sessionManager;
+    this.sessionManager.on('session:ready', (profileId) => {
+      this.syncWithSessionManager();
+      generationEventBus.emitTyped('worker:available', profileId);
+      logger.info('worker_pool', `session:ready received for ${profileId}; worker pool synced and worker:available emitted`);
+    });
+    this.sessionManager.on('profile:deleted', (profileId) => {
+      this.workers.delete(profileId);
+      logger.info('worker_pool', `profile:deleted received for ${profileId}; removed worker from pool`);
+    });
+    this.syncWithSessionManager();
   }
 
   /**

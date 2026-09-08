@@ -332,12 +332,50 @@ export class ModelSelector {
         await modelFamilyBtn.click().catch(() => {});
         await page.waitForTimeout(600);
 
-        const modelOption = page.locator(`.cdk-overlay-pane [role="menuitem"]:has-text("${targetModel}"), .cdk-overlay-pane button:has-text("${targetModel}")`).first();
-        if (await modelOption.isVisible({ timeout: 1500 }).catch(() => false)) {
-          await modelOption.click().catch(() => {});
-          await page.waitForTimeout(600);
-        } else {
-          logger.warn('model_selector', `Could not find "${targetModel}" menu item in model dropdown`);
+        const normalizedTarget = targetModel.replace(/\s*-\s*/g, ' ');
+        const candidateSelectors = [
+          `.cdk-overlay-pane [role="menuitem"]:has-text("${targetModel}")`,
+          `.cdk-overlay-pane button:has-text("${targetModel}")`,
+          `.cdk-overlay-pane [role="menuitem"]:has-text("${normalizedTarget}")`,
+          `.cdk-overlay-pane button:has-text("${normalizedTarget}")`,
+        ];
+
+        if (targetLower.includes('quality')) {
+          candidateSelectors.push(
+            `.cdk-overlay-pane [role="menuitem"]:has-text("Quality")`,
+            `.cdk-overlay-pane button:has-text("Quality")`
+          );
+        } else if (targetLower.includes('fast')) {
+          candidateSelectors.push(
+            `.cdk-overlay-pane [role="menuitem"]:has-text("Fast")`,
+            `.cdk-overlay-pane button:has-text("Fast")`
+          );
+        } else if (targetLower.includes('lite')) {
+          candidateSelectors.push(
+            `.cdk-overlay-pane [role="menuitem"]:has-text("Lite")`,
+            `.cdk-overlay-pane button:has-text("Lite")`
+          );
+        } else if (targetLower.includes('omni')) {
+          candidateSelectors.push(
+            `.cdk-overlay-pane [role="menuitem"]:has-text("Omni")`,
+            `.cdk-overlay-pane button:has-text("Omni")`
+          );
+        }
+
+        let clicked = false;
+        for (const sel of candidateSelectors) {
+          const modelOption = page.locator(sel).first();
+          if (await modelOption.isVisible({ timeout: 400 }).catch(() => false)) {
+            logger.info('model_selector', `Clicking model option selector: ${sel}`);
+            await modelOption.click().catch(() => {});
+            await page.waitForTimeout(600);
+            clicked = true;
+            break;
+          }
+        }
+
+        if (!clicked) {
+          logger.warn('model_selector', `Could not find candidate menu items for "${targetModel}" in model dropdown`);
         }
       }
     }
@@ -423,9 +461,9 @@ export class ModelSelector {
     const targetLower = targetModel.toLowerCase();
     const modelTextLower = (paneState?.modelText || '').toLowerCase();
     const modelVerified =
-      (targetLower.includes('lite') && modelTextLower.includes('lite')) ||
-      (targetLower.includes('fast') && modelTextLower.includes('fast')) ||
-      (targetLower.includes('quality') && modelTextLower.includes('quality')) ||
+      (targetLower.includes('lite') && modelTextLower.includes('lite') && !modelTextLower.includes('omni')) ||
+      (targetLower.includes('fast') && modelTextLower.includes('fast') && !modelTextLower.includes('omni')) ||
+      (targetLower.includes('quality') && modelTextLower.includes('quality') && !modelTextLower.includes('omni')) ||
       (targetLower.includes('omni') && modelTextLower.includes('omni'));
 
     const resVerified = paneState?.hasResRadios ? (paneState?.resText || '').includes(targetRes) : true;

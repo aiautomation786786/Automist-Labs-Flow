@@ -342,6 +342,11 @@ export const AppShell: React.FC = () => {
           currentView.type === 'bulk_video' ||
           currentView.type === 'new_generation') && (
           <GenerationStudioScreen
+            key={
+              currentView.type === 'new_generation'
+                ? currentView.initialMode || 'single_image'
+                : currentView.type
+            }
             initialMode={
               currentView.type === 'single_image'
                 ? 'single_image'

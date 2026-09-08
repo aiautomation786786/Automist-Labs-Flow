@@ -77,7 +77,7 @@ describe('GenerationStudioScreen', () => {
     expect(screen.getByText('Generate Image (x1)')).toBeDefined();
   });
 
-  it('renders single video workspace with model-specific native duration (Veo Quality -> 4s)', async () => {
+  it('renders single video workspace with model-specific native duration (Veo Quality -> 8s)', async () => {
     render(
       <GenerationStudioScreen
         initialMode="single_video"
@@ -94,7 +94,7 @@ describe('GenerationStudioScreen', () => {
     expect(screen.getByText('Single Video Studio')).toBeDefined();
     expect(screen.getByDisplayValue(/Veo 3.1 - Quality/i)).toBeDefined();
     expect(screen.getByText(/Native Flow Duration/i)).toBeDefined();
-    expect(screen.getByText('4s')).toBeDefined();
+    expect(screen.getByText('8s')).toBeDefined();
     // 4K must not exist
     expect(screen.queryByText(/4k/i)).toBeNull();
   });
@@ -116,10 +116,10 @@ describe('GenerationStudioScreen', () => {
     const select = screen.getByLabelText('AI Video Model');
     fireEvent.change(select, { target: { value: 'Veo 3.1 - Fast' } });
 
-    expect(screen.getByText('8s')).toBeDefined();
+    expect(screen.getByText('8s (Default)')).toBeDefined();
 
     fireEvent.change(select, { target: { value: 'Veo 3.1 - Lite' } });
-    expect(screen.getByText('8s')).toBeDefined();
+    expect(screen.getByText('8s (Default)')).toBeDefined();
   });
 
   it('shows live duration buttons and resolution when Omni 1.1 Flash is selected', async () => {

@@ -24,6 +24,7 @@ import { ModelSelector } from '../engine/ModelSelector';
 import { MediaDetector } from '../engine/MediaDetector';
 import { SafeDownloader } from '../engine/SafeDownloader';
 import { VideoDuration } from '../utils/VideoDuration';
+import { FfmpegResolver } from '../utils/FfmpegResolver';
 import { generationEventBus } from '../events/GenerationEventBus';
 import { AppLogger } from '../utils/AppLogger';
 import { ProgressEstimator } from './ProgressEstimator';
@@ -59,7 +60,7 @@ export class VideoExecutionService {
     const targetModel = project?.settings?.videoModel || 'Omni 1.1 Flash';
     const targetRatio = (project?.settings?.videoRatio as any) || '16:9';
     const targetRes = project?.settings?.videoResolution || (targetModel.includes('Omni') ? '720p' : 'Default');
-    const targetDuration = targetModel.includes('Omni') ? (project?.settings?.videoDuration || '4s') : undefined;
+    const targetDuration = project?.settings?.videoDuration || (targetModel.includes('Quality') ? '8s' : targetModel.includes('Omni') ? '4s' : '8s');
 
     const log = new AppLogger({ profileId: worker.profileId, mirrorToStderr: false });
     log.info('video_exec', `Starting video job ${jobId} (Slot ${slotIndex}) [model=${targetModel}, mock=${isMock}]`);
@@ -185,9 +186,9 @@ export class VideoExecutionService {
         throw new Error(`Pre-generation gate failed: mode is "${configResult.mode}", expected "Video"`);
       }
       const modelVerified =
-        (targetModel.toLowerCase().includes('lite') && configResult.model.toLowerCase().includes('lite')) ||
-        (targetModel.toLowerCase().includes('fast') && configResult.model.toLowerCase().includes('fast')) ||
-        (targetModel.toLowerCase().includes('quality') && configResult.model.toLowerCase().includes('quality')) ||
+        (targetModel.toLowerCase().includes('lite') && configResult.model.toLowerCase().includes('lite') && !configResult.model.toLowerCase().includes('omni')) ||
+        (targetModel.toLowerCase().includes('fast') && configResult.model.toLowerCase().includes('fast') && !configResult.model.toLowerCase().includes('omni')) ||
+        (targetModel.toLowerCase().includes('quality') && configResult.model.toLowerCase().includes('quality') && !configResult.model.toLowerCase().includes('omni')) ||
         (targetModel.toLowerCase().includes('omni') && configResult.model.toLowerCase().includes('omni'));
 
       if (!modelVerified) {
@@ -231,14 +232,21 @@ export class VideoExecutionService {
 
       let capturedNetworkVideoUrl: string | null = null;
       const responseHandler = (res: Response) => {
-        const url = res.url();
-        const contentType = res.headers()['content-type'] || '';
-        if (
-          (contentType.includes('video/') || url.includes('flow-content.google/video') || (url.includes('/video/') && url.includes('.mp4'))) &&
-          !beforeVideoSources.has(url)
-        ) {
-          log.info('video_exec', `Sniffed video media response: ${url} (${contentType})`);
-          capturedNetworkVideoUrl = url;
+        try {
+          const url = res.url();
+          const contentType = res.headers()['content-type'] || '';
+          const isFlowVideo =
+            url.includes('flow-content.google/video') ||
+            (url.includes('/video/') && url.includes('.mp4')) ||
+            url.includes('media.video.redirect') ||
+            (url.includes('/asb/') && contentType.includes('video'));
+
+          if (isFlowVideo && !beforeVideoSources.has(url)) {
+            log.info('video_exec', `Sniffed specific Flow video media response: ${url} (${contentType})`);
+            capturedNetworkVideoUrl = url;
+          }
+        } catch {
+          // ignore
         }
       };
       page.on('response', responseHandler);
@@ -377,12 +385,22 @@ export class VideoExecutionService {
       // Duration extraction
       const durationResult = await VideoDuration.getDuration(destinationPath);
       const durationSeconds = durationResult?.durationSeconds;
-      const durationFormatted = durationResult?.durationFormatted || '4.0s';
+      const durationFormatted = durationResult?.durationFormatted || '8.0s';
       log.info('video_exec', 'Video duration measured', {
         durationSeconds,
         durationFormatted,
         method: durationResult?.method,
       });
+
+      // Extract real JPEG video poster frame via production-safe FfmpegResolver
+      log.info('video_exec', `Extracting video poster frame -> ${thumbnailPath}`);
+      await FfmpegResolver.extractPoster(destinationPath, thumbnailPath);
+
+      // Verify poster thumbnail exists on disk
+      const thumbCheck = AssetManager.verifyOutputFile(thumbnailPath, projectId);
+      if (!thumbCheck.valid) {
+        log.warn('video_exec', `Poster thumbnail verification notice: ${thumbCheck.error}`);
+      }
 
       const completionTime = new Date().toISOString();
       const totalElapsedTimeMs = Date.now() - startMs;
@@ -392,7 +410,7 @@ export class VideoExecutionService {
       const completedJob = await JobRepository.updateJob(projectId, jobId, {
         status: 'completed',
         outputPath: destinationPath,
-        thumbnailPath: destinationPath,
+        thumbnailPath: thumbnailPath,
       });
 
       // Update Slot in project
@@ -401,7 +419,7 @@ export class VideoExecutionService {
         result: {
           assetId: detectedUuid || `video_${promptId}_${jobId}`,
           mediaPath: destinationPath,
-          thumbnailPath: destinationPath,
+          thumbnailPath: thumbnailPath,
           modelUsed: targetModel,
           ratioUsed: targetRatio,
           resolution: targetRes,

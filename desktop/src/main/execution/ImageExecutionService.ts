@@ -23,6 +23,7 @@ import { FlowDriver } from '../engine/FlowDriver';
 import { MediaDetector } from '../engine/MediaDetector';
 import { AppLogger } from '../utils/AppLogger';
 import { ProgressEstimator } from './ProgressEstimator';
+import { FfmpegResolver } from '../utils/FfmpegResolver';
 
 export interface ExecutionOptions {
   triggerGenerationClick?: boolean; // Default true; false for dry-run/mock tests
@@ -168,14 +169,14 @@ export class ImageExecutionService {
         try {
           const url = typeof res.url === 'function' ? res.url() : '';
           const contentType = typeof res.headers === 'function' ? (res.headers()['content-type'] || '') : '';
-          if (
-            (contentType.startsWith('image/') ||
-             url.includes('flow-content.google/image') ||
-             url.includes('media.getMediaUrlRedirect') ||
-             (url.includes('/asb/') && !url.includes('=mm,22,15'))) &&
-            !beforeUuids.has(url)
-          ) {
-            log.info('image_exec', `Sniffed image media response: ${url} (${contentType})`);
+          const isFlowImage =
+            url.includes('flow-content.google/image') ||
+            url.includes('media.getMediaUrlRedirect') ||
+            url.includes('media.image.redirect') ||
+            (url.includes('/asb/') && !url.includes('=mm,22,15'));
+
+          if (isFlowImage && !beforeUuids.has(url)) {
+            log.info('image_exec', `Sniffed specific Flow image media response: ${url} (${contentType})`);
             capturedNetworkImageUrl = url;
             const parsed = MediaDetector.parseMediaUuids([url]).uuids;
             if (parsed.length > 0 && !beforeUuids.has(parsed[0])) {
@@ -289,10 +290,19 @@ export class ImageExecutionService {
         throw new Error(`Output validation failed: ${fileCheck.error}`);
       }
 
+      // Generate verified thumbnail
+      const thumbnailPath = AssetManager.getThumbnailDestinationPath(projectId, slotIndex, promptId, jobId);
+      await FfmpegResolver.generateImageThumbnail(destinationPath, thumbnailPath);
+      const thumbCheck = AssetManager.verifyOutputFile(thumbnailPath, projectId);
+      if (!thumbCheck.valid) {
+        log.warn('image_exec', `Thumbnail validation warning: ${thumbCheck.error}`);
+      }
+
       // Step 10: Complete Job & Update Exact Prompt Slot
       const completedJob = await JobRepository.updateJob(projectId, jobId, {
         status: 'completed',
         outputPath: destinationPath,
+        thumbnailPath: thumbnailPath,
       });
 
       const completionTime = new Date().toISOString();
@@ -304,6 +314,7 @@ export class ImageExecutionService {
         result: {
           assetId: newUuid,
           mediaPath: destinationPath,
+          thumbnailPath: thumbnailPath,
           modelUsed: requestedModel,
           ratioUsed: requestedRatio,
           generationResolution: 'Original',

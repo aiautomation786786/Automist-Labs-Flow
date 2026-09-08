@@ -66,6 +66,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
 
   // Video-Specific Settings
   const [videoModel, setVideoModel] = useState<'Omni 1.1 Flash' | 'Veo 3.1 - Quality' | 'Veo 3.1 - Fast' | 'Veo 3.1 - Lite'>('Veo 3.1 - Quality');
+  const [veoDuration, setVeoDuration] = useState<'4s' | '6s' | '8s'>('8s');
   const [omniResolution, setOmniResolution] = useState<'360p' | '720p'>('720p');
   const [omniDuration, setOmniDuration] = useState<'4s' | '6s' | '8s' | '10s'>('6s');
   const [videoDownloadQuality, setVideoDownloadQuality] = useState<'original' | '1080p'>('original');
@@ -199,7 +200,13 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
         videoDownloadQuality: !isImageMode ? videoDownloadQuality : undefined,
         videoModel: !isImageMode ? videoModel : undefined,
         videoResolution: !isImageMode ? (videoModel.includes('Omni') ? omniResolution : '720p') : undefined,
-        videoDuration: !isImageMode && videoModel.includes('Omni') ? omniDuration : undefined,
+        videoDuration: !isImageMode
+          ? videoModel === 'Veo 3.1 - Quality'
+            ? '8s'
+            : videoModel.includes('Omni')
+            ? omniDuration
+            : veoDuration
+          : undefined,
         selectedProfileIds,
         prompts: promptsList,
       });
@@ -214,17 +221,6 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
 
   // Get active profile display
   const activeProfile = profiles.find((p) => p.profileId === selectedProfileId);
-
-  // Model-specific native duration text
-  const getNativeDurationLabel = () => {
-    if (videoModel === 'Veo 3.1 - Quality') {
-      return '4s';
-    }
-    if (videoModel === 'Veo 3.1 - Fast' || videoModel === 'Veo 3.1 - Lite') {
-      return '8s';
-    }
-    return 'Native';
-  };
 
   return (
     <div className="studio-canvas">
@@ -653,15 +649,38 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                         fullWidth
                       />
                     </div>
-                  ) : (
-                    /* Model-Specific Native Flow Duration (Veo Quality -> 4s; Veo Lite/Fast -> 8s) */
+                  ) : videoModel === 'Veo 3.1 - Quality' ? (
+                    /* Model-Specific Native Flow Duration (Veo Quality -> 8s Cinema Default) */
                     <div className="native-info-pill">
                       <ClockIcon size={14} />
                       <span>Native Flow Duration:</span>
-                      <strong style={{ color: '#ffffff' }}>{getNativeDurationLabel()}</strong>
+                      <strong style={{ color: '#ffffff' }}>8s</strong>
                       <span style={{ opacity: 0.8, fontSize: '11px' }}>
-                        ({videoModel === 'Veo 3.1 - Quality' ? 'Cinema Quality Default' : 'Native Flow Default'})
+                        (Cinema Quality Default)
                       </span>
+                    </div>
+                  ) : (
+                    /* Veo 3.1 Fast & Lite -> Supported 4s, 6s, 8s Controls (Default 8s) */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                          Veo Duration
+                        </span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                          Supported 4s, 6s, or 8s generation
+                        </span>
+                      </div>
+                      <SegmentedControl<'4s' | '6s' | '8s'>
+                        options={[
+                          { value: '4s', label: '4s' },
+                          { value: '6s', label: '6s' },
+                          { value: '8s', label: '8s (Default)' },
+                        ]}
+                        value={veoDuration}
+                        onChange={(d) => setVeoDuration(d)}
+                        size="sm"
+                        fullWidth
+                      />
                     </div>
                   )}
                 </div>

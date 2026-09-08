@@ -7,6 +7,8 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { AppLogger } from './AppLogger';
 
+import { FfmpegResolver } from './FfmpegResolver';
+
 const execFileAsync = promisify(execFile);
 const logger = new AppLogger({ mirrorToStderr: false });
 
@@ -17,20 +19,10 @@ export interface VideoDurationResult {
 }
 
 /**
- * Searches for ffprobe in common Windows paths or PATH.
+ * Searches for ffprobe via centralized FfmpegResolver.
  */
 function findFfprobe(): string | null {
-  const candidates = [
-    'ffprobe',
-    'C:\\ffmpeg\\bin\\ffprobe.exe',
-    'C:\\Program Files\\ffmpeg\\bin\\ffprobe.exe',
-  ];
-
-  for (const p of candidates) {
-    if (p === 'ffprobe') continue; // Will be tested in execution
-    if (fs.existsSync(p)) return p;
-  }
-  return 'ffprobe';
+  return FfmpegResolver.findFfprobe();
 }
 
 /**

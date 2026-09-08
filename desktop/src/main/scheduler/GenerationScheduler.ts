@@ -48,6 +48,7 @@ export class GenerationScheduler {
   private readonly executionOptions: ExecutionOptions;
   private reconciliationTimer: NodeJS.Timeout | null = null;
   private isDispatching = false;
+  private hasPendingDispatch = false;
   private isStopped = false;
 
   constructor(workerPool: WorkerPool, executionOptions: ExecutionOptions = {}) {
@@ -109,9 +110,6 @@ export class GenerationScheduler {
     return createdJobs;
   }
 
-  /**
-   * Cancels a specific job if queued or in-flight.
-   */
   /**
    * Cancels a specific job if queued or in-flight.
    */
@@ -207,7 +205,11 @@ export class GenerationScheduler {
    * Triggers an evaluation of the queue to assign jobs to available workers.
    */
   triggerDispatch(): void {
-    if (this.isStopped || this.isDispatching) return;
+    if (this.isStopped) return;
+    if (this.isDispatching) {
+      this.hasPendingDispatch = true;
+      return;
+    }
 
     // Run asynchronously to avoid blocking the event caller
     setImmediate(() => {
@@ -223,6 +225,8 @@ export class GenerationScheduler {
 
     try {
       while (!this.isStopped) {
+        this.hasPendingDispatch = false;
+
         // Step 1: Find next eligible job and an available worker matching its profile restrictions
         const match = await this.findNextEligibleJobAndWorker();
         if (!match) {
@@ -264,6 +268,10 @@ export class GenerationScheduler {
       }
     } finally {
       this.isDispatching = false;
+      if (this.hasPendingDispatch && !this.isStopped) {
+        this.hasPendingDispatch = false;
+        this.triggerDispatch();
+      }
     }
   }
 
