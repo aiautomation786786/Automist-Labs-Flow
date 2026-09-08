@@ -4,6 +4,16 @@ import type {
   ProfileSessionSnapshot,
 } from '../../shared/types';
 import { PromptParser } from '../../shared/PromptParser';
+import { SegmentedControl } from '../components/SegmentedControl';
+import {
+  ImageIcon,
+  VideoIcon,
+  LayersIcon,
+  ClapperboardIcon,
+  SparklesIcon,
+  ClockIcon,
+  CheckIcon,
+} from '../components/Icons';
 
 export type GenerationMode = 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video';
 
@@ -34,7 +44,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
   onCancel,
   onNavigateProfiles,
 }) => {
-  const [mode, setMode] = useState<GenerationMode>(initialMode);
+  const mode = initialMode;
 
   // Project Info
   const [projectName, setProjectName] = useState('');
@@ -73,7 +83,6 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
         const list = await window.flowApi.listProfiles();
         setProfiles(list);
 
-        // Default single profile to first ready profile or first available
         const ready = list.find((p) => p.status === 'ready');
         if (ready) {
           setSelectedProfileId(ready.profileId);
@@ -81,7 +90,6 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
           setSelectedProfileId(list[0]!.profileId);
         }
 
-        // Default bulk profiles to all enabled/ready profiles
         const allIds = new Set(list.map((p) => p.profileId));
         setSelectedBulkProfileIds(allIds);
       } catch (err) {
@@ -91,6 +99,20 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
     fetchProfiles();
   }, []);
 
+  // Set default project name on mode change
+  useEffect(() => {
+    const modeLabel =
+      mode === 'single_image'
+        ? 'Single Image'
+        : mode === 'single_video'
+        ? 'Single Video'
+        : mode === 'bulk_image'
+        ? 'Bulk Images'
+        : 'Bulk Videos';
+    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setProjectName(`${modeLabel} · ${nowStr}`);
+  }, [mode]);
+
   // Parse bulk prompts
   const parsedBulkPrompts = useMemo(() => {
     if (!isBulkMode) return [];
@@ -99,23 +121,15 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
 
   const activePromptsCount = isBulkMode
     ? parsedBulkPrompts.length
-    : singlePrompt.trim().length > 0 ? 1 : 0;
+    : singlePrompt.trim().length > 0
+    ? 1
+    : 0;
 
-  // Sync mode whenever initialMode prop changes (e.g. from sidebar clicks)
-  useEffect(() => {
-    if (initialMode) {
-      setMode(initialMode);
+  const handleApplySampleSinglePrompt = (sample?: string) => {
+    if (sample) {
+      setSinglePrompt(sample);
+      return;
     }
-  }, [initialMode]);
-
-  // Set default project name on mode switch if unchanged
-  useEffect(() => {
-    const modeLabel = mode === 'single_image' ? 'Single Image' : mode === 'single_video' ? 'Single Video' : mode === 'bulk_image' ? 'Bulk Images' : 'Bulk Videos';
-    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    setProjectName(`${modeLabel} - ${nowStr}`);
-  }, [mode]);
-
-  const handleApplySampleSinglePrompt = () => {
     const list = isImageMode ? SAMPLE_IMAGE_PROMPTS : SAMPLE_VIDEO_PROMPTS;
     const random = list[Math.floor(Math.random() * list.length)]!;
     setSinglePrompt(random);
@@ -152,7 +166,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
     if (!window.flowApi) return;
 
     if (activePromptsCount === 0) {
-      setErrorMsg(isBulkMode ? 'Please enter at least one prompt line.' : 'Please enter a prompt.');
+      setErrorMsg(isBulkMode ? 'Please enter at least one prompt line.' : 'Please enter a creative prompt.');
       return;
     }
 
@@ -160,12 +174,10 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
       setIsSubmitting(true);
       setErrorMsg(null);
 
-      // Build prompts list
       const promptsList: Array<{ text: string; type: 'image' | 'video' }> = isBulkMode
         ? parsedBulkPrompts.map((p) => ({ text: p.text, type: p.type }))
         : [{ text: singlePrompt.trim(), type: isImageMode ? 'image' : 'video' }];
 
-      // Target profile IDs
       const selectedProfileIds = isBulkMode
         ? Array.from(selectedBulkProfileIds)
         : selectedProfileId ? [selectedProfileId] : undefined;
@@ -185,9 +197,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
         prompts: promptsList,
       });
 
-      // Automatically enqueue and start generation
       await window.flowApi.startProjectGeneration(project.projectId);
-
       onProjectCreated(project.projectId);
     } catch (err) {
       setErrorMsg((err as Error).message);
@@ -195,61 +205,109 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
     }
   };
 
-  return (
-    <div style={{ padding: '24px 32px', maxWidth: '1200px', margin: '0 auto', overflowY: 'auto', height: '100%' }}>
-      {/* Studio Header */}
-      <div style={{ marginBottom: '24px' }}>
-        <h1 style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>
-          Generation Studio
-        </h1>
-        <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-          Compose, configure, and execute image and video generations with Google Flow
-        </p>
-      </div>
+  // Get active profile display
+  const activeProfile = profiles.find((p) => p.profileId === selectedProfileId);
 
-      {/* 4-Mode Selector Tabs */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: '12px',
-          marginBottom: '24px',
-        }}
-      >
-        {[
-          { id: 'single_image', label: 'Single Image', desc: '1 Image · Nano Banana 2', icon: '🖼️' },
-          { id: 'single_video', label: 'Single Video', desc: '1 Video · Veo 3.1 or Omni', icon: '🎬' },
-          { id: 'bulk_image', label: 'Bulk Images', desc: 'Multi-prompt parallel images', icon: '📚' },
-          { id: 'bulk_video', label: 'Bulk Videos', desc: 'Multi-prompt parallel videos', icon: '🎥' },
-        ].map((tab) => {
-          const isActive = mode === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setMode(tab.id as GenerationMode)}
+  // Model-specific native duration text
+  const getNativeDurationLabel = () => {
+    if (videoModel === 'Veo 3.1 - Quality') {
+      return '4s';
+    }
+    if (videoModel === 'Veo 3.1 - Fast' || videoModel === 'Veo 3.1 - Lite') {
+      return '8s';
+    }
+    return 'Native';
+  };
+
+  return (
+    <div className="studio-canvas">
+      {/* Studio Header (Unboxed & Minimalist) */}
+      <div className="studio-header">
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
+            <span
               style={{
-                background: isActive ? 'var(--primary-gradient)' : 'var(--bg-card)',
-                color: isActive ? '#ffffff' : 'var(--text-primary)',
-                border: isActive ? '1px solid rgba(255, 255, 255, 0.25)' : '1px solid var(--border-color)',
-                borderRadius: 'var(--radius-md)',
-                padding: '14px 16px',
-                textAlign: 'left',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-                boxShadow: isActive ? '0 4px 14px rgba(99, 102, 241, 0.35)' : 'var(--shadow-sm)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '32px',
+                height: '32px',
+                borderRadius: '8px',
+                backgroundColor: isImageMode ? 'var(--info-image-bg)' : 'var(--info-video-bg)',
+                color: isImageMode ? 'var(--info-image)' : 'var(--info-video)',
+                border: `1px solid ${isImageMode ? 'var(--info-image-border)' : 'var(--info-video-border)'}`,
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                <span style={{ fontSize: '18px' }}>{tab.icon}</span>
-                <span style={{ fontWeight: 600, fontSize: '14px' }}>{tab.label}</span>
-              </div>
-              <div style={{ fontSize: '12px', opacity: isActive ? 0.9 : 0.65 }}>
-                {tab.desc}
-              </div>
-            </button>
-          );
-        })}
+              {mode === 'single_image' && <ImageIcon size={18} />}
+              {mode === 'single_video' && <VideoIcon size={18} />}
+              {mode === 'bulk_image' && <LayersIcon size={18} />}
+              {mode === 'bulk_video' && <ClapperboardIcon size={18} />}
+            </span>
+            <h1 style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em' }}>
+              {mode === 'single_image' && 'Single Image Studio'}
+              {mode === 'single_video' && 'Single Video Studio'}
+              {mode === 'bulk_image' && 'Bulk Image Studio'}
+              {mode === 'bulk_video' && 'Bulk Video Studio'}
+            </h1>
+            <span
+              style={{
+                fontSize: '11px',
+                fontWeight: 600,
+                padding: '2px 8px',
+                borderRadius: '999px',
+                backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                color: 'var(--text-secondary)',
+                border: '1px solid var(--border-color)',
+              }}
+            >
+              {isImageMode ? 'Nano Banana 2' : videoModel}
+            </span>
+          </div>
+          <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+            {mode === 'single_image' && 'Generate high-fidelity imagery with prompt styling and 2K upscale export'}
+            {mode === 'single_video' && 'Generate cinematic motion with Veo 3.1 & Omni 1.1 with 1080p upscale export'}
+            {mode === 'bulk_image' && 'High-throughput multi-prompt parallel image generation mapped across Flow accounts'}
+            {mode === 'bulk_video' && 'Multi-scene parallel cinematic video generation dispatched across Flow accounts'}
+          </p>
+        </div>
+
+        {/* Inline Project Name & Campaign Tag Input */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 500 }}>Project Name</span>
+            <input
+              type="text"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              placeholder="Project name..."
+              style={{
+                fontSize: '12.5px',
+                padding: '6px 10px',
+                borderRadius: 'var(--radius-sm)',
+                width: '180px',
+                backgroundColor: 'var(--bg-subtle)',
+                border: '1px solid var(--border-color)',
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 500 }}>Campaign Tag</span>
+            <input
+              type="text"
+              value={campaignTag}
+              onChange={(e) => setCampaignTag(e.target.value)}
+              placeholder="e.g. Q4 Studio Test"
+              style={{
+                fontSize: '12.5px',
+                padding: '6px 10px',
+                borderRadius: 'var(--radius-sm)',
+                width: '130px',
+                backgroundColor: 'var(--bg-subtle)',
+                border: '1px solid var(--border-color)',
+              }}
+            />
+          </div>
+        </div>
       </div>
 
       {errorMsg && (
@@ -261,7 +319,6 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
             borderRadius: 'var(--radius-md)',
             color: '#fb7185',
             fontSize: '13px',
-            marginBottom: '20px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -278,168 +335,314 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
         </div>
       )}
 
-      {/* Main Composer Form */}
-      <form onSubmit={handleSubmit}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '24px', alignItems: 'start' }}>
-          {/* Left Column: Prompts & Project Metadata */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Project Details Card */}
-            <div className="card" style={{ padding: '18px 20px' }}>
-              <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '14px', color: 'var(--text-primary)' }}>
-                Project Information
-              </h3>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                    Project Name *
-                  </label>
-                  <input
-                    type="text"
-                    value={projectName}
-                    onChange={(e) => setProjectName(e.target.value)}
-                    placeholder="Enter project name..."
-                    required
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      borderRadius: 'var(--radius-sm)',
-                      border: '1px solid var(--border-color)',
-                      fontSize: '13px',
-                    }}
-                  />
+      {/* Main Creative Form */}
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        {/* Creative Prompt Composer (Hero Element) */}
+        <div className="prompt-hero-container">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <SparklesIcon size={16} style={{ color: 'var(--primary)' }} />
+              <span style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>
+                {isBulkMode ? 'Batch Prompt Composer' : 'Creative Prompt Composer'}
+              </span>
+            </div>
+            {isBulkMode ? (
+              <button
+                type="button"
+                className="sample-chip"
+                onClick={handleApplySampleBulkPrompts}
+              >
+                + Insert Sample Batch
+              </button>
+            ) : (
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {(isImageMode ? SAMPLE_IMAGE_PROMPTS : SAMPLE_VIDEO_PROMPTS).slice(0, 2).map((s, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    className="sample-chip"
+                    onClick={() => handleApplySampleSinglePrompt(s)}
+                    title={s}
+                  >
+                    + Sample #{idx + 1}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {!isBulkMode ? (
+            <div>
+              <textarea
+                value={singlePrompt}
+                onChange={(e) => setSinglePrompt(e.target.value)}
+                placeholder={
+                  isImageMode
+                    ? 'Describe your desired image with artistic precision (e.g. A small red apple resting on a clean white table in a softly lit studio, minimalist photography...)'
+                    : 'Describe camera movement and cinematography (e.g. A small red apple resting on a clean white table in a softly lit studio, with a gentle cinematic camera push-in...)'
+                }
+                rows={5}
+                style={{
+                  width: '100%',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  outline: 'none',
+                  fontSize: '14.5px',
+                  lineHeight: '1.6',
+                  color: 'var(--text-primary)',
+                  resize: 'vertical',
+                  fontFamily: 'inherit',
+                  padding: '4px 0',
+                }}
+              />
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  paddingTop: '12px',
+                  borderTop: '1px solid var(--border-subtle)',
+                  marginTop: '8px',
+                }}
+              >
+                <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                  <span>Scope: <strong>1 item</strong></span>
+                  <span>Engine: <strong style={{ color: 'var(--text-secondary)' }}>{isImageMode ? 'Nano Banana 2' : videoModel}</strong></span>
                 </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                    Campaign Tag (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={campaignTag}
-                    onChange={(e) => setCampaignTag(e.target.value)}
-                    placeholder="e.g. Q4 Studio Test"
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      borderRadius: 'var(--radius-sm)',
-                      border: '1px solid var(--border-color)',
-                      fontSize: '13px',
-                    }}
-                  />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  {singlePrompt.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSinglePrompt('')}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '11.5px', cursor: 'pointer' }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                    {singlePrompt.length} chars
+                  </span>
                 </div>
               </div>
             </div>
+          ) : (
+            <div>
+              <textarea
+                value={bulkPromptsText}
+                onChange={(e) => setBulkPromptsText(e.target.value)}
+                placeholder="Enter one creative prompt per line...&#10;&#10;Prompt 1 -> Slot #01&#10;Prompt 2 -> Slot #02&#10;Prompt 3 -> Slot #03"
+                rows={7}
+                style={{
+                  width: '100%',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  outline: 'none',
+                  fontSize: '13.5px',
+                  lineHeight: '1.6',
+                  color: 'var(--text-primary)',
+                  resize: 'vertical',
+                  fontFamily: 'var(--font-mono)',
+                  padding: '4px 0',
+                }}
+              />
 
-            {/* Prompt Input Card */}
-            <div className="card" style={{ padding: '18px 20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                <div>
-                  <h3 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {isBulkMode ? 'Bulk Prompts' : 'Prompt'}
-                  </h3>
-                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                    {isBulkMode
-                      ? 'Enter multiple prompts separated by newlines (1 permanent slot per line)'
-                      : `Enter the prompt for this ${isImageMode ? 'image' : 'video'} generation`}
-                  </p>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  paddingTop: '12px',
+                  borderTop: '1px solid var(--border-subtle)',
+                  marginTop: '8px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span
+                    style={{
+                      fontSize: '11.5px',
+                      fontWeight: 600,
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      backgroundColor: parsedBulkPrompts.length > 0 ? 'var(--primary-subtle)' : 'var(--bg-subtle)',
+                      color: parsedBulkPrompts.length > 0 ? '#a5b4fc' : 'var(--text-muted)',
+                      border: `1px solid ${parsedBulkPrompts.length > 0 ? 'var(--primary-border)' : 'var(--border-color)'}`,
+                    }}
+                  >
+                    {parsedBulkPrompts.length} {parsedBulkPrompts.length === 1 ? 'Slot' : 'Slots'} Assigned
+                  </span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    Permanent slot mapping (0 .. {Math.max(0, parsedBulkPrompts.length - 1)})
+                  </span>
                 </div>
-                <button
-                  type="button"
-                  className="btn-secondary btn-sm"
-                  onClick={isBulkMode ? handleApplySampleBulkPrompts : handleApplySampleSinglePrompt}
-                  style={{ fontSize: '11px', padding: '4px 10px' }}
-                >
-                  Insert Sample
-                </button>
+
+                {bulkPromptsText.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setBulkPromptsText('')}
+                    style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '11.5px', cursor: 'pointer' }}
+                  >
+                    Clear All
+                  </button>
+                )}
               </div>
 
-              {!isBulkMode ? (
-                <div>
-                  <textarea
-                    value={singlePrompt}
-                    onChange={(e) => setSinglePrompt(e.target.value)}
-                    placeholder={
-                      isImageMode
-                        ? 'e.g. A small red apple resting on a clean white table in a softly lit studio...'
-                        : 'e.g. A small red apple resting on a clean white table, gentle cinematic camera push-in...'
-                    }
-                    rows={6}
-                    style={{
-                      width: '100%',
-                      padding: '12px',
-                      borderRadius: 'var(--radius-sm)',
-                      border: '1px solid var(--border-color)',
-                      fontSize: '13px',
-                      lineHeight: 1.5,
-                      resize: 'vertical',
-                      fontFamily: 'inherit',
-                    }}
-                  />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '11px', color: 'var(--text-muted)' }}>
-                    <span>Quantity: exactly x1</span>
-                    <span>{singlePrompt.length} characters</span>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <textarea
-                    value={bulkPromptsText}
-                    onChange={(e) => setBulkPromptsText(e.target.value)}
-                    placeholder="Enter one prompt per line...&#10;&#10;Prompt 1 -> Slot #01&#10;Prompt 2 -> Slot #02&#10;Prompt 3 -> Slot #03"
-                    rows={8}
-                    style={{
-                      width: '100%',
-                      padding: '12px',
-                      borderRadius: 'var(--radius-sm)',
-                      border: '1px solid var(--border-color)',
-                      fontSize: '13px',
-                      lineHeight: 1.5,
-                      resize: 'vertical',
-                      fontFamily: 'monospace',
-                    }}
-                  />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <span className="badge badge-queued" style={{ fontSize: '11px' }}>
-                        {parsedBulkPrompts.length} Slots Assigned
-                      </span>
-                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                        Permanent slot mapping (0 .. {Math.max(0, parsedBulkPrompts.length - 1)})
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Live Slot Breakdown Preview for Bulk */}
-                  {parsedBulkPrompts.length > 0 && (
+              {/* Live Scene / Slot Breakdown Preview */}
+              {parsedBulkPrompts.length > 0 && (
+                <div
+                  style={{
+                    marginTop: '12px',
+                    padding: '10px 14px',
+                    backgroundColor: 'var(--bg-input)',
+                    borderRadius: 'var(--radius-sm)',
+                    maxHeight: '120px',
+                    overflowY: 'auto',
+                    fontSize: '12px',
+                    border: '1px solid var(--border-color)',
+                  }}
+                >
+                  {parsedBulkPrompts.map((p, idx) => (
                     <div
+                      key={idx}
                       style={{
-                        marginTop: '12px',
-                        padding: '10px 12px',
-                        backgroundColor: 'var(--bg-input)',
-                        borderRadius: 'var(--radius-sm)',
-                        maxHeight: '140px',
-                        overflowY: 'auto',
-                        fontSize: '12px',
-                        border: '1px solid var(--border-color)',
+                        display: 'flex',
+                        gap: '8px',
+                        padding: '3px 0',
+                        borderBottom: '1px solid var(--border-subtle)',
                       }}
                     >
-                      {parsedBulkPrompts.map((p, idx) => (
-                        <div
-                          key={idx}
-                          style={{
-                            display: 'flex',
-                            gap: '8px',
-                            padding: '4px 0',
-                            borderBottom: '1px solid var(--border-subtle)',
-                          }}
-                        >
-                          <span style={{ fontWeight: 700, color: 'var(--primary)', width: '36px', fontFamily: 'var(--font-mono)' }}>
-                            #{String(idx + 1).padStart(2, '0')}
-                          </span>
-                          <span style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {p.text}
-                          </span>
-                        </div>
-                      ))}
+                      <span style={{ fontWeight: 700, color: 'var(--primary)', width: '60px', fontFamily: 'var(--font-mono)' }}>
+                        {mode === 'bulk_video' ? `${String(idx + 1).padStart(2, '0')} Scene` : `#${String(idx + 1).padStart(2, '0')}`}
+                      </span>
+                      <span style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {p.text}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Unboxed Controls Row (Segmented Controls & Surfaces) */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
+          {/* Aspect Ratio & Model Block */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* Aspect Ratio */}
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Aspect Ratio
+              </label>
+              <SegmentedControl<SupportedAspectRatio>
+                options={[
+                  { value: '16:9', label: '16:9 Landscape', icon: '📐' },
+                  { value: '9:16', label: '9:16 Portrait', icon: '📱' },
+                ]}
+                value={aspectRatio}
+                onChange={(val) => setAspectRatio(val)}
+                fullWidth
+              />
+            </div>
+
+            {/* Model Selection */}
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {isImageMode ? 'AI Image Engine' : 'AI Video Model'}
+              </label>
+              {isImageMode ? (
+                <div
+                  style={{
+                    padding: '8px 14px',
+                    backgroundColor: 'var(--info-image-bg)',
+                    border: '1px solid var(--info-image-border)',
+                    borderRadius: 'var(--radius-md)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <ImageIcon size={16} style={{ color: 'var(--info-image)' }} />
+                    <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}>
+                      Nano Banana 2
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '11px', color: 'var(--info-image)', fontWeight: 600 }}>
+                    ✓ Verified Engine
+                  </span>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <select
+                    aria-label="AI Video Model"
+                    value={videoModel}
+                    onChange={(e) => setVideoModel(e.target.value as any)}
+                    style={{
+                      width: '100%',
+                      padding: '9px 14px',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--border-color)',
+                      fontSize: '13px',
+                      backgroundColor: 'var(--bg-surface)',
+                      color: 'var(--text-primary)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <option value="Veo 3.1 - Quality">Veo 3.1 - Quality (High Fidelity Cinema)</option>
+                    <option value="Veo 3.1 - Fast">Veo 3.1 - Fast (Rapid Generation)</option>
+                    <option value="Veo 3.1 - Lite">Veo 3.1 - Lite (Lightweight)</option>
+                    <option value="Omni 1.1 Flash">Omni 1.1 Flash (Multimodal & Fast)</option>
+                  </select>
+
+                  {/* Context-Sensitive Duration & Resolution */}
+                  {videoModel.includes('Omni') ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                          Omni Duration
+                        </span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                          Omni 1.1 Flash live duration controls
+                        </span>
+                      </div>
+                      <SegmentedControl<'4s' | '6s' | '8s' | '10s'>
+                        options={[
+                          { value: '4s', label: '4s' },
+                          { value: '6s', label: '6s' },
+                          { value: '8s', label: '8s' },
+                          { value: '10s', label: '10s' },
+                        ]}
+                        value={omniDuration}
+                        onChange={(d) => setOmniDuration(d)}
+                        size="sm"
+                        fullWidth
+                      />
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+                        <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                          Omni Generation Resolution
+                        </span>
+                      </div>
+                      <SegmentedControl<'360p' | '720p'>
+                        options={[
+                          { value: '360p', label: '360p' },
+                          { value: '720p', label: '720p' },
+                        ]}
+                        value={omniResolution}
+                        onChange={(r) => setOmniResolution(r)}
+                        size="sm"
+                        fullWidth
+                      />
+                    </div>
+                  ) : (
+                    /* Model-Specific Native Flow Duration (Veo Quality -> 4s; Veo Lite/Fast -> 8s) */
+                    <div className="native-info-pill">
+                      <ClockIcon size={14} />
+                      <span>Native Flow Duration:</span>
+                      <strong style={{ color: '#ffffff' }}>{getNativeDurationLabel()}</strong>
+                      <span style={{ opacity: 0.8, fontSize: '11px' }}>
+                        ({videoModel === 'Veo 3.1 - Quality' ? 'Cinema Quality Default' : 'Native Flow Default'})
+                      </span>
                     </div>
                   )}
                 </div>
@@ -447,374 +650,177 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
             </div>
           </div>
 
-          {/* Right Column: Model, Generation, Export, and Account Settings */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Model & Generation Controls Card */}
-            <div className="card" style={{ padding: '18px 20px' }}>
-              <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '14px', color: 'var(--text-primary)' }}>
-                Model & Generation Settings
-              </h3>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {/* Model Selection */}
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                    {isImageMode ? 'Image Model' : 'Video Model'}
-                  </label>
-                  {isImageMode ? (
-                    <div
-                      style={{
-                        padding: '9px 12px',
-                        backgroundColor: 'var(--info-image-bg)',
-                        border: '1px solid var(--info-image-border)',
-                        borderRadius: 'var(--radius-sm)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                      }}
-                    >
-                      <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--info-image)' }}>
-                        Nano Banana 2
-                      </span>
-                      <span style={{ fontSize: '11px', color: 'var(--info-image)', fontWeight: 500 }}>
-                        Active Default
-                      </span>
-                    </div>
-                  ) : (
-                    <select
-                      value={videoModel}
-                      onChange={(e) => setVideoModel(e.target.value as any)}
-                      style={{
-                        width: '100%',
-                        padding: '9px 12px',
-                        borderRadius: 'var(--radius-sm)',
-                        border: '1px solid var(--border-color)',
-                        fontSize: '13px',
-                        backgroundColor: 'var(--bg-input)',
-                        color: 'var(--text-primary)',
-                      }}
-                    >
-                      <option value="Veo 3.1 - Quality">Veo 3.1 - Quality (High Fidelity)</option>
-                      <option value="Veo 3.1 - Fast">Veo 3.1 - Fast (Rapid Generation)</option>
-                      <option value="Veo 3.1 - Lite">Veo 3.1 - Lite (Lightweight)</option>
-                      <option value="Omni 1.1 Flash">Omni 1.1 Flash (Multimodal & Fast)</option>
-                    </select>
-                  )}
-                </div>
-
-                {/* Aspect Ratio */}
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                    Aspect Ratio
-                  </label>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                    {(['16:9', '9:16'] as SupportedAspectRatio[]).map((r) => {
-                      const isSel = aspectRatio === r;
-                      return (
-                        <button
-                          key={r}
-                          type="button"
-                          onClick={() => setAspectRatio(r)}
-                          style={{
-                            padding: '8px 12px',
-                            borderRadius: 'var(--radius-sm)',
-                            border: `1px solid ${isSel ? 'var(--primary)' : 'var(--border-color)'}`,
-                            backgroundColor: isSel ? 'rgba(99, 102, 241, 0.2)' : 'var(--bg-surface)',
-                            color: isSel ? '#ffffff' : 'var(--text-secondary)',
-                            fontWeight: isSel ? 600 : 500,
-                            fontSize: '12px',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          {r === '16:9' ? '16:9 (Landscape)' : '9:16 (Portrait)'}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Video Duration (Contextual: Only for Omni Flash) */}
-                {!isImageMode && (
-                  <div>
-                    {videoModel.includes('Omni') && (
-                      <div style={{ marginBottom: '12px' }}>
-                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                          Generation Resolution
-                        </label>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                          {(['720p', '360p'] as const).map((r) => {
-                            const isSel = omniResolution === r;
-                            return (
-                              <button
-                                key={r}
-                                type="button"
-                                onClick={() => setOmniResolution(r)}
-                                style={{
-                                  padding: '6px 8px',
-                                  borderRadius: 'var(--radius-sm)',
-                                  border: `1px solid ${isSel ? 'var(--primary)' : 'var(--border-color)'}`,
-                                  backgroundColor: isSel ? 'rgba(99, 102, 241, 0.2)' : 'var(--bg-surface)',
-                                  color: isSel ? '#ffffff' : 'var(--text-secondary)',
-                                  fontWeight: isSel ? 600 : 500,
-                                  fontSize: '12px',
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                {r}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                      Duration
-                    </label>
-                    {videoModel.includes('Omni') ? (
-                      <div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
-                          {(['4s', '6s', '8s', '10s'] as const).map((d) => {
-                            const isSel = omniDuration === d;
-                            return (
-                              <button
-                                key={d}
-                                type="button"
-                                onClick={() => setOmniDuration(d)}
-                                style={{
-                                  padding: '6px 8px',
-                                  borderRadius: 'var(--radius-sm)',
-                                  border: `1px solid ${isSel ? 'var(--primary)' : 'var(--border-color)'}`,
-                                  backgroundColor: isSel ? 'rgba(99, 102, 241, 0.2)' : 'var(--bg-surface)',
-                                  color: isSel ? '#ffffff' : 'var(--text-secondary)',
-                                  fontWeight: isSel ? 600 : 500,
-                                  fontSize: '12px',
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                {d}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                          Omni 1.1 Flash live duration controls
-                        </div>
-                      </div>
-                    ) : (
-                      <div
-                        style={{
-                          padding: '9px 12px',
-                          backgroundColor: 'var(--bg-surface)',
-                          borderRadius: 'var(--radius-sm)',
-                          border: '1px solid var(--border-color)',
-                          fontSize: '12px',
-                          color: 'var(--text-primary)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                        }}
-                      >
-                        <span>Native Flow Duration</span>
-                        <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--primary)' }}>
-                          {videoModel.includes('Quality') ? '4.0s' : '8.0s'}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Final Export / Download Quality (NO 4K!) */}
-                <div style={{ paddingTop: '10px', borderTop: '1px solid var(--border-color)' }}>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                    Export / Download Resolution
-                  </label>
-                  {isImageMode ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                      {[
-                        { id: 'original', label: 'Original (Native)' },
-                        { id: '2k', label: '2K Upscaled' },
-                      ].map((q) => {
-                        const isSel = imageDownloadQuality === q.id;
-                        return (
-                          <button
-                            key={q.id}
-                            type="button"
-                            onClick={() => setImageDownloadQuality(q.id as any)}
-                            style={{
-                              padding: '8px 10px',
-                              borderRadius: 'var(--radius-sm)',
-                              border: `1px solid ${isSel ? 'var(--primary)' : 'var(--border-color)'}`,
-                              backgroundColor: isSel ? 'rgba(99, 102, 241, 0.2)' : 'var(--bg-surface)',
-                              color: isSel ? '#ffffff' : 'var(--text-secondary)',
-                              fontWeight: isSel ? 600 : 500,
-                              fontSize: '12px',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            {q.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                      {[
-                        { id: 'original', label: 'Original (Native)' },
-                        { id: '1080p', label: '1080p Upscaled' },
-                      ].map((q) => {
-                        const isSel = videoDownloadQuality === q.id;
-                        return (
-                          <button
-                            key={q.id}
-                            type="button"
-                            onClick={() => setVideoDownloadQuality(q.id as any)}
-                            style={{
-                              padding: '8px 10px',
-                              borderRadius: 'var(--radius-sm)',
-                              border: `1px solid ${isSel ? 'var(--primary)' : 'var(--border-color)'}`,
-                              backgroundColor: isSel ? 'rgba(99, 102, 241, 0.2)' : 'var(--bg-surface)',
-                              color: isSel ? '#ffffff' : 'var(--text-secondary)',
-                              fontWeight: isSel ? 600 : 500,
-                              fontSize: '12px',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            {q.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
+          {/* Export Quality & Target Account Block */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* Export Resolution (STRICT: NO 4K!) */}
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Export Resolution
+              </label>
+              {isImageMode ? (
+                <SegmentedControl<'original' | '2k'>
+                  options={[
+                    { value: 'original', label: 'Original (Native)' },
+                    { value: '2k', label: '2K Upscaled', badge: 'HD' },
+                  ]}
+                  value={imageDownloadQuality}
+                  onChange={(val) => setImageDownloadQuality(val)}
+                  fullWidth
+                />
+              ) : (
+                <SegmentedControl<'original' | '1080p'>
+                  options={[
+                    { value: 'original', label: 'Original (Native)' },
+                    { value: '1080p', label: '1080p Upscaled', badge: 'FHD' },
+                  ]}
+                  value={videoDownloadQuality}
+                  onChange={(val) => setVideoDownloadQuality(val)}
+                  fullWidth
+                />
+              )}
             </div>
 
-            {/* Account / Profile Selection Card */}
-            <div className="card" style={{ padding: '18px 20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                <h3 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  {isBulkMode ? 'Account Scheduling' : 'Target Account'}
-                </h3>
+            {/* Target Account(s) */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  {isBulkMode ? 'Parallel Account Dispatch' : 'Execution Account'}
+                </label>
                 {isBulkMode && (
                   <button
                     type="button"
                     onClick={handleSelectAllReadyProfiles}
                     style={{ fontSize: '11px', color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
                   >
-                    Select Ready
+                    Select Ready ({profiles.filter((p) => p.status === 'ready').length})
                   </button>
                 )}
               </div>
 
-              {profiles.length === 0 ? (
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  No Flow profiles configured.{' '}
-                  <button
-                    type="button"
-                    onClick={onNavigateProfiles}
-                    style={{ color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+              {!isBulkMode ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <select
+                    aria-label="Execution Account"
+                    value={selectedProfileId}
+                    onChange={(e) => setSelectedProfileId(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '9px 14px',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--border-color)',
+                      fontSize: '13px',
+                      backgroundColor: 'var(--bg-surface)',
+                      color: 'var(--text-primary)',
+                      cursor: 'pointer',
+                    }}
                   >
-                    Manage Profiles
-                  </button>
+                    {profiles.map((p) => (
+                      <option key={p.profileId} value={p.profileId}>
+                        {p.displayName} ({p.status === 'ready' ? 'Ready' : p.status}) {p.detectedEmail ? `· ${p.detectedEmail}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {activeProfile && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                      <div
+                        style={{
+                          width: '7px',
+                          height: '7px',
+                          borderRadius: '50%',
+                          backgroundColor: activeProfile.status === 'ready' ? 'var(--success)' : 'var(--warning)',
+                        }}
+                      />
+                      <span>{activeProfile.status === 'ready' ? 'Session authenticated & ready' : `Status: ${activeProfile.status}`}</span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {profiles.map((p) => {
-                    const isReady = p.status === 'ready';
-                    const isSelected = isBulkMode
-                      ? selectedBulkProfileIds.has(p.profileId)
-                      : selectedProfileId === p.profileId;
-
-                    return (
-                      <div
-                        key={p.profileId}
-                        onClick={() => {
-                          if (isBulkMode) {
-                            handleToggleBulkProfile(p.profileId);
-                          } else {
-                            setSelectedProfileId(p.profileId);
-                          }
-                        }}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          padding: '10px 14px',
-                          borderRadius: 'var(--radius-sm)',
-                          border: `1px solid ${isSelected ? 'var(--primary)' : 'var(--border-color)'}`,
-                          backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.12)' : 'var(--bg-surface)',
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <input
-                            type={isBulkMode ? 'checkbox' : 'radio'}
-                            checked={isSelected}
-                            onChange={() => {}}
-                            style={{ cursor: 'pointer', accentColor: 'var(--primary)' }}
-                          />
-                          <div>
-                            <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)' }}>
-                              {p.displayName}
-                            </div>
-                            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                              {p.detectedEmail || 'No account linked'}
-                            </div>
-                          </div>
-                        </div>
-
-                        <span
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {profiles.map((p) => {
+                      const isSel = selectedBulkProfileIds.has(p.profileId);
+                      const isReady = p.status === 'ready';
+                      return (
+                        <button
+                          key={p.profileId}
+                          type="button"
+                          onClick={() => handleToggleBulkProfile(p.profileId)}
                           style={{
-                            fontSize: '11px',
-                            padding: '2px 8px',
-                            borderRadius: '4px',
-                            backgroundColor: isReady ? 'var(--success-bg)' : 'var(--bg-subtle)',
-                            color: isReady ? 'var(--success)' : 'var(--text-muted)',
-                            border: `1px solid ${isReady ? 'var(--success-border)' : 'var(--border-color)'}`,
-                            fontWeight: 600,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '6px 12px',
+                            borderRadius: 'var(--radius-md)',
+                            border: `1px solid ${isSel ? 'var(--primary)' : 'var(--border-color)'}`,
+                            backgroundColor: isSel ? 'var(--primary-subtle)' : 'var(--bg-surface)',
+                            color: isSel ? 'var(--text-primary)' : 'var(--text-secondary)',
+                            fontSize: '12px',
+                            fontWeight: isSel ? 600 : 500,
+                            cursor: 'pointer',
                           }}
                         >
-                          {isReady ? 'Ready' : p.status}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {isBulkMode && (
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '10px', lineHeight: 1.4 }}>
-                  ✓ Multi-account parallel scheduling enabled. Jobs dispatch concurrently across selected ready profiles.
+                          <div
+                            style={{
+                              width: '7px',
+                              height: '7px',
+                              borderRadius: '50%',
+                              backgroundColor: isReady ? 'var(--success)' : 'var(--warning)',
+                            }}
+                          />
+                          <span>{p.displayName}</span>
+                          {isSel && <CheckIcon size={12} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="parallel-badge">
+                    ⚡ {selectedBulkProfileIds.size} Accounts Active · Concurrent Parallel Worker Dispatch
+                  </div>
                 </div>
               )}
             </div>
+          </div>
+        </div>
 
-            {/* Launch Actions */}
-            <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={onCancel}
-                style={{ flex: 1 }}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="btn-primary"
-                disabled={isSubmitting || activePromptsCount === 0}
-                style={{ flex: 2, padding: '10px 16px', fontWeight: 600 }}
-              >
-                {isSubmitting ? (
-                  'Starting Generation...'
-                ) : isBulkMode ? (
-                  `Generate ${activePromptsCount} ${isImageMode ? 'Images' : 'Videos'}`
-                ) : (
-                  `Generate ${isImageMode ? 'Image' : 'Video'} (x1)`
-                )}
-              </button>
+        {/* Commanding Floating / Dock Action Bar */}
+        <div className="action-bar-floating">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                {isBulkMode
+                  ? `${activePromptsCount} ${isImageMode ? 'Images' : 'Videos'} Planned`
+                  : `1 ${isImageMode ? 'Image' : 'Video'} Prepared`}
+              </span>
+              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                {isImageMode
+                  ? `Nano Banana 2 · ${aspectRatio} · ${imageDownloadQuality === '2k' ? '2K Upscale' : 'Original'}`
+                  : `${videoModel} · ${aspectRatio} · ${videoDownloadQuality === '1080p' ? '1080p Upscale' : 'Original'}`}
+              </span>
             </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={onCancel}
+              style={{ padding: '10px 18px' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn-hero"
+              disabled={isSubmitting || activePromptsCount === 0}
+            >
+              {isSubmitting ? (
+                <span>Starting Generation...</span>
+              ) : isBulkMode ? (
+                <span>Generate {activePromptsCount} {isImageMode ? 'Images' : 'Videos'} in Parallel</span>
+              ) : (
+                <span>Generate {isImageMode ? 'Image' : 'Video'} (x1)</span>
+              )}
+            </button>
           </div>
         </div>
       </form>

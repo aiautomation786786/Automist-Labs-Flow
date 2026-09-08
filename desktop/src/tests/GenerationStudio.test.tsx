@@ -56,7 +56,7 @@ describe('GenerationStudioScreen', () => {
     };
   });
 
-  it('renders all 4 generation mode tabs and starts with initial mode', async () => {
+  it('renders dedicated single image workspace without duplicated inner tabs', async () => {
     render(
       <GenerationStudioScreen
         initialMode="single_image"
@@ -70,14 +70,14 @@ describe('GenerationStudioScreen', () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByText('Single Image')).toBeDefined();
-    expect(screen.getByText('Single Video')).toBeDefined();
-    expect(screen.getByText('Bulk Images')).toBeDefined();
-    expect(screen.getByText('Bulk Videos')).toBeDefined();
+    expect(screen.getByText('Single Image Studio')).toBeDefined();
+    expect(screen.getAllByText('Nano Banana 2').length).toBeGreaterThanOrEqual(1);
+    // Verify inner duplicated tab buttons do NOT exist
+    expect(screen.queryByRole('button', { name: /Bulk Videos/i })).toBeNull();
     expect(screen.getByText('Generate Image (x1)')).toBeDefined();
   });
 
-  it('switches to single video mode and renders contextual Veo native duration by default', async () => {
+  it('renders single video workspace with model-specific native duration (Veo Quality -> 4s)', async () => {
     render(
       <GenerationStudioScreen
         initialMode="single_video"
@@ -91,10 +91,35 @@ describe('GenerationStudioScreen', () => {
       await Promise.resolve();
     });
 
+    expect(screen.getByText('Single Video Studio')).toBeDefined();
     expect(screen.getByDisplayValue(/Veo 3.1 - Quality/i)).toBeDefined();
-    expect(screen.getByText('Native Flow Duration')).toBeDefined();
+    expect(screen.getByText(/Native Flow Duration/i)).toBeDefined();
+    expect(screen.getByText('4s')).toBeDefined();
     // 4K must not exist
     expect(screen.queryByText(/4k/i)).toBeNull();
+  });
+
+  it('renders Veo 3.1 Fast / Lite model-specific native duration (8s)', async () => {
+    render(
+      <GenerationStudioScreen
+        initialMode="single_video"
+        onProjectCreated={onProjectCreated}
+        onCancel={onCancel}
+        onNavigateProfiles={onNavigateProfiles}
+      />
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const select = screen.getByLabelText('AI Video Model');
+    fireEvent.change(select, { target: { value: 'Veo 3.1 - Fast' } });
+
+    expect(screen.getByText('8s')).toBeDefined();
+
+    fireEvent.change(select, { target: { value: 'Veo 3.1 - Lite' } });
+    expect(screen.getByText('8s')).toBeDefined();
   });
 
   it('shows live duration buttons and resolution when Omni 1.1 Flash is selected', async () => {
@@ -111,7 +136,7 @@ describe('GenerationStudioScreen', () => {
       await Promise.resolve();
     });
 
-    const select = screen.getByRole('combobox');
+    const select = screen.getByLabelText('AI Video Model');
     fireEvent.change(select, { target: { value: 'Omni 1.1 Flash' } });
 
     expect(screen.getByText('Omni 1.1 Flash live duration controls')).toBeDefined();
@@ -135,28 +160,22 @@ describe('GenerationStudioScreen', () => {
     });
 
     // Enter project name
-    const nameInput = screen.getByPlaceholderText('Enter project name...');
+    const nameInput = screen.getByPlaceholderText('Project name...');
     fireEvent.change(nameInput, { target: { value: 'Bulk Video Test' } });
 
     // Enter 2 multiline prompts
-    const textarea = screen.getByPlaceholderText(/Enter one prompt per line/i);
+    const textarea = screen.getByPlaceholderText(/Enter one creative prompt per line/i);
     fireEvent.change(textarea, {
       target: { value: 'First video scene\n\nSecond video scene with steam\n' },
     });
 
     // Verify slot badges
     expect(screen.getByText('2 Slots Assigned')).toBeDefined();
-    expect(screen.getByText('#01')).toBeDefined();
-    expect(screen.getByText('#02')).toBeDefined();
-
-    // Verify both profiles are checked by default
-    const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[];
-    expect(checkboxes.length).toBeGreaterThanOrEqual(2);
-    expect(checkboxes[0]!.checked).toBe(true);
-    expect(checkboxes[1]!.checked).toBe(true);
+    expect(screen.getByText('01 Scene')).toBeDefined();
+    expect(screen.getByText('02 Scene')).toBeDefined();
 
     // Submit form
-    const submitBtn = screen.getByText('Generate 2 Videos');
+    const submitBtn = screen.getByText('Generate 2 Videos in Parallel');
     fireEvent.click(submitBtn);
 
     await act(async () => {
@@ -194,7 +213,7 @@ describe('GenerationStudioScreen', () => {
     });
 
     // Enter single prompt
-    const promptInput = screen.getByPlaceholderText(/e.g. A small red apple/i);
+    const promptInput = screen.getByPlaceholderText(/Describe your desired image/i);
     fireEvent.change(promptInput, { target: { value: 'A golden retriever in a field of sunflowers' } });
 
     // Click 2K Upscaled export
