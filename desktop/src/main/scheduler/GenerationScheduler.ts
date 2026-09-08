@@ -3,7 +3,9 @@
  *
  * GUARANTEES:
  *  1. Event-Driven: Dispatches on worker-available and job-queued events. (No tight polling loops).
- *  2. Concurrency Control: Exactly one active job per profile worker.
+ *  2. Concurrency Control: Up to `maxConcurrentJobs` active jobs per profile worker.
+ *     Each job runs on its own dedicated Flow Page (isolated tab). The dispatch loop
+ *     continues assigning until all workers are at capacity OR the queue is empty.
  *  3. Idempotency: Verifies job eligibility, avoids duplicate assignments, and prevents overwriting
  *     valid completed slots.
  *  4. Deterministic Slot Integrity: Slot ordering is NEVER modified by completion time or priority.
@@ -13,6 +15,8 @@
  *     - AUTOMATIC: Deterministic queue order regardless of type.
  *  6. Controlled Retries: Retries transient errors up to maxRetries; moves unrecoverable/CAPTCHA errors
  *     to manual_action_required without looping.
+ *  7. Dynamic Refill: When any job's slot is released (worker.release(jobId)), the worker:available
+ *     event triggers an immediate dispatch pass to fill the freed slot.
  */
 
 import type {

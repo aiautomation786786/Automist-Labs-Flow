@@ -399,8 +399,8 @@ export class ImageExecutionService {
         }
       }
 
-      // Step 13: Always release worker lock
-      worker.release();
+      // Step 13: Release only THIS job's slot (worker may still hold other concurrent jobs)
+      worker.release(jobId);
       generationEventBus.emitTyped('worker:available', worker.profileId);
     }
   }

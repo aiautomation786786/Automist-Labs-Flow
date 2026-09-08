@@ -1,14 +1,27 @@
 /**
  * WorkerPool – Registry and manager for all active ProfileWorker instances.
  *
- * Coordinates dynamic worker discovery from ProfileSessionManager and provides
- * worker allocation (FIFO / least-busy).
+ * MULTI-SLOT CONCURRENCY:
+ *  Each ProfileWorker can hold up to MAX_CONCURRENT_JOBS_PER_PROFILE simultaneous jobs.
+ *  getAvailableWorker() returns any worker that still has remaining capacity
+ *  (activeJobCount < maxConcurrentJobs), enabling multiple jobs to run on the same
+ *  profile simultaneously — each on its own isolated Flow Page.
+ *
+ *  Load-aware selection:
+ *   - Among all eligible workers, those with the fewest active jobs are preferred.
+ *   - Ties within the least-loaded group are broken by Fisher-Yates shuffle (uniform random).
+ *   - This spreads load across profiles before overloading any single profile.
+ *
+ * busyCount:
+ *  Returns the TOTAL number of active job slots across all workers, not a count of workers.
+ *  This is the correct signal for concurrency-level reporting (e.g. slot utilisation).
  */
 
 import { ProfileWorker } from './ProfileWorker';
 import { ProfileSessionManager } from '../engine/ProfileSessionManager';
 import { generationEventBus } from '../events/GenerationEventBus';
 import { AppLogger } from '../utils/AppLogger';
+import { MAX_CONCURRENT_JOBS_PER_PROFILE } from './ConcurrencyConfig';
 
 const logger = new AppLogger({ mirrorToStderr: false });
 
@@ -44,7 +57,7 @@ export class WorkerPool {
    */
   registerWorker(worker: ProfileWorker): void {
     this.workers.set(worker.profileId, worker);
-    logger.info('worker_pool', `Registered worker ${worker.profileId}`);
+    logger.info('worker_pool', `Registered worker ${worker.profileId} (cap=${worker.maxConcurrentJobs})`);
   }
 
   /**
@@ -57,6 +70,7 @@ export class WorkerPool {
   /**
    * Synchronizes the pool with the active sessions in ProfileSessionManager.
    * Instantiates a ProfileWorker for any newly started profile session.
+   * Workers are created with the global MAX_CONCURRENT_JOBS_PER_PROFILE cap.
    */
   syncWithSessionManager(): void {
     if (!this.sessionManager) return;
@@ -66,33 +80,36 @@ export class WorkerPool {
       if (snap.status === 'ready' && !this.workers.has(snap.profileId)) {
         const session = this.sessionManager.getSession(snap.profileId);
         if (session) {
-          const worker = new ProfileWorker(session);
+          const worker = new ProfileWorker(session, MAX_CONCURRENT_JOBS_PER_PROFILE);
           this.workers.set(snap.profileId, worker);
-          logger.info('worker_pool', `Created ProfileWorker for active session: ${snap.profileId}`);
+          logger.info('worker_pool', `Created ProfileWorker for active session: ${snap.profileId} (cap=${MAX_CONCURRENT_JOBS_PER_PROFILE})`);
         }
       }
     }
   }
 
   /**
-   * Returns a randomly selected available, idle, and connected worker.
+   * Returns a worker that has remaining capacity, using load-aware randomized selection.
    *
-   * RANDOMIZED SELECTION:
-   *  - Builds the full list of eligible workers (available + allowed profile filter).
-   *  - Shuffles the list using a Fisher-Yates shuffle.
-   *  - Returns the first worker from the shuffled list.
+   * SELECTION STRATEGY:
+   *  1. Build the set of eligible workers: those where `isAvailable` is true
+   *     (activeJobCount < maxConcurrentJobs, not in error, session ready).
+   *  2. Among eligible workers, identify the minimum current active job count (least loaded).
+   *  3. Restrict candidates to the least-loaded group (spread load before piling up).
+   *  4. Apply Fisher-Yates shuffle within the least-loaded group for uniform random selection.
+   *  5. Return the first element from the shuffled group.
    *
    * This ensures:
-   *  - No single profile is always preferred (load is spread).
-   *  - No ready worker is left idle while queued jobs exist.
-   *  - Same-profile sequential guarantee is preserved via worker.isAvailable check.
+   *  - A profile with 0 active jobs is always preferred over one with 1 active job.
+   *  - Among equally-loaded profiles, selection is uniform random (no sticky preference).
+   *  - The same profile CAN be returned twice in successive calls (if it still has capacity).
    */
   getAvailableWorker(allowedProfileIds?: string[]): ProfileWorker | null {
     this.syncWithSessionManager();
 
     const allowedSet = allowedProfileIds && allowedProfileIds.length > 0 ? new Set(allowedProfileIds) : null;
 
-    // Build eligible list
+    // Step 1: Build eligible list (workers with remaining capacity)
     const eligible: ProfileWorker[] = [];
     for (const worker of this.workers.values()) {
       if (allowedSet && !allowedSet.has(worker.profileId)) continue;
@@ -101,13 +118,19 @@ export class WorkerPool {
 
     if (eligible.length === 0) return null;
 
-    // Fisher-Yates shuffle for uniform random selection
-    for (let i = eligible.length - 1; i > 0; i--) {
+    // Step 2: Find minimum load (prefer workers with fewest active jobs)
+    const minLoad = Math.min(...eligible.map((w) => w.activeJobCount));
+
+    // Step 3: Restrict to least-loaded group
+    const leastLoaded = eligible.filter((w) => w.activeJobCount === minLoad);
+
+    // Step 4: Fisher-Yates shuffle within least-loaded group
+    for (let i = leastLoaded.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [eligible[i], eligible[j]] = [eligible[j]!, eligible[i]!];
+      [leastLoaded[i], leastLoaded[j]] = [leastLoaded[j]!, leastLoaded[i]!];
     }
 
-    return eligible[0]!;
+    return leastLoaded[0]!;
   }
 
   /**
@@ -118,14 +141,24 @@ export class WorkerPool {
   }
 
   /**
-   * Returns count of currently busy workers.
+   * Total count of active job slots across all workers.
+   * This reflects true concurrent execution count, not merely the number of busy workers.
+   *
+   * Example: 2 profiles × 2 active jobs each → busyCount = 4
    */
   get busyCount(): number {
-    return Array.from(this.workers.values()).filter((w) => w.isBusy).length;
+    return Array.from(this.workers.values()).reduce((sum, w) => sum + w.activeJobCount, 0);
   }
 
   /**
-   * Total number of workers registered.
+   * Total configured capacity across all workers (sum of maxConcurrentJobs).
+   */
+  get totalCapacity(): number {
+    return Array.from(this.workers.values()).reduce((sum, w) => sum + w.maxConcurrentJobs, 0);
+  }
+
+  /**
+   * Total number of worker profiles registered.
    */
   get size(): number {
     return this.workers.size;

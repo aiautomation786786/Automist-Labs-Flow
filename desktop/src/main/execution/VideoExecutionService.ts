@@ -495,7 +495,8 @@ export class VideoExecutionService {
           log.debug('video_exec', `Error closing video job page: ${(closeErr as Error).message}`);
         }
       }
-      worker.release();
+      // Release only THIS job's slot (worker may still hold other concurrent jobs)
+      worker.release(jobId);
       generationEventBus.emitTyped('worker:available', worker.profileId);
     }
   }
