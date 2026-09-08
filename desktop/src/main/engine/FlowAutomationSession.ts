@@ -199,20 +199,20 @@ export class FlowAutomationSession {
 
   /**
    * Inspects the current model and actively switches the Flow dropdown
-   * to Nano Banana 2, verifying the change in the UI.
+   * to the requested image model (Nano Banana Pro, 2, or 2 Lite), verifying the change in the UI.
    */
-  async selectNanoBanana2(): Promise<ModelSelectionResult> {
+  async selectImageModel(modelName = NANO_BANANA_2, quantity = 'x1'): Promise<ModelSelectionResult> {
     this.setStatus('selecting_model');
     const page = this.getPage();
 
     try {
-      const result = await ModelSelector.ensureNanoBanana2(page);
+      const result = await ModelSelector.ensureImageModel(page, { modelName, quantity });
       this.setStatus('idle');
       return result;
     } catch (err) {
       this.setStatus('error');
       return {
-        modelRequested: NANO_BANANA_2,
+        modelRequested: modelName,
         modelDetectedBefore: null,
         selectionAttempted: true,
         modelDetectedAfter: null,
@@ -220,6 +220,14 @@ export class FlowAutomationSession {
         error: (err as Error).message,
       };
     }
+  }
+
+  /**
+   * Inspects the current model and actively switches the Flow dropdown
+   * to Nano Banana 2, verifying the change in the UI.
+   */
+  async selectNanoBanana2(): Promise<ModelSelectionResult> {
+    return this.selectImageModel(NANO_BANANA_2, 'x1');
   }
 
   /**

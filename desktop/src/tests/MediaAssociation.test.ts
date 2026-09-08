@@ -52,6 +52,7 @@ describe('MediaAssociation & Ambiguity Safeguard', () => {
       automation: {
         checkAuthentication: vi.fn().mockResolvedValue({ state: 'authenticated', url: 'https://labs.google/fx/en/tools/flow' }),
         ensureProject: vi.fn().mockResolvedValue({ projectId: testProjectId }),
+        selectImageModel: vi.fn().mockResolvedValue({ verified: true, modelDetectedAfter: 'Nano Banana 2' }),
         selectNanoBanana2: vi.fn().mockResolvedValue({ verified: true, modelDetectedAfter: 'Nano Banana 2' }),
         selectRatio: vi.fn().mockResolvedValue({ verified: true, detectedAfter: '16:9' }),
         detectGeneratedMedia: vi.fn().mockResolvedValue({ imageUuids: [], mediaUrls: [], hasVideo: false, videoSources: [] }),

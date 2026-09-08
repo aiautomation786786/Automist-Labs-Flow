@@ -64,16 +64,19 @@ export class ImageExecutionService {
       // Read project settings to determine requested ratio and Flow project context
       const project = await ProjectRepository.get(projectId);
       const requestedRatio: SupportedAspectRatio = project?.settings.imageRatio ?? '16:9';
+      const requestedModel = project?.settings.imageModel ?? 'Nano Banana 2';
       const flowProjectId = (project?.settings as any)?.flowProjectId;
 
       // Ensure project context (anti-stickiness)
       await automation.ensureProject(flowProjectId ? { projectId: flowProjectId } : {});
 
-      // Mandatory Nano Banana 2 enforcement
-      const modelResult = await automation.selectNanoBanana2();
+      // Mandatory image model enforcement (Nano Banana Pro, 2, or 2 Lite)
+      const modelResult = typeof automation.selectImageModel === 'function'
+        ? await automation.selectImageModel(requestedModel)
+        : await automation.selectNanoBanana2();
       if (!modelResult.verified) {
         throw new Error(
-          `Mandatory model verification failed: could not verify "Nano Banana 2". ` +
+          `Mandatory model verification failed: could not verify "${requestedModel}". ` +
           `Detected: "${modelResult.modelDetectedAfter}". ${modelResult.error ?? ''}`
         );
       }
@@ -232,7 +235,7 @@ export class ImageExecutionService {
         result: {
           assetId: newUuid,
           mediaPath: destinationPath,
-          modelUsed: 'Nano Banana 2',
+          modelUsed: requestedModel,
           ratioUsed: requestedRatio,
           generationResolution: 'Original',
           downloadResolution: project?.settings?.imageDownloadQuality === '2k' ? '2K' : 'Original',

@@ -101,4 +101,109 @@ describe('ModelSelector', () => {
       expect(mockOption.click).toHaveBeenCalled();
     });
   });
+
+  describe('ensureImageModel', () => {
+    it('should return verified without clicking if requested model is already active', async () => {
+      const fakePage = {
+        evaluate: vi.fn(async () => 'Nano Banana Pro'),
+        locator: vi.fn(),
+      } as unknown as import('playwright').Page;
+
+      const result = await ModelSelector.ensureImageModel(fakePage, { modelName: 'Nano Banana Pro' });
+
+      expect(result.modelRequested).toBe('Nano Banana Pro');
+      expect(result.modelDetectedBefore).toBe('Nano Banana Pro');
+      expect(result.selectionAttempted).toBe(false);
+      expect(result.modelDetectedAfter).toBe('Nano Banana Pro');
+      expect(result.verified).toBe(true);
+      expect(fakePage.locator).not.toHaveBeenCalled();
+    });
+
+    it('should switch from Nano Banana 2 to Nano Banana Pro when requested', async () => {
+      let currentModel = 'Nano Banana 2';
+
+      const mockDropdownBtn = {
+        isVisible: vi.fn(async () => true),
+        click: vi.fn(async () => {}),
+      };
+
+      const mockOption = {
+        isVisible: vi.fn(async () => true),
+        click: vi.fn(async () => {
+          currentModel = 'Nano Banana Pro';
+        }),
+      };
+
+      const fakePage = {
+        evaluate: vi.fn(async () => currentModel),
+        locator: vi.fn((sel: string) => ({
+          first: () => {
+            if (sel.includes('Nano Banana Pro') || sel.includes('option')) {
+              return mockOption;
+            }
+            return mockDropdownBtn;
+          },
+        })),
+        waitForTimeout: vi.fn(async () => {}),
+        keyboard: { press: vi.fn() },
+      } as unknown as import('playwright').Page;
+
+      const result = await ModelSelector.ensureImageModel(fakePage, { modelName: 'Nano Banana Pro' });
+
+      expect(result.selectionAttempted).toBe(true);
+      expect(result.modelDetectedBefore).toBe('Nano Banana 2');
+      expect(result.modelDetectedAfter).toBe('Nano Banana Pro');
+      expect(result.verified).toBe(true);
+      expect(mockDropdownBtn.click).toHaveBeenCalled();
+      expect(mockOption.click).toHaveBeenCalled();
+    });
+
+    it('should select Nano Banana 2 Lite when requested', async () => {
+      let currentModel = 'Nano Banana 2';
+
+      const mockDropdownBtn = {
+        isVisible: vi.fn(async () => true),
+        click: vi.fn(async () => {}),
+      };
+
+      const mockOption = {
+        isVisible: vi.fn(async () => true),
+        click: vi.fn(async () => {
+          currentModel = 'Nano Banana 2 Lite';
+        }),
+      };
+
+      const fakePage = {
+        evaluate: vi.fn(async () => currentModel),
+        locator: vi.fn((sel: string) => ({
+          first: () => {
+            if (sel.includes('Lite') || sel.includes('option')) {
+              return mockOption;
+            }
+            return mockDropdownBtn;
+          },
+        })),
+        waitForTimeout: vi.fn(async () => {}),
+        keyboard: { press: vi.fn() },
+      } as unknown as import('playwright').Page;
+
+      const result = await ModelSelector.ensureImageModel(fakePage, { modelName: 'Nano Banana 2 Lite' });
+
+      expect(result.selectionAttempted).toBe(true);
+      expect(result.modelDetectedAfter).toBe('Nano Banana 2 Lite');
+      expect(result.verified).toBe(true);
+    });
+
+    it('should refuse to select a video model via ensureImageModel', async () => {
+      const fakePage = {
+        evaluate: vi.fn(async () => 'Veo 3.1 Quality'),
+        locator: vi.fn(),
+      } as unknown as import('playwright').Page;
+
+      const result = await ModelSelector.ensureImageModel(fakePage, { modelName: 'Veo 3.1 Fast' });
+      expect(result.verified).toBe(false);
+      expect(result.error).toContain('is not a supported image model');
+    });
+  });
 });
+

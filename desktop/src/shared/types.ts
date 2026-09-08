@@ -561,6 +561,7 @@ export interface ProjectSettings {
   imageDownloadQuality?: 'original' | '2k';
   videoDownloadQuality?: 'original' | '1080p';
   generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'custom';
+  imageModel?: string;
   videoModel?: string;
   videoResolution?: string;
   videoDuration?: string;
@@ -666,6 +667,10 @@ export interface JobProgressEvent {
   status: JobStatus;
   stepDescription: string;
   timestamp: string;
+  progressPercent?: number;
+  stage?: 'starting' | 'configuring' | 'generating' | 'downloading' | 'completed' | 'failed';
+  elapsedSeconds?: number;
+  estimatedDurationSeconds?: number;
 }
 
 export interface SlotUpdatedEvent {

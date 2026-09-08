@@ -4,6 +4,7 @@ import type {
   ProfileSessionSnapshot,
 } from '../../shared/types';
 import { PromptParser } from '../../shared/PromptParser';
+import { SUPPORTED_IMAGE_MODELS, getImageModelConfig } from '../../shared/image-models';
 import { SegmentedControl } from '../components/SegmentedControl';
 import {
   ImageIcon,
@@ -44,10 +45,14 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
   onCancel,
   onNavigateProfiles,
 }) => {
-  const mode = initialMode;
-
-  // Project Info
-  const [projectName, setProjectName] = useState('');
+  const [mode] = useState<GenerationMode>(initialMode);
+  const [projectName, setProjectName] = useState(() => {
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (initialMode === 'single_image') return `Single Image · ${time}`;
+    if (initialMode === 'single_video') return `Single Video · ${time}`;
+    if (initialMode === 'bulk_image') return `Bulk Images · ${time}`;
+    return `Bulk Videos · ${time}`;
+  });
   const [campaignTag, setCampaignTag] = useState('');
 
   // Prompts
@@ -56,6 +61,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
 
   // Common Settings
   const [aspectRatio, setAspectRatio] = useState<SupportedAspectRatio>('16:9');
+  const [imageModel, setImageModel] = useState<string>('Nano Banana 2');
   const [imageDownloadQuality, setImageDownloadQuality] = useState<'original' | '2k'>('original');
 
   // Video-Specific Settings
@@ -186,6 +192,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
         name: projectName.trim() || `${mode} project`,
         campaignTag: campaignTag.trim() || undefined,
         generationMode: mode,
+        imageModel: isImageMode ? imageModel : undefined,
         imageRatio: isImageMode ? aspectRatio : undefined,
         videoRatio: !isImageMode ? aspectRatio : undefined,
         imageDownloadQuality: isImageMode ? imageDownloadQuality : undefined,
@@ -260,7 +267,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                 border: '1px solid var(--border-color)',
               }}
             >
-              {isImageMode ? 'Nano Banana 2' : videoModel}
+              {isImageMode ? imageModel : videoModel}
             </span>
           </div>
           <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
@@ -407,7 +414,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
               >
                 <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: 'var(--text-muted)' }}>
                   <span>Scope: <strong>1 item</strong></span>
-                  <span>Engine: <strong style={{ color: 'var(--text-secondary)' }}>{isImageMode ? 'Nano Banana 2' : videoModel}</strong></span>
+                  <span>Engine: <strong style={{ color: 'var(--text-secondary)' }}>{isImageMode ? imageModel : videoModel}</strong></span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   {singlePrompt.length > 0 && (
@@ -550,25 +557,37 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                 {isImageMode ? 'AI Image Engine' : 'AI Video Model'}
               </label>
               {isImageMode ? (
-                <div
-                  style={{
-                    padding: '8px 14px',
-                    backgroundColor: 'var(--info-image-bg)',
-                    border: '1px solid var(--info-image-border)',
-                    borderRadius: 'var(--radius-md)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <ImageIcon size={16} style={{ color: 'var(--info-image)' }} />
-                    <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}>
-                      Nano Banana 2
-                    </span>
-                  </div>
-                  <span style={{ fontSize: '11px', color: 'var(--info-image)', fontWeight: 600 }}>
-                    ✓ Verified Engine
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <select
+                    aria-label="AI Image Engine"
+                    value={imageModel}
+                    onChange={(e) => {
+                      const newModel = e.target.value;
+                      setImageModel(newModel);
+                      const config = getImageModelConfig(newModel);
+                      if (!config.supports2k && imageDownloadQuality === '2k') {
+                        setImageDownloadQuality('original');
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '9px 14px',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--border-color)',
+                      fontSize: '13px',
+                      backgroundColor: 'var(--bg-surface)',
+                      color: 'var(--text-primary)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {SUPPORTED_IMAGE_MODELS.map((m) => (
+                      <option key={m.id} value={m.displayName}>
+                        {m.displayName} ({m.badge})
+                      </option>
+                    ))}
+                  </select>
+                  <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                    {getImageModelConfig(imageModel).description}
                   </span>
                 </div>
               ) : (
@@ -661,7 +680,12 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                 <SegmentedControl<'original' | '2k'>
                   options={[
                     { value: 'original', label: 'Original (Native)' },
-                    { value: '2k', label: '2K Upscaled', badge: 'HD' },
+                    {
+                      value: '2k',
+                      label: '2K Upscaled',
+                      badge: !getImageModelConfig(imageModel).supports2k ? 'Unavailable' : 'HD',
+                      disabled: !getImageModelConfig(imageModel).supports2k,
+                    },
                   ]}
                   value={imageDownloadQuality}
                   onChange={(val) => setImageDownloadQuality(val)}
@@ -804,7 +828,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
               </span>
               <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
                 {isImageMode
-                  ? `Nano Banana 2 · ${aspectRatio} · ${imageDownloadQuality === '2k' ? '2K Upscale' : 'Original'}`
+                  ? `${imageModel} · ${aspectRatio} · ${imageDownloadQuality === '2k' ? '2K Upscale' : 'Original'}`
                   : `${videoModel} · ${aspectRatio} · ${videoDownloadQuality === '1080p' ? '1080p Upscale' : 'Original'}`}
               </span>
             </div>

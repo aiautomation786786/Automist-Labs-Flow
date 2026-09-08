@@ -238,4 +238,44 @@ describe('GenerationStudioScreen', () => {
     );
     expect(onProjectCreated).toHaveBeenCalledWith('proj_studio_123');
   });
+
+  it('supports selecting image model (Nano Banana Pro / Lite) and passing it to createProject', async () => {
+    render(
+      <GenerationStudioScreen
+        initialMode="single_image"
+        onProjectCreated={onProjectCreated}
+        onCancel={onCancel}
+        onNavigateProfiles={onNavigateProfiles}
+      />
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const modelSelect = screen.getByLabelText(/AI Image Engine/i);
+    expect(modelSelect).toBeDefined();
+
+    // Select Nano Banana Pro
+    fireEvent.change(modelSelect, { target: { value: 'Nano Banana Pro' } });
+
+    // Enter prompt
+    const promptInput = screen.getByPlaceholderText(/Describe your desired image/i);
+    fireEvent.change(promptInput, { target: { value: 'Hyperrealistic portrait' } });
+
+    // Submit
+    const submitBtn = screen.getByText('Generate Image (x1)');
+    fireEvent.click(submitBtn);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(window.flowApi?.createProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generationMode: 'single_image',
+        imageModel: 'Nano Banana Pro',
+      })
+    );
+  });
 });

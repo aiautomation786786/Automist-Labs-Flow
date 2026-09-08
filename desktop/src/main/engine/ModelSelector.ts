@@ -68,27 +68,46 @@ export class ModelSelector {
   }
 
   /**
-   * Actively selects and verifies Nano Banana 2 in the Google Flow UI.
+   * Actively selects and verifies an image generation model in Google Flow.
+   * Supports: "Nano Banana Pro", "Nano Banana 2", "Nano Banana 2 Lite".
    *
    * Workflow:
    *  1. Inspects currently displayed model.
-   *  2. If already Nano Banana 2 -> returns verified.
+   *  2. If already target model -> returns verified.
    *  3. Locates and clicks the model dropdown button.
-   *  4. Locates the "Nano Banana 2" option in the opened dropdown.
-   *  5. Clicks the option.
-   *  6. Verifies that the model button now displays "Nano Banana 2".
+   *  4. Ensures "Image" tab is active.
+   *  5. Locates the requested model option in the opened dropdown.
+   *  6. Clicks the option.
+   *  7. Ensures quantity is x1.
+   *  8. Verifies that the model button now displays the target model.
    */
-  static async ensureNanoBanana2(page: Page): Promise<ModelSelectionResult> {
-    logger.info('model_selector', `Enforcing model: ${NANO_BANANA_2}`);
+  static async ensureImageModel(
+    page: Page,
+    options: { modelName?: string; quantity?: string } = {}
+  ): Promise<ModelSelectionResult> {
+    const targetModel = options.modelName || NANO_BANANA_2;
+    const requestedQuantity = options.quantity || 'x1';
+    logger.info('model_selector', `Enforcing image model: ${targetModel} (quantity: ${requestedQuantity})`);
+
+    if (this.isVideoModel(targetModel)) {
+      return {
+        modelRequested: targetModel,
+        modelDetectedBefore: null,
+        selectionAttempted: false,
+        modelDetectedAfter: null,
+        verified: false,
+        error: `"${targetModel}" is not a supported image model (it is a video model). Use ensureVideoModel instead.`,
+      };
+    }
 
     const modelDetectedBefore = await this.detectCurrentModel(page);
     logger.debug('model_selector', 'Model before selection', { modelDetectedBefore });
 
     // Step 1: Check if already active
-    if (modelDetectedBefore && modelDetectedBefore.includes('Nano Banana 2')) {
-      logger.info('model_selector', 'Nano Banana 2 is already active');
+    if (modelDetectedBefore && modelDetectedBefore.toLowerCase().includes(targetModel.toLowerCase())) {
+      logger.info('model_selector', `${targetModel} is already active`);
       return {
-        modelRequested: NANO_BANANA_2,
+        modelRequested: targetModel,
         modelDetectedBefore,
         selectionAttempted: false,
         modelDetectedAfter: modelDetectedBefore,
@@ -100,7 +119,7 @@ export class ModelSelector {
     const dropdownButton = await this.findModelDropdownButton(page);
     if (!dropdownButton) {
       return {
-        modelRequested: NANO_BANANA_2,
+        modelRequested: targetModel,
         modelDetectedBefore,
         selectionAttempted: false,
         modelDetectedAfter: modelDetectedBefore,
@@ -134,15 +153,15 @@ export class ModelSelector {
       await page.waitForTimeout(500);
     }
 
-    // Step 3: Find the Nano Banana 2 option
+    // Step 3: Find the target model option
     const optionSelectors = [
-      'button:has-text("Nano Banana 2")',
-      '[role="option"]:has-text("Nano Banana 2")',
-      '[role="menuitem"]:has-text("Nano Banana 2")',
-      '.mat-mdc-menu-item:has-text("Nano Banana 2")',
-      'li:has-text("Nano Banana 2")',
-      'div:has-text("Nano Banana 2")',
-      'span:has-text("Nano Banana 2")',
+      `button:has-text("${targetModel}")`,
+      `[role="option"]:has-text("${targetModel}")`,
+      `[role="menuitem"]:has-text("${targetModel}")`,
+      `.mat-mdc-menu-item:has-text("${targetModel}")`,
+      `li:has-text("${targetModel}")`,
+      `div:has-text("${targetModel}")`,
+      `span:has-text("${targetModel}")`,
     ];
 
     const optionLocator = await FlowDriver.findFirstVisible(page, optionSelectors, 3000);
@@ -151,28 +170,28 @@ export class ModelSelector {
       // Close dropdown before returning error
       await page.keyboard.press('Escape');
       return {
-        modelRequested: NANO_BANANA_2,
+        modelRequested: targetModel,
         modelDetectedBefore,
         selectionAttempted: true,
         modelDetectedAfter: modelDetectedBefore,
         verified: false,
-        error: `Could not find "${NANO_BANANA_2}" option in the opened dropdown menu.`,
+        error: `Could not find "${targetModel}" option in the opened dropdown menu.`,
       };
     }
 
-    // Step 4: Click the Nano Banana 2 option
-    logger.info('model_selector', 'Clicking Nano Banana 2 option...');
+    // Step 4: Click the model option
+    logger.info('model_selector', `Clicking ${targetModel} option...`);
     await optionLocator.click();
     await page.waitForTimeout(800);
 
     // Step 4b: Ensure quantity is x1 if quantity radios exist
-    const x1Radio = page.locator('.cdk-overlay-pane button[role="radio"]:has-text("x1")').first();
-    const x1Vis = await x1Radio.isVisible({ timeout: 1000 }).catch(() => false);
-    if (x1Vis) {
-      const isChecked = typeof x1Radio.getAttribute === 'function' ? await x1Radio.getAttribute('aria-checked').catch(() => null) : null;
+    const qtyRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${requestedQuantity}")`).first();
+    const qtyVis = await qtyRadio.isVisible({ timeout: 1000 }).catch(() => false);
+    if (qtyVis) {
+      const isChecked = typeof qtyRadio.getAttribute === 'function' ? await qtyRadio.getAttribute('aria-checked').catch(() => null) : null;
       if (isChecked !== 'true') {
-        logger.info('model_selector', 'Ensuring quantity x1...');
-        await x1Radio.click().catch(() => {});
+        logger.info('model_selector', `Ensuring quantity ${requestedQuantity}...`);
+        await qtyRadio.click().catch(() => {});
         await page.waitForTimeout(300);
       }
     }
@@ -181,9 +200,9 @@ export class ModelSelector {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
 
-    // Step 5: Verify the newly selected model strictly contains "Nano Banana 2"
+    // Step 5: Verify the newly selected model contains the target model name
     const modelDetectedAfter = await this.detectCurrentModel(page);
-    const verified = !!modelDetectedAfter && modelDetectedAfter.toLowerCase().includes('nano banana 2');
+    const verified = !!modelDetectedAfter && modelDetectedAfter.toLowerCase().includes(targetModel.toLowerCase());
 
     logger.info('model_selector', 'Model selection complete', {
       modelDetectedBefore,
@@ -192,13 +211,20 @@ export class ModelSelector {
     });
 
     return {
-      modelRequested: NANO_BANANA_2,
+      modelRequested: targetModel,
       modelDetectedBefore,
       selectionAttempted: true,
       modelDetectedAfter,
       verified,
-      ...(verified ? {} : { error: `Model verification failed. Expected "${NANO_BANANA_2}", found: "${modelDetectedAfter}"` }),
+      ...(verified ? {} : { error: `Model verification failed. Expected "${targetModel}", found: "${modelDetectedAfter}"` }),
     };
+  }
+
+  /**
+   * Backward-compatible helper that actively enforces Nano Banana 2.
+   */
+  static async ensureNanoBanana2(page: Page): Promise<ModelSelectionResult> {
+    return this.ensureImageModel(page, { modelName: NANO_BANANA_2, quantity: 'x1' });
   }
 
   /**
