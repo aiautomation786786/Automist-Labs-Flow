@@ -292,7 +292,42 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
           this.log.debug('chrome_launch', 'CDP reposition notice', { error: (repositionErr as Error).message });
         }
 
+        // If we previously called Win32 ShowWindow(SW_HIDE), we must call ShowWindow(SW_SHOW=5) to bring it back
+        if (pid && process.platform === 'win32') {
+          try {
+            const psScript = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32Show {
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+  [DllImport("user32.dll")] public static extern IntPtr GetDesktopWindow();
+  [DllImport("user32.dll")] public static extern IntPtr GetTopWindow(IntPtr hWnd);
+}
+"@ -ErrorAction SilentlyContinue
+$targetPid = ${pid};
+$hwnd = [Win32Show]::GetTopWindow([Win32Show]::GetDesktopWindow());
+while ($hwnd -ne [IntPtr]::Zero) {
+  $pid = 0;
+  [void][Win32Show]::GetWindowThreadProcessId($hwnd, [ref]$pid);
+  if ($pid -eq $targetPid) { [Win32Show]::ShowWindow($hwnd, 5) | Out-Null }
+  $hwnd = [Win32Show]::GetWindow($hwnd, 2);
+}`.trim();
+            execSync(`powershell -WindowStyle Hidden -NonInteractive -Command "${psScript.replace(/"/g, '\\"')}"`, {
+              timeout: 5000,
+              stdio: 'ignore',
+              windowsHide: true,
+            });
+            this.log.info('chrome_launch', 'Chrome window restored to taskbar via Win32 ShowWindow', { pid });
+          } catch {
+            // Non-fatal
+          }
+        }
+
         return { pid, cdpPort: this.config.cdpPort, userDataDir: this.config.userDataDir };
+
       }
     }
 
@@ -685,6 +720,11 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   /**
    * Spawns a dedicated fresh Flow tab for an execution job.
    * Keeps the persistent background browser alive.
+   *
+   * CRITICAL: Always navigates to the BASE Flow creation URL, never a stale
+   * project-specific URL. this.flowUrl is whatever page Chrome was on during
+   * authentication (e.g. flow.google.com/project/abc123) which does NOT have
+   * the model selector toolbar. We must always land on the generation interface.
    */
   async createJobPage(flowUrl?: string): Promise<Page> {
     if (!this.context) {
@@ -695,12 +735,35 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     }
 
     const jobPage = await this.context.newPage();
-    const url = flowUrl || this.flowUrl || (this.config.flowUrlLocale ? `https://labs.google${this.config.flowUrlLocale}` : FLOW_BASE_URL);
-    this.log.info('tab_lifecycle', `Created dedicated job tab, navigating to Flow URL`, { url });
+
+    // Determine the correct base Flow URL — NEVER use this.flowUrl directly since
+    // it may point to a specific project page (flow.google.com/project/...) where
+    // the generation toolbar and model selector do not exist.
+    let url: string;
+    if (flowUrl) {
+      // Explicit caller override — use it only if it looks like a base Flow URL
+      if (!flowUrl.includes('/project/')) {
+        url = flowUrl;
+      } else {
+        // Caller passed a project URL — ignore it, use base URL
+        this.log.warn('tab_lifecycle', 'createJobPage: ignoring project-specific flowUrl, using base URL', { rejectedUrl: flowUrl });
+        url = this.config.flowUrlLocale
+          ? `https://labs.google${this.config.flowUrlLocale}`
+          : FLOW_BASE_URL;
+      }
+    } else {
+      // Always use locale-specific base URL, derived from config (set after locale detection at auth time)
+      url = this.config.flowUrlLocale
+        ? `https://labs.google${this.config.flowUrlLocale}`
+        : FLOW_BASE_URL;
+    }
+
+    this.log.info('tab_lifecycle', `Created dedicated job tab, navigating to base Flow URL`, { url });
 
     try {
       await jobPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await jobPage.waitForTimeout(1000);
+      // Allow Flow to finish rendering the toolbar/prompt area
+      await jobPage.waitForTimeout(2000);
     } catch (navErr) {
       this.log.warn('tab_lifecycle', `Navigation warning on job tab: ${(navErr as Error).message}`);
     }
@@ -782,40 +845,73 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   // ---------------------------------------------------------------------------
 
   /**
-   * Hides the Chrome window from the user's taskbar/workspace after authentication succeeds.
+   * Hides the Chrome window from the user's taskbar after authentication succeeds.
    *
-   * Strategy:
-   *  1. Use CDP Browser.setWindowBounds to move the window far off-screen (-30000, -30000).
-   *  2. This ensures the window is invisible in the normal desktop workspace.
-   *  3. The Chrome process and CDP connection remain alive for automation.
-   *  4. When sign-in is needed again (auth_required / CAPTCHA), launchLoginBrowser()
-   *     will reposition the window back on-screen via Browser.setWindowBounds.
+   * Strategy (layered — each layer is a safety net):
+   *  1. CDP Browser.setWindowBounds → windowState: 'minimized'
+   *     Minimizes the window via the DevTools Protocol. Chrome is still in taskbar.
+   *  2. PowerShell + Win32 ShowWindow(hwnd, SW_HIDE)
+   *     Finds the Chrome window by its process ID and calls ShowWindow(0) to fully
+   *     remove the entry from the Windows taskbar and screen. Non-fatal on failure.
    *
-   * NOTE: --window-position=-2400,-2400 at launch time is also applied for background sessions,
-   * but this method provides an additional runtime hide for already-visible login windows.
+   * The Chrome process and CDP connection remain alive for automation.
+   * When sign-in is needed again (auth_required / CAPTCHA), launchLoginBrowser()
+   * repositions the window back on-screen via CDP Browser.setWindowBounds.
    */
   private async hideWindowFromTaskbar(page: Page): Promise<void> {
     if (!this.context || !page || page.isClosed()) return;
 
+    // Step 1: Minimize via CDP (works cross-platform, keeps CDP alive)
     try {
       const cdp = await this.context.newCDPSession(page);
       const { windowId } = await cdp.send('Browser.getWindowForTarget');
-      // Move window far off-screen — keeps process alive, hides from taskbar on most systems
       await cdp.send('Browser.setWindowBounds', {
         windowId,
-        bounds: {
-          left: -30000,
-          top: -30000,
-          width: 1280,
-          height: 900,
-          windowState: 'normal',
-        },
+        bounds: { windowState: 'minimized' },
       });
-      this.log.info('session', 'Chrome window moved off-screen (hidden from taskbar)', { windowId });
+      this.log.info('session', 'Chrome window minimized via CDP', { windowId });
       await cdp.detach().catch(() => {});
-    } catch (err) {
-      // Non-fatal — some profiles use existing Chrome where we may not control window placement
-      this.log.debug('session', `hideWindowFromTaskbar: ${(err as Error).message}`);
+    } catch (cdpErr) {
+      this.log.debug('session', `CDP minimize failed: ${(cdpErr as Error).message}`);
+    }
+
+    // Step 2: Win32 ShowWindow(hwnd, SW_HIDE=0) to remove from Windows taskbar entirely
+    // Only attempted when we have a known PID from our spawned Chrome process
+    const pid = this.chromeProcess?.pid;
+    if (!pid || process.platform !== 'win32') return;
+
+    try {
+      // PowerShell: find all top-level windows for the PID and call ShowWindow(hwnd, 0)
+      const psScript = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32 {
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+  [DllImport("user32.dll")] public static extern IntPtr GetDesktopWindow();
+  [DllImport("user32.dll")] public static extern IntPtr GetTopWindow(IntPtr hWnd);
+}
+"@ -ErrorAction SilentlyContinue
+$targetPid = ${pid};
+$hwnd = [Win32]::GetTopWindow([Win32]::GetDesktopWindow());
+while ($hwnd -ne [IntPtr]::Zero) {
+  $pid = 0;
+  [void][Win32]::GetWindowThreadProcessId($hwnd, [ref]$pid);
+  if ($pid -eq $targetPid) { [Win32]::ShowWindow($hwnd, 0) | Out-Null }
+  $hwnd = [Win32]::GetWindow($hwnd, 2);
+}`.trim();
+
+      execSync(`powershell -WindowStyle Hidden -NonInteractive -Command "${psScript.replace(/"/g, '\\"')}"`, {
+        timeout: 5000,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      this.log.info('session', 'Chrome window hidden from taskbar via Win32 ShowWindow', { pid });
+    } catch (psErr) {
+      // Non-fatal — window is still minimized from Step 1
+      this.log.debug('session', `Win32 hide attempt: ${(psErr as Error).message?.substring(0, 120)}`);
     }
   }
 
