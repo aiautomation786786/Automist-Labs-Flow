@@ -24,7 +24,13 @@ import { appLogger } from '../utils/AppLogger';
 
 /** Returns the root directory for all profiles. */
 export function getProfilesRootDir(): string {
-  return path.join(getAppDataDir(), 'profiles');
+  if (process.platform === 'win32') {
+    const localAppData = process.env['LOCALAPPDATA'] ?? process.env['APPDATA'];
+    if (localAppData) {
+      return path.join(localAppData, 'AutomistLabs', 'FlowProfiles');
+    }
+  }
+  return path.join(getAppDataDir(), 'FlowProfiles');
 }
 
 /** Returns the directory for a specific profile. */
@@ -59,6 +65,10 @@ function generateProfileId(): string {
 // ---------------------------------------------------------------------------
 
 export class ProfileConfigManager {
+  /** Returns the root directory where all Flow profiles are stored. */
+  static getProfilesRootDir(): string {
+    return getProfilesRootDir();
+  }
 
   // ---- Create -------------------------------------------------------------
 
@@ -69,12 +79,14 @@ export class ProfileConfigManager {
    * @param displayName   Human-readable label (e.g. "Marketing Account").
    * @param chromePath    Absolute path to chrome.exe.
    * @param cdpPort       Port assigned by ChromePortAllocator.
+   * @param expectedEmail Optional expected Google account email hint.
    * @param notes         Optional user notes.
    */
   static create(params: {
     displayName: string;
     chromePath: string;
     cdpPort: number;
+    expectedEmail?: string;
     notes?: string;
   }): ProfileConfig {
     const profileId = generateProfileId();
@@ -98,6 +110,7 @@ export class ProfileConfigManager {
       updatedAt: now,
       flowUrlLocale: null,
       detectedEmail: null,
+      expectedEmail: params.expectedEmail?.trim() || null,
       notes: params.notes ?? '',
     };
 
@@ -190,7 +203,19 @@ export class ProfileConfigManager {
       return;
     }
 
-    fs.rmSync(profileDir, { recursive: true, force: true });
+    try {
+      fs.rmSync(profileDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    } catch (err) {
+      appLogger.warn('profile_config', `Profile directory deletion had locked files: ${(err as Error).message}`, { profileId });
+      try {
+        const configPath = getProfileConfigPath(profileId);
+        if (fs.existsSync(configPath)) {
+          fs.unlinkSync(configPath);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
 
     appLogger.info('profile_config', `Profile deleted`, { profileId, profileDir });
   }

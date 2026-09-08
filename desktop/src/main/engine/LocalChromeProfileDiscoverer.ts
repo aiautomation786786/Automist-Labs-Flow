@@ -62,42 +62,6 @@ export class LocalChromeProfileDiscoverer {
   }
 
   /**
-   * For Chrome 136+, Chromium strictly refuses --remote-debugging-port if --user-data-dir
-   * matches the default user data directory. Creating an NTFS directory junction to the exact
-   * same directory gives it an alternate path string, allowing DevTools remote debugging
-   * while operating directly on the user's real Chrome profile data with zero copying.
-   */
-  static ensureUserDataJunction(userDataDir: string): string {
-    if (process.platform !== 'win32') {
-      return userDataDir;
-    }
-
-    try {
-      const parentDir = path.dirname(userDataDir);
-      const junctionPath = path.join(parentDir, 'FlowUserDataLink');
-
-      // Check if junction already exists
-      if (fs.existsSync(junctionPath)) {
-        return junctionPath;
-      }
-
-      // Create NTFS junction via PowerShell
-      const psCommand = `New-Item -ItemType Junction -Path '${junctionPath}' -Target '${userDataDir}' -Force`;
-      const encoded = Buffer.from(psCommand, 'utf16le').toString('base64');
-      execSync(`powershell.exe -NoProfile -EncodedCommand ${encoded}`, { stdio: 'ignore' });
-
-      if (fs.existsSync(junctionPath)) {
-        appLogger.info('profile_discoverer', `Created user data junction at: ${junctionPath}`);
-        return junctionPath;
-      }
-    } catch (err) {
-      appLogger.warn('profile_discoverer', `Failed to create junction: ${(err as Error).message}`);
-    }
-
-    return userDataDir;
-  }
-
-  /**
    * Normalizes an email address for robust matching:
    *  - Trims outer whitespace
    *  - Converts to lowercase

@@ -67,6 +67,12 @@ export interface ProfileConfig {
   detectedEmail: string | null;
 
   /**
+   * Optional expected Google account email provided by the user as an onboarding hint.
+   * e.g. "myaccount@gmail.com".
+   */
+  expectedEmail: string | null;
+
+  /**
    * Optional notes field for users to describe this profile.
    */
   notes: string;
@@ -144,6 +150,7 @@ export interface ProfileSessionSnapshot {
   cdpPort: number;
   chromePath: string;
   detectedEmail: string | null;
+  expectedEmail?: string | null;
   flowUrl: string | null;
   errorMessage: string | null;
   lastStatusChange: string; // ISO 8601
@@ -636,11 +643,14 @@ export interface FlowApi {
 
   // Profiles
   listProfiles: () => Promise<ProfileSessionSnapshot[]>;
-  createProfile: (params: { displayName: string }) => Promise<ProfileConfig>;
+  createProfile: (params: { displayName: string; expectedEmail?: string; notes?: string }) => Promise<ProfileConfig>;
   startProfile: (profileId: string) => Promise<ProfileSessionSnapshot | null>;
   stopProfile: (profileId: string) => Promise<void>;
   deleteProfile: (profileId: string) => Promise<void>;
   openChrome: (profileId: string) => Promise<{ success: boolean; message: string }>;
+  openSignIn: (profileId: string) => Promise<{ success: boolean; message: string }>;
+  verifyAccount: (profileId: string) => Promise<{ success: boolean; status: ProfileSessionStatus; detectedEmail: string | null; error?: string }>;
+  testConnection: (profileId: string) => Promise<{ success: boolean; port: number; responsive: boolean; status: ProfileSessionStatus }>;
 
   // Settings & System
   getAppInfo: () => Promise<{ appDataDir: string; version: string; platform: string }>;

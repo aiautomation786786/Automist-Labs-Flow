@@ -50,6 +50,9 @@ describe('ProfilesScreen', () => {
       stopProfile: vi.fn().mockResolvedValue({ ok: true }),
       deleteProfile: vi.fn().mockResolvedValue(undefined),
       openChrome: vi.fn().mockResolvedValue({ ok: true }),
+      openSignIn: vi.fn().mockResolvedValue({ success: true, message: 'Ready' }),
+      verifyAccount: vi.fn().mockResolvedValue({ success: true, status: 'ready', detectedEmail: 'user1@example.com' }),
+      testConnection: vi.fn().mockResolvedValue({ success: true, port: 9222, responsive: true, status: 'ready' }),
       listProjects: vi.fn().mockResolvedValue([]),
       getProject: vi.fn(),
       createProject: vi.fn(),
@@ -69,27 +72,52 @@ describe('ProfilesScreen', () => {
     };
   });
 
-  it('renders profile list with status badges and triggers manual Chrome launch', async () => {
+  it('renders profile list with isolation banner and action buttons', async () => {
     render(<ProfilesScreen />);
 
     await act(async () => {
       await Promise.resolve();
     });
 
+    expect(screen.getByText(/Flow profiles use separate browser sessions/i)).toBeDefined();
     expect(screen.getByText('Main Generation Profile')).toBeDefined();
     expect(screen.getByText('Secondary Profile')).toBeDefined();
     expect(screen.getByText('user1@example.com')).toBeDefined();
     expect(screen.getAllByText(/Ready/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Sign-In Required/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Login Required/i).length).toBeGreaterThan(0);
 
-    // Click Sign In in Chrome for prof_2
-    const signInBtn = screen.getByText('Sign In in Chrome');
+    // Click Open Sign-In for prof_2
+    const signInBtns = screen.getAllByRole('button', { name: /Open Sign-In/i });
     await act(async () => {
-      fireEvent.click(signInBtn);
+      fireEvent.click(signInBtns[1]);
       await Promise.resolve();
     });
 
-    expect(window.flowApi?.openChrome).toHaveBeenCalledWith('prof_2');
+    expect(window.flowApi?.openSignIn).toHaveBeenCalledWith('prof_2');
+  });
+
+  it('handles Verify Account and Test Connection actions', async () => {
+    render(<ProfilesScreen />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const verifyBtns = screen.getAllByRole('button', { name: /Verify Account/i });
+    await act(async () => {
+      fireEvent.click(verifyBtns[0]);
+      await Promise.resolve();
+    });
+
+    expect(window.flowApi?.verifyAccount).toHaveBeenCalledWith('prof_1');
+
+    const testBtns = screen.getAllByRole('button', { name: /Test Connection/i });
+    await act(async () => {
+      fireEvent.click(testBtns[0]);
+      await Promise.resolve();
+    });
+
+    expect(window.flowApi?.testConnection).toHaveBeenCalledWith('prof_1');
   });
 
   it('handles Stop Profile action', async () => {

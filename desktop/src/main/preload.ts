@@ -15,6 +15,7 @@ import type {
   ProjectEntity,
   GenerationJobEntity,
   ProfileSessionSnapshot,
+  ProfileSessionStatus,
   ProfileConfig,
   AppSettings,
   CreateProjectParams,
@@ -43,7 +44,7 @@ const flowApi: FlowApi = {
 
   // Profiles
   listProfiles: (): Promise<ProfileSessionSnapshot[]> => ipcRenderer.invoke('profiles:list'),
-  createProfile: (params: { displayName: string }): Promise<ProfileConfig> =>
+  createProfile: (params: { displayName: string; expectedEmail?: string; notes?: string }): Promise<ProfileConfig> =>
     ipcRenderer.invoke('profiles:create', params),
   startProfile: (profileId: string): Promise<ProfileSessionSnapshot | null> =>
     ipcRenderer.invoke('profiles:start', profileId),
@@ -51,6 +52,12 @@ const flowApi: FlowApi = {
   deleteProfile: (profileId: string): Promise<void> => ipcRenderer.invoke('profiles:delete', profileId),
   openChrome: (profileId: string): Promise<{ success: boolean; message: string }> =>
     ipcRenderer.invoke('profiles:openChrome', profileId),
+  openSignIn: (profileId: string): Promise<{ success: boolean; message: string }> =>
+    ipcRenderer.invoke('profiles:openSignIn', profileId),
+  verifyAccount: (profileId: string): Promise<{ success: boolean; status: ProfileSessionStatus; detectedEmail: string | null; error?: string }> =>
+    ipcRenderer.invoke('profiles:verifyAccount', profileId),
+  testConnection: (profileId: string): Promise<{ success: boolean; port: number; responsive: boolean; status: ProfileSessionStatus }> =>
+    ipcRenderer.invoke('profiles:testConnection', profileId),
 
   // Settings & System
   getAppInfo: () => ipcRenderer.invoke('system:getAppInfo'),

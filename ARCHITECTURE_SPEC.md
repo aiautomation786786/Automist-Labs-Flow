@@ -224,30 +224,27 @@ The existing `google-flow-browser-mcp` is an MCP server written around stdio com
 
 ---
 
-## 7. Multi-Profile Architecture
+## 7. Multi-Profile Architecture (Phase 5.3 Dedicated Architecture)
 
 ### 7.1 Complete Worker Isolation
-To prevent Google session collisions and browser lockfile conflicts, each profile operates with absolute filesystem and network boundary isolation.
+To prevent Google session collisions and browser lockfile conflicts, each profile operates with absolute filesystem and network boundary isolation. Dedicated profiles are managed under `%LOCALAPPDATA%\AutomistLabs\FlowProfiles\`. Normal user Chrome sessions and profiles are completely isolated and never terminated, modified, or hijacked.
 
 ```
-%LOCALAPPDATA%\GoogleFlowApp\
-├── profiles\
-│   ├── profile_17170001\       <-- Worker 1
-│   │   ├── GoogleChromeData\   <-- Persistent Chrome User Data
-│   │   └── profile.json        <-- Config: Port 9222, Name: "Account Alpha"
-│   ├── profile_17170002\       <-- Worker 2
-│   │   ├── GoogleChromeData\   <-- Persistent Chrome User Data
-│   │   └── profile.json        <-- Config: Port 9223, Name: "Account Beta"
-│   └── profile_17170003\       <-- Worker 3
-│       ├── GoogleChromeData\   <-- Persistent Chrome User Data
-│       └── profile.json        <-- Config: Port 9224, Name: "Account Gamma"
+%LOCALAPPDATA%\AutomistLabs\FlowProfiles\
+├── profile_d3ffc811\                 <-- Worker 1
+│   ├── chrome-user-data\             <-- Dedicated persistent Chrome User Data
+│   └── profile.json                  <-- Config: Port 9222, Expected: "alpha@gmail.com"
+├── profile_356e827b\                 <-- Worker 2
+│   ├── chrome-user-data\             <-- Dedicated persistent Chrome User Data
+│   └── profile.json                  <-- Config: Port 9223, Expected: "beta@gmail.com"
 ```
 
 ### 7.2 Profile Worker Lifecycle
-1. **Provisioning:** User clicks `Add Profile`. App creates a new persistent folder and allocates the next free CDP port (starting from `9222`).
-2. **Initial Authentication (Interactive):** App launches Chrome with `headless: false`. User signs into Google once. Chrome saves session cookies into that profile's `GoogleChromeData`.
-3. **Operational Mode:** When running jobs, Chrome runs in standard or optimized mode. Session cookies remain intact permanently across app reboots.
-4. **No Temporary Cloning:** The hazardous `/tmp/chrome-kiara-cdp-...` recursive copying found in the prototype is completely eliminated.
+1. **Provisioning:** User clicks `Add Flow Profile`. App creates a dedicated directory and allocates the next available CDP port (starting from `9222`).
+2. **Initial Authentication (Interactive):** App launches Chrome visibly (`headless: false`). The user signs into Google manually inside that dedicated window. Chrome persists cookies in that profile's own directory using native DPAPI encryption. No passwords, credentials, or cookies are ever extracted, requested, or stored by the application.
+3. **Operational Mode:** Multiple profiles run simultaneously on dedicated CDP ports without mutual blocking.
+4. **Strict Process Safety:** Chrome termination uses graceful `ChildProcess.kill('SIGTERM')` followed strictly by non-recursive `taskkill /pid <pid> /F` (no `/T`, no `/IM`). Unrelated Chrome windows and external processes are never killed.
+5. **No Directory Junctions or Profile Hijacking:** Does not create NTFS junctions to user Chrome profiles.
 
 ---
 
@@ -262,16 +259,16 @@ The app automatically scans for the Google Chrome executable on Windows in the f
 5. Custom user-specified path configured in Settings.
 
 ### 8.2 Chrome Process Spawning & Flags
-Chrome is spawned via Node.js `child_process.spawn()` with specific anti-detection arguments:
+Chrome is spawned via Node.js `child_process.spawn()` with isolated, anti-detection flags:
 ```typescript
 const chromeArgs = [
   `--remote-debugging-port=${profile.cdpPort}`,
-  `--user-data-dir=${profile.userDataPath}`,
+  `--user-data-dir=${profile.userDataDir}`,
   '--no-first-run',
   '--no-default-browser-check',
   '--disable-blink-features=AutomationControlled',
-  '--password-store=basic',
-  '--disable-features=IsolateOrigins,site-per-process',
+  '--hide-crash-restore-bubble',
+  '--disable-session-crashed-bubble',
   '--window-size=1920,1080',
 ];
 if (profile.runHeadless) {

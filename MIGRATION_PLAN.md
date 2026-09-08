@@ -69,17 +69,18 @@ graph TD
 ### Step 2: Windows Chrome Driver & Session Manager
 - **Goal:** Create a 100% reliable, non-destructive Windows Chrome launcher and CDP connection manager.
 - **Actions:**
-  1. Implement `WindowsProcessService`:
+  1. Implement `WindowsProcessService` / `WindowsChromeFinder`:
      - Scan Windows Registry and standard Program Files paths to locate `chrome.exe`.
-     - Implement clean process termination (`taskkill /pid ... /T /F`).
-  2. Implement `BrowserSessionManager`:
-     - Create persistent profile directories under `%LOCALAPPDATA%\GoogleFlowApp\profiles\profile_{id}\`.
+     - Strictly enforce non-recursive process termination (`proc.kill('SIGTERM')` followed by non-recursive `taskkill /pid <pid> /F` without `/T` or `/IM`) targeting only the specific child process PID.
+  2. Implement `BrowserSessionManager` / `ProfileSessionManager`:
+     - Create dedicated persistent profile directories under `%LOCALAPPDATA%\AutomistLabs\FlowProfiles\<profile-id>\chrome-user-data`.
      - Allocate dynamic CDP ports (e.g., 9222, 9223, 9224...).
      - Launch Chrome with anti-detection arguments (`--disable-blink-features=AutomationControlled`).
      - Attach Playwright via `chromium.connectOverCDP()`.
-  3. Validate interactive login:
-     - Provide a helper to launch visible Chrome so the user can log into their Google account once.
-     - Validate that session cookies persist across restarts.
+  3. Validate interactive login & multi-profile concurrency:
+     - Provide a helper to launch visible Chrome so the user can log into their Google account once inside the dedicated profile.
+     - Validate that session cookies persist across restarts within that profile directory.
+     - Ensure normal user Chrome profiles and sessions are completely isolated and never terminated or modified.
 
 ---
 

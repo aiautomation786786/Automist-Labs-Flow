@@ -145,12 +145,14 @@ export class IpcHandlers {
     });
 
     ipcMain.handle('profiles:create', async (_event, params: unknown) => {
-      const p = params as { displayName: string };
+      const p = params as { displayName: string; expectedEmail?: string; notes?: string };
       if (!p || !p.displayName?.trim()) {
         throw new Error('Profile display name is required.');
       }
       return await sessionManager.createProfile({
         displayName: p.displayName.trim(),
+        expectedEmail: p.expectedEmail?.trim() || undefined,
+        notes: p.notes?.trim() || undefined,
         autoStart: false,
       });
     });
@@ -183,6 +185,25 @@ export class IpcHandlers {
         success: true,
         message: `Chrome window opened for ${session?.profileId ?? profileId}. Sign in to Google Flow manually.`,
       };
+    });
+
+    ipcMain.handle('profiles:openSignIn', async (_event, profileId: unknown) => {
+      if (typeof profileId !== 'string') throw new Error('Invalid profileId');
+      const snapshot = await sessionManager.openSignIn(profileId);
+      return {
+        success: true,
+        message: `Sign-in window ready for profile ${snapshot.displayName}. Sign in to Google Flow manually.`,
+      };
+    });
+
+    ipcMain.handle('profiles:verifyAccount', async (_event, profileId: unknown) => {
+      if (typeof profileId !== 'string') throw new Error('Invalid profileId');
+      return await sessionManager.verifyAccount(profileId);
+    });
+
+    ipcMain.handle('profiles:testConnection', async (_event, profileId: unknown) => {
+      if (typeof profileId !== 'string') throw new Error('Invalid profileId');
+      return await sessionManager.testConnection(profileId);
     });
 
     // -------------------------------------------------------------------------

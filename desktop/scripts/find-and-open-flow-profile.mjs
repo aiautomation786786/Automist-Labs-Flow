@@ -18,7 +18,7 @@
 
 import * as path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { spawn, execSync } from 'child_process';
+import { spawn } from 'child_process';
 import * as http from 'http';
 import { chromium } from 'playwright';
 
@@ -73,7 +73,6 @@ if (accountIdx !== -1 && args[accountIdx + 1]) {
 }
 
 const openMode = args.includes('--open');
-const closeRunning = args.includes('--close-running');
 const discoverOnly = args.includes('--discover-only') || !openMode;
 
 async function probePort(port) {
@@ -199,37 +198,11 @@ async function main() {
   let chromeProcess = null;
 
   if (inUseCheck.inUse && !activeCdpPort) {
-    if (closeRunning) {
-      warn(`--close-running specified. Terminating ${inUseCheck.pids.length} conflicting Chrome process(es)...`);
-      for (const pid of inUseCheck.pids) {
-        try {
-          execSync(`taskkill /pid ${pid} /T /F`, { stdio: 'ignore' });
-          ok(`Terminated process tree for PID ${pid}`);
-        } catch (e) {
-          warn(`Failed to terminate PID ${pid}: ${e.message}`);
-        }
-      }
-      // Wait for process handles and file locks to release
-      await new Promise((r) => setTimeout(r, 2000));
-      // Re-check
-      const recheck = await LocalChromeProfileDiscoverer.isProfileInUse(userDataDir, matched.profileDirectory);
-      if (recheck.inUse && !recheck.cdpPort) {
-        warn(`Chrome process still detected after initial termination (PIDs: ${recheck.pids.join(', ')}). Retrying termination...`);
-        for (const pid of recheck.pids) {
-          try {
-            execSync(`taskkill /pid ${pid} /T /F`, { stdio: 'ignore' });
-          } catch {}
-        }
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-      ok('Conflicting Chrome processes terminated cleanly.');
-    } else {
-      warn('NOTICE: Chrome is already running without remote debugging enabled.');
-      warn('To open the existing profile with full CDP attachment, the running Chrome process must be restarted with remote debugging, OR CDP attached to an available instance.');
-      process.stderr.write(`\n${c.yellow}CRITICAL SAFETY RULE: Cannot forcibly spawn a conflicting second process against active locked profile.${c.reset}\n`);
-      process.stderr.write(`Please close the running Chrome window (or pass --close-running), then re-run this command with --open.\n\n`);
-      process.exit(1);
-    }
+    warn('NOTICE: Chrome is already running using this profile without remote debugging enabled.');
+    warn('To avoid interfering with existing Chrome sessions, the production application uses dedicated Flow profiles.');
+    process.stderr.write(`\n${c.yellow}CRITICAL SAFETY RULE: Never forcibly terminate or hijack active user Chrome sessions.${c.reset}\n`);
+    process.stderr.write(`Please use dedicated application-managed Flow profiles (%LOCALAPPDATA%\\AutomistLabs\\FlowProfiles) which run safely alongside normal Chrome.\n\n`);
+    process.exit(1);
   }
 
   if (!activeCdpPort) {
@@ -238,8 +211,8 @@ async function main() {
     ok(`Allocated unique CDP port: ${activeCdpPort}`);
 
     step(`Launching visible Chrome window for profile "${matched.profileDirectory}"...`);
-    const effectiveUserDataDir = LocalChromeProfileDiscoverer.ensureUserDataJunction(userDataDir);
-    info(`Effective User Data Directory: ${effectiveUserDataDir}`);
+    const effectiveUserDataDir = userDataDir;
+    info(`User Data Directory: ${effectiveUserDataDir}`);
     const launchArgs = [
       `--user-data-dir=${effectiveUserDataDir}`,
       `--profile-directory=${matched.profileDirectory}`,

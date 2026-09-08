@@ -58,16 +58,15 @@ const CHROME_FLAGS_BASE: string[] = [
   '--disable-popup-blocking',
   '--disable-infobars',
   '--disable-save-password-bubble',
-  '--disable-sync',                    // No Google account sync on the automation profile
+  '--hide-crash-restore-bubble',
+  '--disable-session-crashed-bubble',
   '--metrics-recording-only',
   '--safebrowsing-disable-auto-update',
-  '--password-store=basic',
-  '--use-mock-keychain',
   '--disable-component-update',       // Prevent Chrome from updating mid-session
 ];
 
 // Google Flow URL (English by default; may be updated after locale detection)
-const FLOW_BASE_URL = 'https://labs.google/fx/en/tools/flow';
+export const FLOW_BASE_URL = 'https://labs.google/fx/en/tools/flow';
 
 // ---------------------------------------------------------------------------
 // ProfileSession events
@@ -180,6 +179,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       cdpPort: this.config.cdpPort,
       chromePath: this.config.chromePath,
       detectedEmail: this.detectedEmail,
+      expectedEmail: this.config.expectedEmail ?? null,
       flowUrl: this.flowUrl,
       errorMessage: this.errorMessage,
       lastStatusChange: this.lastStatusChange.toISOString(),
@@ -247,6 +247,16 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
 
   private async launchChrome(headless: boolean): Promise<void> {
     const { chromePath, cdpPort, userDataDir } = this.config;
+
+    // If an app-managed Flow profile is already running on this port, connect to it
+    try {
+      await probeCdpPort(cdpPort);
+      this.log.info('chrome_launch', `CDP port ${cdpPort} is already active. Attaching to existing profile session.`);
+      this.setStatus('chrome_launched');
+      return;
+    } catch {
+      // Not yet active; proceed with launching fresh dedicated Chrome process
+    }
 
     // Verify paths
     if (!fs.existsSync(chromePath)) {
@@ -489,26 +499,27 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     const proc = this.chromeProcess;
     if (!proc) return;
 
-    this.log.info('chrome_kill', 'Terminating Chrome process', { pid: proc.pid });
+    this.log.info('chrome_kill', 'Terminating dedicated Chrome process', { pid: proc.pid });
 
     try {
-      if (process.platform === 'win32' && proc.pid) {
-        try {
-          execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: 'ignore' });
-        } catch { /* already exited */ }
-      } else {
-        // Attempt graceful shutdown first
-        proc.kill('SIGTERM');
-        await delay(1000);
+      // Graceful process kill attempt first via ChildProcess.kill()
+      proc.kill('SIGTERM');
+      await delay(800);
 
-        // Force kill if still running
-        if (!proc.killed && proc.exitCode === null) {
-          proc.kill('SIGKILL');
-          await delay(500);
+      // If still running on Windows, use non-recursive taskkill strictly targeting this exact proc.pid
+      // (CRITICAL: NEVER use /T or /IM chrome.exe — only terminate this dedicated child process PID)
+      if (process.platform === 'win32' && proc.pid && !proc.killed && proc.exitCode === null) {
+        try {
+          execSync(`taskkill /pid ${proc.pid} /F`, { stdio: 'ignore' });
+        } catch {
+          /* already exited */
         }
+      } else if (!proc.killed && proc.exitCode === null) {
+        proc.kill('SIGKILL');
+        await delay(300);
       }
     } catch {
-      // If the process is already gone, ignore the error
+      // If process is already gone, ignore
     }
 
     this.chromeProcess = null;
@@ -529,7 +540,7 @@ function delay(ms: number): Promise<void> {
  * Resolves if Chrome responds with any HTTP 200.
  * Rejects (throws) if the request fails or times out.
  */
-function probeCdpPort(port: number): Promise<void> {
+export function probeCdpPort(port: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const req = http.get(
       `http://127.0.0.1:${port}/json/version`,

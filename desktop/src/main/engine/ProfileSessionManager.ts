@@ -20,7 +20,8 @@ import type {
   ProfileSessionSnapshot,
   ProfileSessionStatus,
 } from '../../shared/types';
-import { ProfileSession } from './ProfileSession';
+import { ProfileSession, FLOW_BASE_URL, probeCdpPort } from './ProfileSession';
+import { FlowAuthDetector } from './FlowAuthDetector';
 import { ProfileConfigManager } from './ProfileConfig';
 import { ChromePortAllocator } from './ChromePortAllocator';
 import { WindowsChromeFinder } from './WindowsChromeFinder';
@@ -95,6 +96,7 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
     autoStart?: boolean;
     headless?: boolean;
     notes?: string;
+    expectedEmail?: string;
   }): Promise<ProfileConfig> {
     // Use a stable temporary key for the port allocation.
     // We reassign to the real profileId immediately after the config is created.
@@ -106,6 +108,7 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       chromePath: this.chromePath,
       cdpPort,
       notes: params.notes,
+      expectedEmail: params.expectedEmail,
     });
 
     // Move the allocation from the temp key to the real profileId.
@@ -115,6 +118,7 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
     appLogger.info('session_manager', 'Profile created', {
       profileId: config.profileId,
       displayName: config.displayName,
+      expectedEmail: config.expectedEmail,
       cdpPort,
     });
 
@@ -252,6 +256,122 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
   }
 
   // ---------------------------------------------------------------------------
+  // Account & Authentication Actions (Phase 5.3)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Opens a visible Chrome window for manual user sign-in.
+   * If already running, navigates the page to the Flow base URL.
+   */
+  async openSignIn(profileId: string): Promise<ProfileSessionSnapshot> {
+    const session = this.sessions.get(profileId);
+    if (!session || session.status === 'stopped' || session.status === 'error') {
+      await this.startProfile(profileId, false);
+    }
+    const activeSession = this.sessions.get(profileId);
+    if (!activeSession) {
+      throw new Error(`Failed to initialize session for profile ${profileId}`);
+    }
+    const page = activeSession.getPage();
+    if (page) {
+      try {
+        const config = ProfileConfigManager.read(profileId);
+        const url = config.flowUrlLocale
+          ? `https://labs.google${config.flowUrlLocale}`
+          : FLOW_BASE_URL;
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+      } catch {
+        /* ignore navigation errors during sign-in open */
+      }
+    }
+    return activeSession.getSnapshot();
+  }
+
+  /**
+   * Probes the current Google Flow authentication state using FlowAuthDetector.
+   * Updates detectedEmail and locale in profile.json if found.
+   */
+  async verifyAccount(profileId: string): Promise<{
+    success: boolean;
+    status: ProfileSessionStatus;
+    detectedEmail: string | null;
+    error?: string;
+  }> {
+    let session = this.sessions.get(profileId);
+    if (!session || session.status === 'stopped' || session.status === 'error') {
+      await this.startProfile(profileId, false);
+      session = this.sessions.get(profileId);
+    }
+
+    if (!session) {
+      return { success: false, status: 'error', detectedEmail: null, error: 'Session failed to start' };
+    }
+
+    const page = session.getPage();
+    if (!page) {
+      return { success: false, status: session.status, detectedEmail: null, error: 'Browser page unavailable' };
+    }
+
+    try {
+      const config = ProfileConfigManager.read(profileId);
+      const url = config.flowUrlLocale ? `https://labs.google${config.flowUrlLocale}` : FLOW_BASE_URL;
+      const result = await FlowAuthDetector.navigateAndCheck(page, url, profileId);
+
+      if (result.detectedEmail || result.locale) {
+        ProfileConfigManager.update(profileId, {
+          ...(result.detectedEmail ? { detectedEmail: result.detectedEmail } : {}),
+          ...(result.locale ? { flowUrlLocale: `/fx/${result.locale}/tools/flow` } : {}),
+        });
+      }
+
+      return {
+        success: result.state === 'authenticated',
+        status: session.status,
+        detectedEmail: result.detectedEmail ?? session.getSnapshot().detectedEmail,
+        error: result.state === 'login_required' ? 'User login required' : undefined,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        status: session.status,
+        detectedEmail: session.getSnapshot().detectedEmail,
+        error: (err as Error).message,
+      };
+    }
+  }
+
+  /**
+   * Tests CDP and browser responsiveness for a dedicated Flow profile.
+   */
+  async testConnection(profileId: string): Promise<{
+    success: boolean;
+    port: number;
+    responsive: boolean;
+    status: ProfileSessionStatus;
+  }> {
+    const config = ProfileConfigManager.read(profileId);
+    const session = this.sessions.get(profileId);
+    const port = session?.getSnapshot().cdpPort ?? config.cdpPort;
+
+    try {
+      await probeCdpPort(port);
+      return {
+        success: true,
+        port,
+        responsive: true,
+        status: session ? session.status : 'stopped',
+      };
+    } catch {
+      return {
+        success: false,
+        port,
+        responsive: false,
+        status: session ? session.status : 'stopped',
+      };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Queries
   // ---------------------------------------------------------------------------
 
@@ -278,6 +398,7 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
           cdpPort: config.cdpPort,
           chromePath: config.chromePath,
           detectedEmail: config.detectedEmail,
+          expectedEmail: config.expectedEmail ?? null,
           flowUrl: null,
           errorMessage: null,
           lastStatusChange: config.updatedAt,
