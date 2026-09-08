@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ProjectsScreen } from '../screens/ProjectsScreen';
 import { NewProjectScreen } from '../screens/NewProjectScreen';
+import { GenerationStudioScreen, type GenerationMode } from '../screens/GenerationStudioScreen';
 import { WorkspaceScreen } from '../screens/WorkspaceScreen';
 import { ProfilesScreen } from '../screens/ProfilesScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
@@ -8,6 +9,7 @@ import { FolderIcon, PlusIcon, UsersIcon, SettingsIcon } from './Icons';
 
 type View =
   | { type: 'projects' }
+  | { type: 'new_generation'; initialMode?: GenerationMode }
   | { type: 'new_project' }
   | { type: 'workspace'; projectId: string }
   | { type: 'profiles' }
@@ -25,15 +27,15 @@ export const AppShell: React.FC = () => {
       onClick: () => setCurrentView({ type: 'projects' }),
     },
     {
-      id: 'new_project',
-      label: 'New Project',
+      id: 'new_generation',
+      label: 'New Generation',
       icon: <PlusIcon size={16} />,
-      isActive: currentView.type === 'new_project',
-      onClick: () => setCurrentView({ type: 'new_project' }),
+      isActive: currentView.type === 'new_generation' || currentView.type === 'new_project',
+      onClick: () => setCurrentView({ type: 'new_generation' }),
     },
     {
       id: 'profiles',
-      label: 'Profiles',
+      label: 'Flow Accounts',
       icon: <UsersIcon size={16} />,
       isActive: currentView.type === 'profiles',
       onClick: () => setCurrentView({ type: 'profiles' }),
@@ -131,7 +133,16 @@ export const AppShell: React.FC = () => {
         {currentView.type === 'projects' && (
           <ProjectsScreen
             onOpenProject={(projectId) => setCurrentView({ type: 'workspace', projectId })}
-            onNavigateNewProject={() => setCurrentView({ type: 'new_project' })}
+            onNavigateNewProject={() => setCurrentView({ type: 'new_generation' })}
+          />
+        )}
+
+        {currentView.type === 'new_generation' && (
+          <GenerationStudioScreen
+            initialMode={currentView.initialMode}
+            onProjectCreated={(projectId) => setCurrentView({ type: 'workspace', projectId })}
+            onCancel={() => setCurrentView({ type: 'projects' })}
+            onNavigateProfiles={() => setCurrentView({ type: 'profiles' })}
           />
         )}
 
