@@ -113,11 +113,33 @@ export class ModelSelector {
     await dropdownButton.click();
     await page.waitForTimeout(500);
 
+    // Step 2b: If in Video mode inside the popover, switch to Image mode
+    const imageModeTab = page.locator('.cdk-overlay-pane button:has-text("Image"), .cdk-overlay-pane [role="radio"]:has-text("Image")').first();
+    const imageTabVisible = await imageModeTab.isVisible({ timeout: 1000 }).catch(() => false);
+    if (imageTabVisible) {
+      const isChecked = typeof imageModeTab.getAttribute === 'function' ? await imageModeTab.getAttribute('aria-checked').catch(() => null) : null;
+      if (isChecked !== 'true') {
+        logger.info('model_selector', 'Switching popover mode to Image...');
+        await imageModeTab.click().catch(() => {});
+        await page.waitForTimeout(500);
+      }
+    }
+
+    // Step 2c: If a "Select model family" trigger is present inside the popover, open it
+    const modelFamilyBtn = page.locator('button[aria-label="Select model family"]').first();
+    const modelFamilyVis = await modelFamilyBtn.isVisible({ timeout: 1000 }).catch(() => false);
+    if (modelFamilyVis) {
+      logger.info('model_selector', 'Opening "Select model family" dropdown...');
+      await modelFamilyBtn.click().catch(() => {});
+      await page.waitForTimeout(500);
+    }
+
     // Step 3: Find the Nano Banana 2 option
     const optionSelectors = [
       'button:has-text("Nano Banana 2")',
       '[role="option"]:has-text("Nano Banana 2")',
       '[role="menuitem"]:has-text("Nano Banana 2")',
+      '.mat-mdc-menu-item:has-text("Nano Banana 2")',
       'li:has-text("Nano Banana 2")',
       'div:has-text("Nano Banana 2")',
       'span:has-text("Nano Banana 2")',
@@ -142,6 +164,22 @@ export class ModelSelector {
     logger.info('model_selector', 'Clicking Nano Banana 2 option...');
     await optionLocator.click();
     await page.waitForTimeout(800);
+
+    // Step 4b: Ensure quantity is x1 if quantity radios exist
+    const x1Radio = page.locator('.cdk-overlay-pane button[role="radio"]:has-text("x1")').first();
+    const x1Vis = await x1Radio.isVisible({ timeout: 1000 }).catch(() => false);
+    if (x1Vis) {
+      const isChecked = typeof x1Radio.getAttribute === 'function' ? await x1Radio.getAttribute('aria-checked').catch(() => null) : null;
+      if (isChecked !== 'true') {
+        logger.info('model_selector', 'Ensuring quantity x1...');
+        await x1Radio.click().catch(() => {});
+        await page.waitForTimeout(300);
+      }
+    }
+
+    // Close popover with Escape if still open
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
 
     // Step 5: Verify the newly selected model strictly contains "Nano Banana 2"
     const modelDetectedAfter = await this.detectCurrentModel(page);
