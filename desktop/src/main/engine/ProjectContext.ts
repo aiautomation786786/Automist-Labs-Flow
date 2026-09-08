@@ -19,7 +19,7 @@ import { FlowDriver } from './FlowDriver';
 
 const logger = new AppLogger({ mirrorToStderr: false });
 
-export const PROJECT_URL_REGEX = /\/tools\/flow\/project\/([a-zA-Z0-9_-]+)/;
+export const PROJECT_URL_REGEX = /(?:(?:\/tools\/flow)?\/project\/([a-zA-Z0-9_-]+))/;
 
 export class ProjectContext {
   /**

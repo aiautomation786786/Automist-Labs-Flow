@@ -509,7 +509,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     }
 
     // If page is on an unexpected URL (e.g. blank page), navigate to Flow
-    if (result.state === 'unknown' && !currentUrl.includes('labs.google') && !currentUrl.includes('accounts.google')) {
+    if (result.state === 'unknown' && !currentUrl.includes('labs.google') && !currentUrl.includes('flow.google.com') && !currentUrl.includes('accounts.google')) {
       const targetUrl = this.config.flowUrlLocale
         ? `https://labs.google${this.config.flowUrlLocale}`
         : FLOW_BASE_URL;

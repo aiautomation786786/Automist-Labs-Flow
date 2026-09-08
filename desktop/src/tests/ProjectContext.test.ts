@@ -15,6 +15,12 @@ describe('ProjectContext', () => {
       expect(id).toBe('9a8b7c6d-1234-5678-abcd-ef0123456789');
     });
 
+    it('should extract UUID from flow.google.com project URL', () => {
+      const url = 'https://flow.google.com/project/00e59600-6138-4245-a29d-8cb3ed53403d';
+      const id = ProjectContext.extractProjectId(url);
+      expect(id).toBe('00e59600-6138-4245-a29d-8cb3ed53403d');
+    });
+
     it('should extract ID from French Flow project URL', () => {
       const url = 'https://labs.google/fx/fr/tools/flow/project/project_alpha_123';
       const id = ProjectContext.extractProjectId(url);

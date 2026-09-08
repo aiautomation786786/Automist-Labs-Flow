@@ -15,8 +15,8 @@ import { AppLogger } from '../utils/AppLogger';
 const logger = new AppLogger({ mirrorToStderr: true });
 
 // Google Flow base domain and project URL pattern
-const FLOW_DOMAIN_PATTERN = /labs\.google/;
-const FLOW_PROJECT_URL_PATTERN = /\/tools\/flow\/project\//;
+const FLOW_DOMAIN_PATTERN = /(?:labs\.google|flow\.google\.com)/;
+const FLOW_PROJECT_URL_PATTERN = /(?:\/tools\/flow\/project\/|\/project\/)/;
 const GOOGLE_ACCOUNTS_PATTERN = /accounts\.google\.com/;
 const GOOGLE_SIGNIN_PATTERN = /google\.com\/signin/;
 
@@ -33,7 +33,7 @@ const LOCALE_FROM_URL_PATTERN = /\/fx\/([a-z]{2})\/tools\/flow/;
  *
  * Strategies tried in order:
  *  1. NextData JSON (Next.js pages expose user data in __NEXT_DATA__)
- *  2. DOM attribute selectors (data-email, data-account-email)
+ *  2. DOM attribute selectors (data-email, data-account-email, aria-label)
  *  3. GAIA/GAPI globals
  *
  * This deliberately does NOT capture or store credentials — it reads the
@@ -54,6 +54,7 @@ async function detectEmail(page: Page): Promise<string | null> {
 
       // Strategy 2: DOM attribute selectors
       const selectors = [
+        '[aria-label*="Google Account"]',
         '[data-email]',
         '[data-account-email]',
         '[aria-label*="@"]',
@@ -62,11 +63,14 @@ async function detectEmail(page: Page): Promise<string | null> {
         const el = document.querySelector(sel);
         if (el) {
           const candidate =
+            el.getAttribute('aria-label') ??
             el.getAttribute('data-email') ??
             el.getAttribute('data-account-email') ??
-            el.getAttribute('aria-label') ??
             el.textContent?.trim();
-          if (candidate && candidate.includes('@')) return candidate;
+          if (candidate && candidate.includes('@')) {
+            const match = candidate.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+            if (match) return match[1];
+          }
         }
       }
 
@@ -154,12 +158,13 @@ export class FlowAuthDetector {
         // 4. A project URL path segment
         const sidebar = document.querySelector('[class*="sidebar"], [class*="nav-rail"]');
         const promptInput = document.querySelector(
-          '[contenteditable="true"], textarea[placeholder]'
+          '[contenteditable="true"], textarea[placeholder], textarea'
         );
         const projectLink = document.querySelector('a[href*="/project/"]');
         const isOnProjectPage = window.location.pathname.includes('/project/');
+        const hasAccountButton = !!document.querySelector('[aria-label*="Google Account"], [aria-label*="@"]');
 
-        return !!(sidebar ?? promptInput ?? projectLink ?? isOnProjectPage);
+        return !!(sidebar || promptInput || projectLink || isOnProjectPage || hasAccountButton);
       }).catch(() => false);
 
       if (isFlowAuthenticated) {
