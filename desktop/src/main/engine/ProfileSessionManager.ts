@@ -582,8 +582,8 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       const verifyPromise = session.verifyAuth();
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(
-          () => reject(new Error('Verification timed out after 12s. Please ensure Google Flow is active in Chrome and click Verify again.')),
-          12000,
+          () => reject(new Error('Verification timed out after 30s. Please ensure Google Flow is active in Chrome and click Verify again.')),
+          30000,
         ),
       );
       const authResult = await Promise.race([verifyPromise, timeoutPromise]);

@@ -125,7 +125,7 @@ export class ProjectContext {
     options: { baseFlowUrl?: string } = {},
   ): Promise<FlowProjectInfo> {
     const current = this.getCurrentProject(page);
-    const baseFlowUrl = options.baseFlowUrl ?? 'https://labs.google/fx/en/tools/flow';
+    const baseFlowUrl = options.baseFlowUrl ?? (page.url().includes('flow.google.com') ? 'https://flow.google.com' : 'https://labs.google/fx/en/tools/flow');
 
     // Scenario 1: User requested a specific projectId or URL
     if (context.projectId || context.projectUrl) {
@@ -163,7 +163,7 @@ export class ProjectContext {
     name?: string,
     options: { baseFlowUrl?: string } = {},
   ): Promise<FlowProjectInfo> {
-    const baseFlowUrl = options.baseFlowUrl ?? 'https://labs.google/fx/en/tools/flow';
+    const baseFlowUrl = options.baseFlowUrl ?? (page.url().includes('flow.google.com') ? 'https://flow.google.com' : 'https://labs.google/fx/en/tools/flow');
     logger.info('project_context', 'Creating new Flow project...');
 
     // Make sure we're on the Flow main page first if currently inside a project
@@ -179,6 +179,9 @@ export class ProjectContext {
       'button:has-text("Nouveau projet")',
       'a:has-text("New project")',
       'a:has-text("Nouveau projet")',
+      '[role="button"]:has-text("New project")',
+      'button:has-text("New")',
+      '[role="button"]:has-text("New")',
       '[aria-label*="New project" i]',
       '[aria-label*="Nouveau projet" i]',
       'button:has-text("Create")',
@@ -189,13 +192,17 @@ export class ProjectContext {
     const btnLocator = await FlowDriver.findFirstVisible(page, newProjectSelectors, 2000);
 
     if (btnLocator) {
-      await btnLocator.click();
+      await btnLocator.click({ force: true }).catch(async () => {
+        await btnLocator.evaluate((b) => (b as HTMLElement).click());
+      });
     } else {
       // Fallback: search for any button containing an "add" icon
       const addIconBtn = page.locator('button:has([class*="add"]), button:has-text("add")').first();
       const addVisible = await addIconBtn.isVisible({ timeout: 2000 }).catch(() => false);
       if (addVisible) {
-        await addIconBtn.click();
+        await addIconBtn.click({ force: true }).catch(async () => {
+          await addIconBtn.evaluate((b) => (b as HTMLElement).click());
+        });
       } else {
         throw new Error(
           'Could not find "New Project" button on the Google Flow page. The UI structure may have changed.'
@@ -211,12 +218,27 @@ export class ProjectContext {
     while (Date.now() - startWait < 15000) {
       await page.waitForTimeout(1000);
       const url = page.url();
-      const id = this.extractProjectId(url);
+      let id = this.extractProjectId(url);
       if (id) {
         newProjectId = id;
         newProjectUrl = url;
         break;
       }
+
+      // Check all open pages in case project opened in a new tab
+      try {
+        const pages = page.context().pages();
+        for (const p of pages) {
+          const pUrl = p.url();
+          const pId = this.extractProjectId(pUrl);
+          if (pId) {
+            newProjectId = pId;
+            newProjectUrl = pUrl;
+            break;
+          }
+        }
+      } catch {}
+      if (newProjectId) break;
     }
 
     if (!newProjectId) {

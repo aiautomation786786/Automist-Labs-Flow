@@ -17,7 +17,7 @@
 
 import { EventEmitter } from 'events';
 import * as fs from 'fs';
-import { spawn, execSync, type ChildProcess } from 'child_process';
+import { spawn, execSync, exec, type ChildProcess } from 'child_process';
 import * as http from 'http';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 
@@ -518,7 +518,7 @@ if ($targetPids.Count -gt 0) {
       this.setStatus('connecting');
       this.log.info('reconnect', 'Connecting Playwright to running browser over CDP', { endpoint: cdpEndpoint });
       try {
-        this.browser = await chromium.connectOverCDP(cdpEndpoint, { timeout: 8000 });
+        this.browser = await chromium.connectOverCDP(cdpEndpoint, { timeout: 25000 });
       } catch (err) {
         // Restore status instead of leaving stuck in 'connecting'
         const fallbackStatus = (this.chromeProcess && this.isProcessAlive()) ? 'browser_open' : (previousStatus !== 'connecting' ? previousStatus : 'created');
@@ -956,12 +956,17 @@ if ($targetPids.Count -gt 0) {
 `.trim();
 
       const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
-      execSync(`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand ${encoded}`, {
-        timeout: 5000,
-        stdio: 'ignore',
-        windowsHide: true,
-      });
-      this.log.info('session', 'Chrome window hidden from taskbar via Win32 EnumWindows + SW_HIDE');
+      exec(
+        `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand ${encoded}`,
+        { timeout: 8000, windowsHide: true },
+        (err) => {
+          if (!err) {
+            this.log.info('session', 'Chrome window hidden from taskbar via Win32 EnumWindows + SW_HIDE');
+          } else {
+            this.log.debug('session', `Win32 hide notice: ${err.message?.substring(0, 120)}`);
+          }
+        }
+      );
     } catch (psErr) {
       this.log.debug('session', `Win32 hide notice: ${(psErr as Error).message?.substring(0, 120)}`);
     }

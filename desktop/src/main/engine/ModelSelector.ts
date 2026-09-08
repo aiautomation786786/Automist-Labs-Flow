@@ -11,7 +11,6 @@
 import type { Page, Locator } from 'playwright';
 import type { ModelSelectionResult } from '../../shared/types';
 import { AppLogger } from '../utils/AppLogger';
-import { FlowDriver } from './FlowDriver';
 
 const logger = new AppLogger({ mirrorToStderr: false });
 
@@ -42,11 +41,69 @@ function normalizeModel(raw: string): string {
 }
 
 /**
- * Returns true iff the normalized detected model is an exact match for the
- * normalized target model. "Nano Banana 2" must NOT match "Nano Banana 2 Lite".
+ * Extracts normalized model family identifier from text:
+ *  - "Nano Banana Pro"
+ *  - "Nano Banana 2 Lite"
+ *  - "Nano Banana 2"
+ *  or null if unrecognized.
  */
-function isExactModelMatch(detected: string, target: string): boolean {
+export function extractModelFamily(text: string | null): string | null {
+  if (!text) return null;
+  const norm = normalizeModel(text);
+  if (norm.includes('pro')) return 'Nano Banana Pro';
+  if (norm.includes('lite')) return 'Nano Banana 2 Lite';
+  if (norm.includes('banana') || norm.includes('nano')) return 'Nano Banana 2';
+  return null;
+}
+
+/**
+ * Returns true iff the detected model is an exact match for the target model.
+ * "Nano Banana 2" must NEVER match "Nano Banana 2 Lite" or "Nano Banana Pro".
+ */
+export function isExactModelMatch(detected: string, target: string): boolean {
+  if (!detected || !target) return false;
+  const detectedFamily = extractModelFamily(detected);
+  const targetFamily = extractModelFamily(target);
+  if (detectedFamily && targetFamily) {
+    return detectedFamily === targetFamily;
+  }
   return normalizeModel(detected) === normalizeModel(target);
+}
+
+/**
+ * Reliably clicks an interactive element even if Chrome is minimized, off-screen,
+ * or hit-testing is delayed, with automatic fallback for synthetic test mocks.
+ */
+export async function clickElement(loc: Locator, timeoutMs = 1500): Promise<void> {
+  try {
+    if (typeof loc.evaluate === 'function') {
+      await loc.evaluate((b) => (b as HTMLElement).click());
+      return;
+    }
+  } catch {}
+  try {
+    if (typeof loc.click === 'function') {
+      await loc.click({ force: true, timeout: timeoutMs });
+    }
+  } catch {}
+}
+
+/**
+ * Safely checks whether a locator points to an element in the DOM or visible,
+ * compatible with Playwright Locators and test mock objects.
+ */
+export async function isElementPresent(loc: any): Promise<boolean> {
+  if (!loc) return false;
+  try {
+    if (typeof loc.count === 'function') {
+      const count = await loc.count().catch(() => 0);
+      if (count > 0) return true;
+    }
+    if (typeof loc.isVisible === 'function') {
+      return await loc.isVisible().catch(() => false);
+    }
+  } catch {}
+  return false;
 }
 
 export class ModelSelector {
@@ -56,10 +113,21 @@ export class ModelSelector {
   static async detectCurrentModel(page: Page): Promise<string | null> {
     try {
       return await page.evaluate(() => {
+        // Strategy 0: Direct check on the bottom toolbar settings trigger button
+        const settingsTrigger = document.querySelector(
+          'button.settings-trigger-button, button[aria-label="Settings trigger"], button:has([settingstriggercontent]), button:has(.settings-summary)'
+        ) as HTMLElement;
+        if (settingsTrigger && settingsTrigger.offsetParent !== null) {
+          const text = (settingsTrigger.textContent || '').trim().replace(/\s+/g, ' ');
+          if (text) return text.substring(0, 80);
+        }
+
         // Strategy 1: Find a button in the bottom generation bar containing model keywords or mode keywords
         const buttons = Array.from(document.querySelectorAll('button'));
         const modelBtn = buttons.find((b) => {
+          const aria = b.getAttribute('aria-label') || '';
           const text = (b.textContent || '').trim();
+          if (aria.includes('Tile grid') || text.includes('settings_2')) return false;
           const hasKeyword =
             text.includes('Nano') ||
             text.includes('Banana') ||
@@ -75,7 +143,9 @@ export class ModelSelector {
 
         // Strategy 2: Look for composite pill button containing '·' or 'x1' or 'Video' or 'Image'
         const pillBtn = buttons.find((b) => {
+          const aria = b.getAttribute('aria-label') || '';
           const text = (b.textContent || '').trim();
+          if (aria.includes('Tile grid') || text.includes('settings_2')) return false;
           const isPill =
             (text.includes('·') || text.includes('x1')) &&
             (text.includes('Video') || text.includes('Image') || text.includes('720p') || text.includes('16:9'));
@@ -127,8 +197,13 @@ export class ModelSelector {
    */
   static async ensureImageModel(
     page: Page,
-    options: { modelName?: string; ratio?: string; quantity?: string } = {}
+    optionsOrModelName: { modelName?: string; ratio?: string; quantity?: string } | string = {},
+    ratioArg?: string,
+    quantityArg?: string
   ): Promise<ModelSelectionResult> {
+    const options = typeof optionsOrModelName === 'string'
+      ? { modelName: optionsOrModelName, ratio: ratioArg, quantity: quantityArg }
+      : (optionsOrModelName || {});
     const targetModel = options.modelName || NANO_BANANA_2;
     const requestedQuantity = options.quantity || 'x1';
     const requestedRatio = options.ratio;
@@ -179,14 +254,16 @@ export class ModelSelector {
     }
 
     // Step 2: Open the model selector dropdown if popover is not already open
+    const settingsPane = page.locator('.cdk-overlay-pane:has(flow-prompt-box-settings), flow-prompt-box-settings, .settings-content-overlay').first();
     let paneVisible = false;
     try {
-      const paneLoc = page.locator('.cdk-overlay-pane');
-      if (typeof paneLoc.first === 'function') {
-        const firstEl = paneLoc.first();
-        paneVisible = typeof firstEl.isVisible === 'function' ? await firstEl.isVisible().catch(() => false) : false;
-      } else if (typeof (paneLoc as any).isVisible === 'function') {
-        paneVisible = await (paneLoc as any).isVisible().catch(() => false);
+      const evalCheck = await page.evaluate(() => {
+        return document.querySelector('flow-prompt-box-settings, .settings-content-overlay') !== null;
+      }).catch(() => false);
+      if (evalCheck === true) {
+        paneVisible = true;
+      } else if (typeof settingsPane.isVisible === 'function') {
+        paneVisible = await settingsPane.isVisible().catch(() => false);
       }
     } catch {}
     if (!paneVisible) {
@@ -224,18 +301,18 @@ export class ModelSelector {
       }
 
       logger.info('model_selector', 'Opening model selector dropdown...');
-      await dropdownButton.click();
+      await clickElement(dropdownButton);
       await page.waitForTimeout(600);
     }
 
     // Step 3: Switch to Image mode tab/radio if not already active
     const imageModeTab = page.locator('.cdk-overlay-pane button[role="radio"]:has-text("Image"), .cdk-overlay-pane [role="radio"]:has-text("Image"), .cdk-overlay-pane button:has-text("Image")').first();
-    const imageTabVisible = await imageModeTab.isVisible({ timeout: 1500 }).catch(() => false);
-    if (imageTabVisible) {
+    const imageTabPresent = await isElementPresent(imageModeTab);
+    if (imageTabPresent) {
       const isChecked = typeof imageModeTab.getAttribute === 'function' ? await imageModeTab.getAttribute('aria-checked').catch(() => null) : null;
       if (isChecked !== 'true') {
         logger.info('model_selector', 'Switching popover mode to Image...');
-        await imageModeTab.click().catch(() => {});
+        await clickElement(imageModeTab);
         await page.waitForTimeout(600);
       }
     }
@@ -243,12 +320,12 @@ export class ModelSelector {
     // Step 4: Aspect Ratio Selection (if specified)
     if (requestedRatio) {
       const ratioRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${requestedRatio}")`).first();
-      const isRatioVis = await ratioRadio.isVisible({ timeout: 1000 }).catch(() => false);
-      if (isRatioVis) {
+      const isRatioPresent = await isElementPresent(ratioRadio);
+      if (isRatioPresent) {
         const isChecked = typeof ratioRadio.getAttribute === 'function' ? await ratioRadio.getAttribute('aria-checked').catch(() => null) : null;
         if (isChecked !== 'true') {
           logger.info('model_selector', `Selecting aspect ratio: ${requestedRatio}`);
-          await ratioRadio.click().catch(() => {});
+          await clickElement(ratioRadio);
           await page.waitForTimeout(300);
         }
       }
@@ -256,104 +333,98 @@ export class ModelSelector {
 
     // Step 5: Model Selection (Nano Banana Pro / Nano Banana 2 / Nano Banana 2 Lite)
     const targetLower = normalizeModel(targetModel);
-    const modelFamilyBtn = page.locator('.cdk-overlay-pane button[aria-label="Select model family"], .cdk-overlay-pane button:has-text("Nano")').first();
-    const modelFamilyVis = await modelFamilyBtn.isVisible({ timeout: 1500 }).catch(() => false);
-    if (modelFamilyVis) {
+    const modelFamilyBtn = page.locator('flow-prompt-box-settings button[aria-label="Select model family"], .settings-content-overlay button[aria-label="Select model family"], button[aria-label="Select model family"]').first();
+    const hasModelFamilyBtn = await isElementPresent(modelFamilyBtn);
+    if (hasModelFamilyBtn) {
       const currentModelText = (typeof modelFamilyBtn.textContent === 'function' ? ((await modelFamilyBtn.textContent().catch(() => '')) || '') : '');
-      // Use isExactModelMatch for model family button check
       const isModelMatch = isExactModelMatch(currentModelText, targetModel);
 
       if (!isModelMatch) {
         logger.info('model_selector', `Opening model family dropdown to select ${targetModel}...`);
-        await modelFamilyBtn.click().catch(() => {});
+        await clickElement(modelFamilyBtn);
         await page.waitForTimeout(600);
 
         const candidateSelectors = [
+          `button[role="menuitem"]:has-text("${targetModel}")`,
           `[role="menuitem"]:has-text("${targetModel}")`,
           `.cdk-overlay-pane [role="menuitem"]:has-text("${targetModel}")`,
-          `button[role="menuitem"]:has-text("${targetModel}")`,
+          `button:has-text("${targetModel}")`,
         ];
 
         if (targetLower.includes('pro')) {
-          candidateSelectors.push('[role="menuitem"]:has-text("Pro")');
+          candidateSelectors.push('button[role="menuitem"]:has-text("Pro")', '[role="menuitem"]:has-text("Pro")');
         } else if (targetLower.includes('lite')) {
-          candidateSelectors.push('[role="menuitem"]:has-text("Lite")');
+          candidateSelectors.push('button[role="menuitem"]:has-text("Lite")', '[role="menuitem"]:has-text("Lite")');
         } else {
-          candidateSelectors.push('[role="menuitem"]:has-text("Banana 2")');
+          candidateSelectors.push('button[role="menuitem"]:has-text("Banana 2")', '[role="menuitem"]:has-text("Banana 2")');
         }
 
-        const optionLocator = await FlowDriver.findFirstVisible(page, candidateSelectors, 3000);
-        if (optionLocator) {
-          logger.info('model_selector', `Clicking ${targetModel} menu item...`);
-          await optionLocator.click();
-          await page.waitForTimeout(600);
-        } else {
-          logger.warn('model_selector', `Could not find menu item for ${targetModel}`);
-
+        for (const sel of candidateSelectors) {
+          const opt = page.locator(sel).first();
+          if (await isElementPresent(opt)) {
+            logger.info('model_selector', `Selected model option via: ${sel}`);
+            await clickElement(opt);
+            await page.waitForTimeout(600);
+            break;
+          }
         }
       }
     }
 
     // Step 6: Ensure quantity is x1
     const qtyRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${requestedQuantity}")`).first();
-    const qtyVis = await qtyRadio.isVisible({ timeout: 1000 }).catch(() => false);
-    if (qtyVis) {
+    const qtyPresent = await isElementPresent(qtyRadio);
+    if (qtyPresent) {
       const isChecked = typeof qtyRadio.getAttribute === 'function' ? await qtyRadio.getAttribute('aria-checked').catch(() => null) : null;
       if (isChecked !== 'true') {
         logger.info('model_selector', `Ensuring quantity ${requestedQuantity}...`);
-        await qtyRadio.click().catch(() => {});
+        await clickElement(qtyRadio);
         await page.waitForTimeout(300);
       }
     }
 
-    // Step 7: Reliably close popover and overlays
-    for (let attempt = 0; attempt < 3; attempt++) {
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(200);
+    // Step 7: Reliably close popover and overlays (NEVER click top-left (50,50) which navigates Home!)
+    for (let attempt = 0; attempt < 4; attempt++) {
       let isStillOpen = false;
       try {
-        const pane = page.locator('.cdk-overlay-pane').first();
-        if (typeof pane.isVisible === 'function') {
-          isStillOpen = await pane.isVisible().catch(() => false);
+        const evalCheck = await page.evaluate(() => {
+          return document.querySelector('flow-prompt-box-settings, .settings-content-overlay') !== null;
+        }).catch(() => false);
+        if (evalCheck === true) {
+          isStillOpen = true;
+        } else if (typeof settingsPane.isVisible === 'function') {
+          isStillOpen = await settingsPane.isVisible().catch(() => false);
         }
       } catch {}
       if (!isStillOpen) break;
 
-      // Click backdrop or click outside to dismiss
+      if (typeof page.keyboard?.press === 'function') {
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(250);
+      }
+
+      // If still open, try backdrop click
       try {
         const backdrop = page.locator('.cdk-overlay-backdrop').first();
-        if (typeof backdrop.isVisible === 'function' && await backdrop.isVisible().catch(() => false)) {
-          await backdrop.click({ force: true }).catch(() => {});
-        } else if (typeof page.mouse?.click === 'function') {
-          await page.mouse.click(50, 50).catch(() => {});
+        if (await isElementPresent(backdrop)) {
+          await clickElement(backdrop);
         }
       } catch {}
       await page.waitForTimeout(200);
     }
 
-    // Step 8: Verify the newly selected model — STRICT exact match required
-    const modelDetectedAfter = await this.detectCurrentModel(page);
-    // Primary: exact normalized match against the target
-    // Fallback: if the pill reads Image mode (not Video), that is still a pass when
-    // detectCurrentModel returns a composite pill text rather than just the model name
-    const verified = !!modelDetectedAfter && (
-      isExactModelMatch(modelDetectedAfter, targetModel) ||
-      // Composite pill with banana model text present and not video
-      (normalizeModel(modelDetectedAfter).includes('banana') &&
-        !this.isVideoModel(modelDetectedAfter) &&
-        // Additional safety: normalize the detected text MUST NOT contain a more-specific
-        // variant when requesting the base model (e.g. must not be "lite" when we want "2")
-        (() => {
-          const nm = normalizeModel(modelDetectedAfter);
-          const nt = normalizeModel(targetModel);
-          // If target does not contain "lite" the detected must not contain "lite"
-          if (!nt.includes('lite') && nm.includes('lite')) return false;
-          // If target does not contain "pro" the detected must not contain "pro"
-          if (!nt.includes('pro') && nm.includes('pro')) return false;
-          return true;
-        })()
-      )
-    );
+    // Step 8: Verify the newly selected model — STRICT exact match required with resilient polling
+    let modelDetectedAfter: string | null = null;
+    let verified = false;
+    const verifyDeadline = Date.now() + 4000;
+    while (Date.now() < verifyDeadline) {
+      modelDetectedAfter = await this.detectCurrentModel(page);
+      if (modelDetectedAfter && isExactModelMatch(modelDetectedAfter, targetModel)) {
+        verified = true;
+        break;
+      }
+      await page.waitForTimeout(300);
+    }
 
     if (verified) {
       logger.info('model_selector', 'Model selection verified ✓', {
@@ -417,13 +488,17 @@ export class ModelSelector {
    */
    public static async ensureVideoModel(
     page: Page,
-    options: {
+    optionsOrModelName: {
       modelName?: string;
       resolution?: string;
       duration?: string;
       ratio?: string;
       quantity?: string;
-    } = {}
+    } | string = {},
+    resArg?: string,
+    durArg?: string,
+    ratioArg?: string,
+    quantityArg?: string
   ): Promise<{
     verified: boolean;
     mode: string;
@@ -435,6 +510,9 @@ export class ModelSelector {
     quantity: string;
     error?: string;
   }> {
+    const options = typeof optionsOrModelName === 'string'
+      ? { modelName: optionsOrModelName, resolution: resArg, duration: durArg, ratio: ratioArg, quantity: quantityArg }
+      : (optionsOrModelName || {});
     const targetModel = options.modelName || 'Omni 1.1 Flash';
     const targetRes = options.resolution || '720p';
     const targetDur = options.duration || '4s';
@@ -478,7 +556,7 @@ export class ModelSelector {
           error: 'Could not locate settings trigger button on Flow toolbar.',
         };
       }
-      await trigger.click();
+      await clickElement(trigger);
       await page.waitForTimeout(600);
     }
 
@@ -489,7 +567,7 @@ export class ModelSelector {
       const isChecked = await videoTab.getAttribute('aria-checked').catch(() => null);
       if (isChecked !== 'true') {
         logger.info('model_selector', 'Switching popover to Video mode...');
-        await videoTab.click().catch(() => {});
+        await clickElement(videoTab);
         await page.waitForTimeout(600);
       }
     }
@@ -501,7 +579,7 @@ export class ModelSelector {
       const isChecked = await ratioRadio.getAttribute('aria-checked').catch(() => null);
       if (isChecked !== 'true') {
         logger.info('model_selector', `Selecting aspect ratio: ${targetRatio}`);
-        await ratioRadio.click().catch(() => {});
+        await clickElement(ratioRadio);
         await page.waitForTimeout(300);
       }
     }
@@ -520,7 +598,7 @@ export class ModelSelector {
 
       if (!isAlreadySelected) {
         logger.info('model_selector', `Opening model family dropdown to select ${targetModel}...`);
-        await modelFamilyBtn.click().catch(() => {});
+        await clickElement(modelFamilyBtn);
         await page.waitForTimeout(600);
 
         const normalizedTarget = targetModel.replace(/\s*-\s*/g, ' ');
@@ -558,7 +636,7 @@ export class ModelSelector {
           const modelOption = page.locator(sel).first();
           if (await modelOption.isVisible({ timeout: 400 }).catch(() => false)) {
             logger.info('model_selector', `Clicking model option selector: ${sel}`);
-            await modelOption.click().catch(() => {});
+            await clickElement(modelOption);
             await page.waitForTimeout(600);
             clicked = true;
             break;
@@ -577,7 +655,7 @@ export class ModelSelector {
       const isChecked = await resRadio.getAttribute('aria-checked').catch(() => null);
       if (isChecked !== 'true') {
         logger.info('model_selector', `Selecting resolution: ${targetRes}`);
-        await resRadio.click().catch(() => {});
+        await clickElement(resRadio);
         await page.waitForTimeout(300);
       }
     }
@@ -588,7 +666,7 @@ export class ModelSelector {
       const isChecked = await durRadio.getAttribute('aria-checked').catch(() => null);
       if (isChecked !== 'true') {
         logger.info('model_selector', `Selecting duration: ${targetDur}`);
-        await durRadio.click().catch(() => {});
+        await clickElement(durRadio);
         await page.waitForTimeout(300);
       }
     }
@@ -695,48 +773,62 @@ export class ModelSelector {
   // ---- Private helpers -----------------------------------------------------
 
   private static async findModelDropdownButton(page: Page): Promise<Locator | null> {
+    // Priority 1: Direct targeted selectors for the Flow bottom composer settings trigger button
+    const targetedSelectors = [
+      'button.settings-trigger-button',
+      'button[aria-label="Settings trigger"]',
+      'button:has([settingstriggercontent])',
+      'button:has(.settings-summary)',
+      'div[class*="composer"] button:has-text("Nano")',
+      'div[class*="composer"] button:has-text("Banana")',
+      'div[class*="composer"] button:has-text("Omni")',
+      'div[class*="composer"] button:has-text("Veo")',
+      'form button:has-text("Nano")',
+      'form button:has-text("Banana")',
+      'form button:has-text("Omni")',
+      'form button:has-text("Veo")',
+      'div[class*="composer"] button:has-text("·")',
+      'form button:has-text("·")',
+    ];
+
+    for (const sel of targetedSelectors) {
+      try {
+        const loc = page.locator(sel).first();
+        if (typeof loc.isVisible === 'function' && await loc.isVisible().catch(() => false)) {
+          return loc;
+        }
+      } catch {}
+    }
+
+    // Priority 2: Actively wait for composer buttons with model or parameter keywords
     const candidateSelectors = [
-      // Composite pill button containing known model or parameter keywords in Flow toolbar
+      'button.settings-trigger-button',
+      'button[aria-label="Settings trigger"]',
       'button:has-text("Nano")',
       'button:has-text("Banana")',
       'button:has-text("Omni")',
       'button:has-text("Veo")',
       'button:has-text("Imagen")',
-      'button:has-text("Video")',
-      'button:has-text("Image")',
-      'button:has-text("·")',
-      'button:has-text("x1")',
-      'button:has-text("720p")',
-      'button:has-text("1080p")',
-      'button:has-text("16:9")',
-      'button:has-text("9:16")',
-      'button:has-text("1:1")',
-      'button:has-text("4:3")',
-      'button:has-text("3:4")',
-      'button[aria-label="Settings trigger"]',
-      'button[aria-label*="settings" i]',
-      'button[aria-label*="model" i]',
       '[data-testid="model-selector-button"]',
-      '[aria-label*="model" i][role="button"]',
-      '[aria-label*="model" i] button',
-      '[aria-label*="model" i]',
     ];
 
-    // Strategy 1: Actively wait for any candidate selector to become visible (up to 8s)
     const combinedSelector = candidateSelectors.join(', ');
     try {
       const candidateLoc = page.locator(combinedSelector).first();
       if (typeof candidateLoc.waitFor === 'function') {
-        await candidateLoc.waitFor({ state: 'visible', timeout: 8000 });
-        return candidateLoc;
+        await candidateLoc.waitFor({ state: 'visible', timeout: 6000 });
+        const text = (await candidateLoc.textContent().catch(() => '')) || '';
+        const aria = (await candidateLoc.getAttribute('aria-label').catch(() => '')) || '';
+        // Guard against header tile grid settings
+        if (!aria.includes('Tile grid') && !text.includes('settings_2')) {
+          return candidateLoc;
+        }
       } else if (typeof candidateLoc.isVisible === 'function' && await candidateLoc.isVisible().catch(() => false)) {
         return candidateLoc;
       }
-    } catch {
-      // Primary wait did not match within timeout; proceed to resilient fallbacks
-    }
+    } catch {}
 
-    // Strategy 2: Poll buttons inside composer container (div.composer, form, div.prompt)
+    // Priority 3: Scan composer container for buttons (div.composer, form, div.prompt)
     const startTime = Date.now();
     const canWait = typeof page.waitForTimeout === 'function';
     while (Date.now() - startTime < 6000) {
@@ -749,6 +841,7 @@ export class ModelSelector {
           if (!isVis) continue;
           const text = (await btn.textContent().catch(() => '')) || '';
           const aria = (await btn.getAttribute('aria-label').catch(() => '')) || '';
+          if (aria.includes('Tile grid') || text.includes('settings_2')) continue;
           const combined = `${text} ${aria}`;
           if (
             combined.includes('·') ||
@@ -771,7 +864,7 @@ export class ModelSelector {
       }
     }
 
-    // Strategy 3: Scan all visible buttons across the entire page
+    // Priority 4: Scan all buttons, skipping any tile grid or sidebar settings
     try {
       const buttonLoc = page.locator('button');
       if (typeof buttonLoc.all === 'function') {
@@ -781,16 +874,14 @@ export class ModelSelector {
           if (!isVis) continue;
           const text = (await btn.textContent().catch(() => '')) || '';
           const aria = (await btn.getAttribute('aria-label').catch(() => '')) || '';
+          if (aria.includes('Tile grid') || text.includes('settings_2')) continue;
           const combined = `${text} ${aria}`;
           if (
-            combined.includes('·') ||
-            combined.includes('x1') ||
             combined.includes('Banana') ||
             combined.includes('Nano') ||
             combined.includes('Omni') ||
             combined.includes('Veo') ||
-            combined.includes('Image') ||
-            combined.includes('Video')
+            aria === 'Settings trigger'
           ) {
             return btn;
           }
