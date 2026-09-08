@@ -621,6 +621,10 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       this.emit('session:status', session.getSnapshot());
       if (authResult.state === 'authenticated') {
         this.emit('session:ready', profileId);
+        // Explicitly hide the window from the taskbar after verification succeeds
+        await session.hideWindowFromTaskbar().catch((err) => {
+          appLogger.debug('session_manager', `Could not hide window after auth: ${(err as Error).message}`);
+        });
       }
 
       return {

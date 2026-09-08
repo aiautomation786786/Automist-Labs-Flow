@@ -145,6 +145,18 @@ export class ModelSelector {
       };
     }
 
+    // Step 0: Ensure Flow client-side SPA has hydrated and interactive buttons are present
+    try {
+      if (typeof page.waitForSelector === 'function') {
+        await page.waitForSelector('button', { state: 'visible', timeout: 15000 }).catch(() => {});
+      }
+      if (typeof page.waitForTimeout === 'function') {
+        await page.waitForTimeout(1000);
+      }
+    } catch {
+      logger.warn('model_selector', 'Timed out waiting for initial buttons on Flow page');
+    }
+
     const modelDetectedBefore = await this.detectCurrentModel(page);
     logger.debug('model_selector', 'Model before selection', { modelDetectedBefore });
 
@@ -437,6 +449,18 @@ export class ModelSelector {
       targetQty,
     });
 
+    // Step 0: Ensure Flow client-side SPA has hydrated and interactive buttons are present
+    try {
+      if (typeof page.waitForSelector === 'function') {
+        await page.waitForSelector('button', { state: 'visible', timeout: 15000 }).catch(() => {});
+      }
+      if (typeof page.waitForTimeout === 'function') {
+        await page.waitForTimeout(1000);
+      }
+    } catch {
+      logger.warn('model_selector', 'Timed out waiting for initial buttons on Flow page');
+    }
+
     // Step 1: Open Settings popover if not already open
     let paneVisible = await page.locator('.cdk-overlay-pane').isVisible().catch(() => false);
     if (!paneVisible) {
@@ -672,7 +696,7 @@ export class ModelSelector {
 
   private static async findModelDropdownButton(page: Page): Promise<Locator | null> {
     const candidateSelectors = [
-      // Button containing known model name or model icon in generation toolbar
+      // Composite pill button containing known model or parameter keywords in Flow toolbar
       'button:has-text("Nano")',
       'button:has-text("Banana")',
       'button:has-text("Omni")',
@@ -698,18 +722,78 @@ export class ModelSelector {
       '[aria-label*="model" i]',
     ];
 
-    const found = await FlowDriver.findFirstVisible(page, candidateSelectors, 4000);
-    if (found) return found;
-
-    // Fallback: inspect buttons in the prompt composer toolbar
+    // Strategy 1: Actively wait for any candidate selector to become visible (up to 8s)
+    const combinedSelector = candidateSelectors.join(', ');
     try {
-      const composerButtons = page.locator('div[class*="composer"], form, div[class*="prompt"]').locator('button');
-      const count = await composerButtons.count();
-      for (let i = count - 1; i >= 0; i--) {
-        const btn = composerButtons.nth(i);
-        const text = (await btn.textContent().catch(() => '')) || '';
-        if (text.includes('·') || text.includes('x1') || text.includes('Video') || text.includes('Image') || text.includes('Banana')) {
-          return btn;
+      const candidateLoc = page.locator(combinedSelector).first();
+      if (typeof candidateLoc.waitFor === 'function') {
+        await candidateLoc.waitFor({ state: 'visible', timeout: 8000 });
+        return candidateLoc;
+      } else if (typeof candidateLoc.isVisible === 'function' && await candidateLoc.isVisible().catch(() => false)) {
+        return candidateLoc;
+      }
+    } catch {
+      // Primary wait did not match within timeout; proceed to resilient fallbacks
+    }
+
+    // Strategy 2: Poll buttons inside composer container (div.composer, form, div.prompt)
+    const startTime = Date.now();
+    const canWait = typeof page.waitForTimeout === 'function';
+    while (Date.now() - startTime < 6000) {
+      try {
+        const composerButtons = page.locator('div[class*="composer"], form, div[class*="prompt"], [class*="bottom"]').locator('button');
+        const count = typeof composerButtons.count === 'function' ? await composerButtons.count() : 0;
+        for (let i = count - 1; i >= 0; i--) {
+          const btn = composerButtons.nth(i);
+          const isVis = typeof btn.isVisible === 'function' ? await btn.isVisible().catch(() => false) : false;
+          if (!isVis) continue;
+          const text = (await btn.textContent().catch(() => '')) || '';
+          const aria = (await btn.getAttribute('aria-label').catch(() => '')) || '';
+          const combined = `${text} ${aria}`;
+          if (
+            combined.includes('·') ||
+            combined.includes('x1') ||
+            combined.includes('Video') ||
+            combined.includes('Image') ||
+            combined.includes('Banana') ||
+            combined.includes('Nano') ||
+            combined.includes('Omni') ||
+            combined.includes('Veo')
+          ) {
+            return btn;
+          }
+        }
+      } catch {}
+      if (canWait) {
+        await page.waitForTimeout(400);
+      } else {
+        break;
+      }
+    }
+
+    // Strategy 3: Scan all visible buttons across the entire page
+    try {
+      const buttonLoc = page.locator('button');
+      if (typeof buttonLoc.all === 'function') {
+        const allButtons = await buttonLoc.all();
+        for (const btn of allButtons) {
+          const isVis = typeof btn.isVisible === 'function' ? await btn.isVisible().catch(() => false) : false;
+          if (!isVis) continue;
+          const text = (await btn.textContent().catch(() => '')) || '';
+          const aria = (await btn.getAttribute('aria-label').catch(() => '')) || '';
+          const combined = `${text} ${aria}`;
+          if (
+            combined.includes('·') ||
+            combined.includes('x1') ||
+            combined.includes('Banana') ||
+            combined.includes('Nano') ||
+            combined.includes('Omni') ||
+            combined.includes('Veo') ||
+            combined.includes('Image') ||
+            combined.includes('Video')
+          ) {
+            return btn;
+          }
         }
       }
     } catch {}

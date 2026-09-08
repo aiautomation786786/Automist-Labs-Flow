@@ -292,35 +292,60 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
           this.log.debug('chrome_launch', 'CDP reposition notice', { error: (repositionErr as Error).message });
         }
 
-        // If we previously called Win32 ShowWindow(SW_HIDE), we must call ShowWindow(SW_SHOW=5) to bring it back
-        if (pid && process.platform === 'win32') {
+        // If we previously called Win32 ShowWindow(SW_HIDE), restore window to taskbar via SW_SHOW=5
+        if (process.platform === 'win32') {
           try {
-            const psScript = `
+            const port = this.config.cdpPort;
+            const rootPid = pid || 0;
+            const restoreScript = `
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class Win32Show {
+public class Win32WindowRestorer {
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
-  [DllImport("user32.dll")] public static extern IntPtr GetDesktopWindow();
-  [DllImport("user32.dll")] public static extern IntPtr GetTopWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 }
 "@ -ErrorAction SilentlyContinue
-$targetPid = ${pid};
-$hwnd = [Win32Show]::GetTopWindow([Win32Show]::GetDesktopWindow());
-while ($hwnd -ne [IntPtr]::Zero) {
-  $pid = 0;
-  [void][Win32Show]::GetWindowThreadProcessId($hwnd, [ref]$pid);
-  if ($pid -eq $targetPid) { [Win32Show]::ShowWindow($hwnd, 5) | Out-Null }
-  $hwnd = [Win32Show]::GetWindow($hwnd, 2);
-}`.trim();
-            execSync(`powershell -WindowStyle Hidden -NonInteractive -Command "${psScript.replace(/"/g, '\\"')}"`, {
+
+$targetPids = @(${rootPid});
+$port = ${port};
+
+$conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1;
+if ($conn) { $targetPids += [int]$conn.OwningProcess }
+
+$snapshotPids = @($targetPids | Where-Object { $_ -gt 0 });
+foreach ($p in $snapshotPids) {
+  $children = Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ParentProcessId -eq $p }
+  foreach ($c in $children) { $targetPids += [int]$c.ProcessId }
+}
+
+$byCmd = Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*--remote-debugging-port=$port*" }
+foreach ($b in $byCmd) { $targetPids += [int]$b.ProcessId }
+
+$targetPids = $targetPids | Where-Object { $_ -gt 0 } | Select-Object -Unique
+
+if ($targetPids.Count -gt 0) {
+  [Win32WindowRestorer]::EnumWindows({
+    param($hwnd, $lparam)
+    $procId = 0
+    [Win32WindowRestorer]::GetWindowThreadProcessId($hwnd, [ref]$procId) | Out-Null
+    if ($targetPids -contains $procId) {
+      [Win32WindowRestorer]::ShowWindow($hwnd, 5) | Out-Null # SW_SHOW = 5
+    }
+    return $true
+  }, [IntPtr]::Zero) | Out-Null
+}
+`.trim();
+
+            const encoded = Buffer.from(restoreScript, 'utf16le').toString('base64');
+            execSync(`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand ${encoded}`, {
               timeout: 5000,
               stdio: 'ignore',
               windowsHide: true,
             });
-            this.log.info('chrome_launch', 'Chrome window restored to taskbar via Win32 ShowWindow', { pid });
+            this.log.info('chrome_launch', 'Chrome window restored to taskbar via Win32 EnumWindows + SW_SHOW');
           } catch {
             // Non-fatal
           }
@@ -761,9 +786,10 @@ while ($hwnd -ne [IntPtr]::Zero) {
     this.log.info('tab_lifecycle', `Created dedicated job tab, navigating to base Flow URL`, { url });
 
     try {
-      await jobPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      // Allow Flow to finish rendering the toolbar/prompt area
-      await jobPage.waitForTimeout(2000);
+      await jobPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      // Wait for the client-side SPA to mount buttons and prompt toolbar
+      await jobPage.waitForSelector('button', { state: 'visible', timeout: 20000 }).catch(() => {});
+      await jobPage.waitForTimeout(1500);
     } catch (navErr) {
       this.log.warn('tab_lifecycle', `Navigation warning on job tab: ${(navErr as Error).message}`);
     }
@@ -847,71 +873,97 @@ while ($hwnd -ne [IntPtr]::Zero) {
   /**
    * Hides the Chrome window from the user's taskbar after authentication succeeds.
    *
-   * Strategy (layered — each layer is a safety net):
+   * Strategy (layered):
    *  1. CDP Browser.setWindowBounds → windowState: 'minimized'
-   *     Minimizes the window via the DevTools Protocol. Chrome is still in taskbar.
-   *  2. PowerShell + Win32 ShowWindow(hwnd, SW_HIDE)
-   *     Finds the Chrome window by its process ID and calls ShowWindow(0) to fully
-   *     remove the entry from the Windows taskbar and screen. Non-fatal on failure.
-   *
-   * The Chrome process and CDP connection remain alive for automation.
-   * When sign-in is needed again (auth_required / CAPTCHA), launchLoginBrowser()
-   * repositions the window back on-screen via CDP Browser.setWindowBounds.
+   *  2. Windows PowerShell with EnumWindows calling ShowWindow(hwnd, SW_HIDE = 0).
+   *     Encoded via Base64 UTF-16LE (-EncodedCommand) to eliminate quote-escaping failures.
+   *     Finds all Chrome processes by PID, Parent PID, or CDP port connection.
    */
-  private async hideWindowFromTaskbar(page: Page): Promise<void> {
-    if (!this.context || !page || page.isClosed()) return;
+  async hideWindowFromTaskbar(page?: Page): Promise<void> {
+    const targetPage = page && !page.isClosed() ? page : (this.page && !this.page.isClosed() ? this.page : this.context?.pages()[0]);
 
-    // Step 1: Minimize via CDP (works cross-platform, keeps CDP alive)
-    try {
-      const cdp = await this.context.newCDPSession(page);
-      const { windowId } = await cdp.send('Browser.getWindowForTarget');
-      await cdp.send('Browser.setWindowBounds', {
-        windowId,
-        bounds: { windowState: 'minimized' },
-      });
-      this.log.info('session', 'Chrome window minimized via CDP', { windowId });
-      await cdp.detach().catch(() => {});
-    } catch (cdpErr) {
-      this.log.debug('session', `CDP minimize failed: ${(cdpErr as Error).message}`);
+    // Step 1: Minimize via CDP (cross-platform, keeps CDP alive)
+    if (this.context && targetPage) {
+      try {
+        if (typeof (this.context as any).newCDPSession === 'function') {
+          const cdp = await (this.context as any).newCDPSession(targetPage);
+          const { windowId } = await cdp.send('Browser.getWindowForTarget');
+          await cdp.send('Browser.setWindowBounds', {
+            windowId,
+            bounds: { windowState: 'minimized' },
+          });
+          this.log.info('session', 'Chrome window minimized via CDP', { windowId });
+          await cdp.detach().catch(() => {});
+        }
+      } catch (cdpErr) {
+        this.log.debug('session', `CDP minimize notice: ${(cdpErr as Error).message}`);
+      }
     }
 
-    // Step 2: Win32 ShowWindow(hwnd, SW_HIDE=0) to remove from Windows taskbar entirely
-    // Only attempted when we have a known PID from our spawned Chrome process
-    const pid = this.chromeProcess?.pid;
-    if (!pid || process.platform !== 'win32') return;
+    // Step 2: Win32 ShowWindow(hwnd, SW_HIDE=0) via PowerShell Base64 EncodedCommand
+    if (process.platform !== 'win32') return;
 
     try {
-      // PowerShell: find all top-level windows for the PID and call ShowWindow(hwnd, 0)
+      const port = this.config.cdpPort;
+      const rootPid = this.chromeProcess?.pid || 0;
+
       const psScript = `
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class Win32 {
+public class Win32WindowHider {
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
-  [DllImport("user32.dll")] public static extern IntPtr GetDesktopWindow();
-  [DllImport("user32.dll")] public static extern IntPtr GetTopWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 }
 "@ -ErrorAction SilentlyContinue
-$targetPid = ${pid};
-$hwnd = [Win32]::GetTopWindow([Win32]::GetDesktopWindow());
-while ($hwnd -ne [IntPtr]::Zero) {
-  $pid = 0;
-  [void][Win32]::GetWindowThreadProcessId($hwnd, [ref]$pid);
-  if ($pid -eq $targetPid) { [Win32]::ShowWindow($hwnd, 0) | Out-Null }
-  $hwnd = [Win32]::GetWindow($hwnd, 2);
-}`.trim();
 
-      execSync(`powershell -WindowStyle Hidden -NonInteractive -Command "${psScript.replace(/"/g, '\\"')}"`, {
+$targetPids = @(${rootPid});
+$port = ${port};
+
+$conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1;
+if ($conn) {
+  $targetPids += [int]$conn.OwningProcess
+}
+
+$snapshotPids = @($targetPids | Where-Object { $_ -gt 0 });
+foreach ($p in $snapshotPids) {
+  $children = Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ParentProcessId -eq $p }
+  foreach ($c in $children) {
+    $targetPids += [int]$c.ProcessId
+  }
+}
+
+$byCmd = Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*--remote-debugging-port=$port*" }
+foreach ($b in $byCmd) {
+  $targetPids += [int]$b.ProcessId
+}
+
+$targetPids = $targetPids | Where-Object { $_ -gt 0 } | Select-Object -Unique
+
+if ($targetPids.Count -gt 0) {
+  [Win32WindowHider]::EnumWindows({
+    param($hwnd, $lparam)
+    $procId = 0
+    [Win32WindowHider]::GetWindowThreadProcessId($hwnd, [ref]$procId) | Out-Null
+    if ($targetPids -contains $procId) {
+      [Win32WindowHider]::ShowWindow($hwnd, 0) | Out-Null # SW_HIDE = 0
+    }
+    return $true
+  }, [IntPtr]::Zero) | Out-Null
+}
+`.trim();
+
+      const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+      execSync(`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand ${encoded}`, {
         timeout: 5000,
         stdio: 'ignore',
         windowsHide: true,
       });
-      this.log.info('session', 'Chrome window hidden from taskbar via Win32 ShowWindow', { pid });
+      this.log.info('session', 'Chrome window hidden from taskbar via Win32 EnumWindows + SW_HIDE');
     } catch (psErr) {
-      // Non-fatal — window is still minimized from Step 1
-      this.log.debug('session', `Win32 hide attempt: ${(psErr as Error).message?.substring(0, 120)}`);
+      this.log.debug('session', `Win32 hide notice: ${(psErr as Error).message?.substring(0, 120)}`);
     }
   }
 
