@@ -360,8 +360,61 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
   }
 
   // ---------------------------------------------------------------------------
-  // Account & Authentication Actions (Phase 5.3)
+  // Account & Authentication Actions (Phase 5.3+)
   // ---------------------------------------------------------------------------
+
+  /**
+   * Launches the dedicated Chrome login browser for manual Google sign-in.
+   *
+   * FAST PATH — returns as soon as the OS process PID is confirmed.
+   * Does NOT wait for CDP, Playwright, or auth detection.
+   * The Chrome window stays open on the user's desktop.
+   *
+   * SAFETY: Only the application-owned dedicated profile is touched.
+   * Normal Chrome processes are never killed or modified.
+   */
+  async launchLoginBrowser(profileId: string): Promise<{
+    success: boolean;
+    pid: number;
+    cdpPort: number;
+    userDataDir: string;
+    message: string;
+  }> {
+    const config = ProfileConfigManager.read(profileId);
+
+    // Reuse or create a session object
+    let session = this.sessions.get(profileId);
+    if (!session) {
+      // Ensure port is allocated
+      const existingPort = this.portAllocator.getPort(profileId);
+      if (!existingPort) {
+        const available = await this.portAllocator.allocate(profileId);
+        if (available !== config.cdpPort) {
+          const updatedConfig = ProfileConfigManager.update(profileId, { cdpPort: available });
+          Object.assign(config, updatedConfig);
+        }
+      }
+      session = new ProfileSession(config);
+      this.sessions.set(profileId, session);
+      this.attachSessionEvents(session);
+    }
+
+    appLogger.info('session_manager', 'launchLoginBrowser: launching dedicated Chrome for login', {
+      profileId,
+      cdpPort: config.cdpPort,
+      userDataDir: config.userDataDir,
+    });
+
+    const result = await session.launchLoginBrowser();
+
+    return {
+      success: true,
+      pid: result.pid,
+      cdpPort: result.cdpPort,
+      userDataDir: result.userDataDir,
+      message: `Chrome opened — Sign into Google in the Flow window. (PID: ${result.pid}, port: ${result.cdpPort})`,
+    };
+  }
 
   /**
    * Opens a visible Chrome window for manual user sign-in.

@@ -46,6 +46,7 @@ describe('SettingsScreen', () => {
       onSlotUpdated: vi.fn().mockReturnValue(() => {}),
       onJobCompleted: vi.fn().mockReturnValue(() => {}),
       onJobFailed: vi.fn().mockReturnValue(() => {}),
+      launchLoginBrowser: vi.fn().mockResolvedValue({ success: true, pid: 99999, cdpPort: 9222, userDataDir: 'C:\\test', message: 'Chrome opened' }),
       onWorkerStatus: vi.fn().mockReturnValue(() => {}),
     };
   });

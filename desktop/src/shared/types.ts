@@ -162,8 +162,9 @@ export interface ExistingProfileDetectionResult {
  */
 export type ProfileSessionStatus =
   | 'created'          // Profile exists; Chrome not yet launched.
-  | 'starting'         // Chrome is being spawned.
-  | 'chrome_launched'  // Chrome process is up; waiting for CDP.
+  | 'starting'         // Chrome is being spawned (launchLoginBrowser path).
+  | 'browser_open'     // Chrome process confirmed running (PID alive). CDP not yet probed. Login window visible.
+  | 'chrome_launched'  // Chrome process is up; waiting for CDP (full start path).
   | 'connecting'       // Playwright is attempting CDP connection.
   | 'connected'        // CDP connected; checking Flow auth state.
   | 'auth_required'    // Flow detected a Google login wall. User must sign in.
@@ -194,12 +195,15 @@ export interface ProfileSessionSnapshot {
     | 'connected_dedicated'
     | 'profile_open_not_attachable'
     | 'profile_closed'
+    | 'browser_open'       // Chrome process confirmed alive; login window visible
     | 'login_required'
     | 'authenticated'
     | 'error';
   tabCount?: number;
   flowTabUrl?: string | null;
   localProfileDirectory?: string;
+  /** PID of the app-owned dedicated Chrome process (undefined if not running). */
+  chromePid?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -699,6 +703,13 @@ export interface FlowApi {
   deleteProfile: (profileId: string) => Promise<void>;
   openChrome: (profileId: string) => Promise<{ success: boolean; message: string }>;
   openSignIn: (profileId: string) => Promise<{ success: boolean; message: string }>;
+  /**
+   * Launches the dedicated Chrome window for manual login.
+   * Returns as soon as the OS process is confirmed running (PID alive).
+   * Does NOT wait for CDP, Playwright connection, or auth detection.
+   * The Chrome window stays open for the user to sign in manually.
+   */
+  launchLoginBrowser: (profileId: string) => Promise<{ success: boolean; pid: number; cdpPort: number; userDataDir: string; message: string }>;
   verifyAccount: (profileId: string) => Promise<{ success: boolean; status: ProfileSessionStatus; detectedEmail: string | null; error?: string }>;
   testConnection: (profileId: string) => Promise<{ success: boolean; port: number; responsive: boolean; status: ProfileSessionStatus }>;
   detectLocalChromeProfiles?: () => Promise<Array<DiscoveredLocalProfile & { isOpen: boolean; isAttachable: boolean; cdpPort?: number }>>;

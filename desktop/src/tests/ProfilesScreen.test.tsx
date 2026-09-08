@@ -68,6 +68,7 @@ describe('ProfilesScreen', () => {
       onSlotUpdated: vi.fn().mockReturnValue(() => {}),
       onJobCompleted: vi.fn().mockReturnValue(() => {}),
       onJobFailed: vi.fn().mockReturnValue(() => {}),
+      launchLoginBrowser: vi.fn().mockResolvedValue({ success: true, pid: 99999, cdpPort: 9222, userDataDir: 'C:\\test', message: 'Chrome opened' }),
       onWorkerStatus: vi.fn().mockReturnValue(() => {}),
     };
   });
@@ -79,24 +80,28 @@ describe('ProfilesScreen', () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByText(/Flow profiles use separate browser sessions/i)).toBeDefined();
+    // Banner text is updated to dedicated profile architecture
+    expect(screen.getByText(/Dedicated Flow Profiles/i)).toBeDefined();
+    // Profile names appear in cards
     expect(screen.getByText('Main Generation Profile')).toBeDefined();
     expect(screen.getByText('Secondary Profile')).toBeDefined();
+    // Detected email shown
     expect(screen.getByText('user1@example.com')).toBeDefined();
-    expect(screen.getAllByText(/Ready/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Login Required/i).length).toBeGreaterThan(0);
+    // Status badges
+    expect(screen.getAllByText(/Authenticated/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Sign-In Required/i).length).toBeGreaterThan(0);
 
-    // Click Open Sign-In for prof_2
-    const signInBtns = screen.getAllByRole('button', { name: /Open Sign-In/i });
+    // Click Open Login for auth_required profile (prof_2)
+    const openLoginBtns = screen.getAllByRole('button', { name: /Open Login/i });
     await act(async () => {
-      fireEvent.click(signInBtns[1]);
+      fireEvent.click(openLoginBtns[0]); // prof_2 is auth_required, shows Open Login
       await Promise.resolve();
     });
 
-    expect(window.flowApi?.openSignIn).toHaveBeenCalledWith('prof_2');
+    expect(window.flowApi?.launchLoginBrowser).toHaveBeenCalled();
   });
 
-  it('handles Verify Account and Test Connection actions', async () => {
+  it('handles Verify Account and Test CDP actions', async () => {
     render(<ProfilesScreen />);
 
     await act(async () => {
@@ -111,7 +116,7 @@ describe('ProfilesScreen', () => {
 
     expect(window.flowApi?.verifyAccount).toHaveBeenCalledWith('prof_1');
 
-    const testBtns = screen.getAllByRole('button', { name: /Test Connection/i });
+    const testBtns = screen.getAllByRole('button', { name: /Test CDP/i });
     await act(async () => {
       fireEvent.click(testBtns[0]);
       await Promise.resolve();

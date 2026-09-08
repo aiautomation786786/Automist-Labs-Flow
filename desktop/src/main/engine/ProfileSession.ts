@@ -217,6 +217,132 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     await this.start(headless);
   }
 
+  /**
+   * Launches the dedicated Chrome window for manual Google login.
+   *
+   * DESIGN INTENT:
+   *  - This is the FAST PATH for "Open Login". It does NOT wait for CDP, does NOT
+   *    connect Playwright, and does NOT check authentication.
+   *  - It spawns Chrome visibly (no --headless), creates the dedicated user-data
+   *    directory if needed, and returns as soon as the OS PID is confirmed running.
+   *  - Chrome stays open on the user's desktop for manual sign-in.
+   *  - Call verifyAccount() separately after the user has signed in.
+   *
+   * SAFETY:
+   *  - Only the application-owned dedicated profile directory is used.
+   *  - No existing Chrome processes are touched.
+   *  - Process termination is by specific PID only. Never by image-name or recursive flags.
+   *
+   * @returns PID, CDP port, and userDataDir for confirmation.
+   */
+  async launchLoginBrowser(): Promise<{ pid: number; cdpPort: number; userDataDir: string }> {
+    // If Chrome is already running for this session (browser_open or chrome_launched), reuse it.
+    if (
+      this._status === 'browser_open' ||
+      this._status === 'chrome_launched' ||
+      this._status === 'connecting' ||
+      this._status === 'connected' ||
+      this._status === 'auth_required' ||
+      this._status === 'ready' ||
+      this._status === 'busy'
+    ) {
+      const pid = this.chromeProcess?.pid;
+      if (pid) {
+        this.log.info('session', 'launchLoginBrowser: Chrome already running, reusing', {
+          pid,
+          status: this._status,
+        });
+        return { pid, cdpPort: this.config.cdpPort, userDataDir: this.config.userDataDir };
+      }
+    }
+
+    const { chromePath, cdpPort, userDataDir, chromeProfileName } = this.config;
+
+    // Verify Chrome executable exists
+    if (!fs.existsSync(chromePath)) {
+      throw new Error(`Chrome not found at: ${chromePath}`);
+    }
+
+    // Ensure the dedicated user-data directory exists (creates on first run)
+    if (!fs.existsSync(userDataDir)) {
+      fs.mkdirSync(userDataDir, { recursive: true });
+      this.log.info('session', 'Created dedicated Chrome user-data directory', { userDataDir });
+    }
+
+    const flags: string[] = [
+      ...CHROME_FLAGS_BASE,
+      `--remote-debugging-port=${cdpPort}`,
+      `--user-data-dir=${userDataDir}`,
+      `--profile-directory=${chromeProfileName || 'Default'}`,
+      // Navigate to Google Flow immediately so the user lands there for sign-in
+      'https://labs.google/fx/en/tools/flow',
+    ];
+    // CRITICAL: no --headless flag — window must be visible
+
+    this.setStatus('starting');
+    this.errorMessage = null;
+
+    this.log.info('chrome_launch', 'launchLoginBrowser: Spawning dedicated Chrome for login', {
+      chromePath,
+      cdpPort,
+      userDataDir,
+      profileDirectory: chromeProfileName || 'Default',
+    });
+
+    const chromeProcess = spawn(chromePath, flags, {
+      detached: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: false,
+    });
+
+    if (!chromeProcess.pid) {
+      this.errorMessage = `Failed to spawn Chrome (no PID assigned). Path: ${chromePath}`;
+      this.setStatus('error');
+      throw new Error(this.errorMessage);
+    }
+
+    this.chromeProcess = chromeProcess;
+    this.launchedAt = Date.now();
+
+    // Set status immediately to browser_open — Chrome is alive
+    this.setStatus('browser_open');
+
+    const pid = chromeProcess.pid;
+    this.log.info('chrome_launch', 'launchLoginBrowser: Chrome process confirmed', {
+      pid,
+      cdpPort,
+      userDataDir,
+    });
+
+    // Pipe Chrome stderr for diagnostics
+    chromeProcess.stderr?.on('data', (chunk: Buffer) => {
+      const line = chunk.toString().trim();
+      if (line) {
+        this.log.debug('chrome_stderr', line);
+      }
+    });
+
+    // Watch for unexpected exit
+    chromeProcess.once('exit', (code, signal) => {
+      if (
+        this._status !== 'stopping' &&
+        this._status !== 'stopped' &&
+        this._status !== 'created'
+      ) {
+        this.log.warn('chrome_crash', 'Chrome exited unexpectedly after login launch', { code, signal, pid });
+        if (this._status !== 'error') {
+          this.errorMessage = `Chrome exited unexpectedly (code=${code}, signal=${signal})`;
+          this.setStatus('error');
+          this.emit('crash', this.profileId);
+        }
+        this.cleanupPlaywrightObjects();
+      }
+      this.chromeProcess = null;
+    });
+
+    return { pid, cdpPort, userDataDir };
+  }
+
   /** Returns the current snapshot for this session. */
   getSnapshot(): ProfileSessionSnapshot {
     let connectionState: ProfileSessionSnapshot['connectionState'] = 'profile_closed';
@@ -224,12 +350,16 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       connectionState = this.isExistingBrowser ? 'connected_existing' : 'connected_dedicated';
     } else if (this._status === 'auth_required') {
       connectionState = 'login_required';
+    } else if (this._status === 'browser_open') {
+      connectionState = 'browser_open';
     } else if (this._status === 'error') {
       connectionState = this.errorMessage?.includes('does not expose an automation connection')
         ? 'profile_open_not_attachable'
         : 'error';
     } else if (this._status === 'connected' || this._status === 'busy') {
       connectionState = this.isExistingBrowser ? 'connected_existing' : 'connected_dedicated';
+    } else if (this._status === 'chrome_launched' || this._status === 'connecting') {
+      connectionState = 'browser_open';
     }
 
     return {
@@ -249,6 +379,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       tabCount: this.context ? this.context.pages().length : 0,
       flowTabUrl: this.page ? this.page.url() : null,
       localProfileDirectory: this.config.localProfileDirectory,
+      chromePid: this.chromeProcess?.pid,
     };
   }
 

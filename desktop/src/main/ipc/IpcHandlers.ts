@@ -196,6 +196,13 @@ export class IpcHandlers {
       };
     });
 
+    ipcMain.handle('profiles:launchLoginBrowser', async (_event, profileId: unknown) => {
+      if (typeof profileId !== 'string') throw new Error('Invalid profileId');
+      // Fast path: spawns Chrome visibly, returns when PID confirmed.
+      // Does NOT wait for CDP or auth detection.
+      return await sessionManager.launchLoginBrowser(profileId);
+    });
+
     ipcMain.handle('profiles:verifyAccount', async (_event, profileId: unknown) => {
       if (typeof profileId !== 'string') throw new Error('Invalid profileId');
       return await sessionManager.verifyAccount(profileId);
