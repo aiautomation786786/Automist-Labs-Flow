@@ -112,5 +112,29 @@ describe('UI Modals', () => {
       expect(video).toBeDefined();
       expect(video?.getAttribute('src')).toContain('flow-asset://');
     });
+
+    it('renders Reveal in Explorer button when mediaPath is provided and triggers revealAsset', () => {
+      const revealAsset = vi.fn();
+      window.flowApi = {
+        ...(window.flowApi || {}),
+        revealAsset,
+      } as any;
+
+      render(
+        <MediaPreviewModal
+          isOpen={true}
+          type="video"
+          mediaUrl="flow-asset://C:/appdata/projects/p1/assets/vid_1.mp4"
+          mediaPath="C:/appdata/projects/p1/assets/vid_1.mp4"
+          title="Slot #02 Preview"
+          onClose={() => {}}
+        />
+      );
+
+      const revealBtn = screen.getByText('Reveal in Explorer');
+      expect(revealBtn).toBeDefined();
+      fireEvent.click(revealBtn);
+      expect(revealAsset).toHaveBeenCalledWith('C:/appdata/projects/p1/assets/vid_1.mp4');
+    });
   });
 });

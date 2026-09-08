@@ -142,11 +142,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
     }
   };
 
-  const handleRetrySlot = async (_slot: PromptSlotEntity) => {
+  const handleRetrySlot = async (slot: PromptSlotEntity) => {
     if (!window.flowApi || !project) return;
     try {
-      // Re-enqueuing project will pick up failed slots
-      await window.flowApi.startProjectGeneration(project.projectId);
+      if (window.flowApi.retrySlot) {
+        await window.flowApi.retrySlot(project.projectId, slot.slotIndex);
+      } else {
+        await window.flowApi.startProjectGeneration(project.projectId);
+      }
+      await loadProject();
     } catch (err) {
       console.error('Failed to retry slot', err);
     }
@@ -192,7 +196,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
               </span>
             </div>
             <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-              {project.stats.totalImages} Images · {project.stats.totalVideos} Videos · Ratio: {project.settings.imageRatio}
+              {project.stats.totalImages > 0 && `${project.stats.totalImages} Images`}
+              {project.stats.totalImages > 0 && project.stats.totalVideos > 0 && ' · '}
+              {project.stats.totalVideos > 0 && `${project.stats.totalVideos} Videos`}
+              {project.settings.videoModel && ` · ${project.settings.videoModel}`}
+              {project.settings.generationMode && ` · ${project.settings.generationMode.replace('_', ' ')}`}
+              {` · Ratio: ${project.settings.videoRatio || project.settings.imageRatio}`}
             </div>
           </div>
         </div>
@@ -309,7 +318,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
               <PromptSlotCard
                 key={slot.promptId}
                 slot={slot}
-                aspectRatio={project.settings.imageRatio}
+                aspectRatio={project.settings.videoRatio || project.settings.imageRatio}
                 onViewPrompt={(s) => setSelectedSlotForPrompt(s)}
                 onPreviewMedia={(s) => setSelectedSlotForMedia(s)}
                 onRetry={(s) => handleRetrySlot(s)}
@@ -336,6 +345,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
           isOpen={selectedSlotForMedia !== null}
           type={selectedSlotForMedia.type}
           mediaUrl={formatAssetUrl(selectedSlotForMedia.result?.mediaPath, selectedSlotForMedia.projectId)}
+          mediaPath={selectedSlotForMedia.result?.mediaPath}
           thumbnailUrl={formatAssetUrl(selectedSlotForMedia.result?.thumbnailPath, selectedSlotForMedia.projectId)}
           promptText={selectedSlotForMedia.promptText}
           slotIndex={selectedSlotForMedia.slotIndex}

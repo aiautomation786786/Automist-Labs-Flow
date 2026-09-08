@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { PromptSlotEntity } from '../../shared/types';
-import { EyeIcon, PlayIcon, RefreshIcon } from './Icons';
+import { EyeIcon, PlayIcon, RefreshIcon, FolderIcon } from './Icons';
 import { formatAssetUrl } from '../utils/assetUrl';
 
 interface PromptSlotCardProps {
@@ -93,6 +93,21 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
           >
             {isVideo ? 'Video' : 'Image'}
           </span>
+          {slot.result?.modelUsed && (
+            <span
+              style={{
+                fontSize: '11px',
+                padding: '1px 6px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: '#f1f5f9',
+                color: '#475569',
+                border: '1px solid #e2e8f0',
+                fontWeight: 500,
+              }}
+            >
+              {slot.result.modelUsed}
+            </span>
+          )}
         </div>
         {getStatusBadge()}
       </div>
@@ -275,6 +290,22 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
         </div>
 
         <div style={{ display: 'flex', gap: '6px' }}>
+          {slot.status === 'completed' && slot.result?.mediaPath && (
+            <button
+              className="btn-secondary btn-sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (window.flowApi?.revealAsset && slot.result?.mediaPath) {
+                  window.flowApi.revealAsset(slot.result.mediaPath);
+                }
+              }}
+              title="Reveal file in Windows Explorer"
+            >
+              <FolderIcon size={12} />
+              Reveal
+            </button>
+          )}
+
           {slot.status === 'failed' && onRetry && (
             <button className="btn-secondary btn-sm" onClick={() => onRetry(slot)} title="Retry generation">
               <RefreshIcon size={12} />

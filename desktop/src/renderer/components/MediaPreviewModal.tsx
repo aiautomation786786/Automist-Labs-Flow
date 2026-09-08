@@ -1,10 +1,11 @@
 import React, { useEffect, useRef } from 'react';
-import { CloseIcon } from './Icons';
+import { CloseIcon, FolderIcon } from './Icons';
 
 interface MediaPreviewModalProps {
   isOpen: boolean;
   type: 'image' | 'video';
   mediaUrl: string;
+  mediaPath?: string;
   title: string;
   promptText?: string;
   slotIndex?: number;
@@ -29,6 +30,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   isOpen,
   type,
   mediaUrl,
+  mediaPath,
   title,
   promptText,
   slotIndex,
@@ -187,15 +189,32 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
           )}
         </div>
 
-        <div className="modal-footer" style={{ padding: '10px 18px', display: 'flex', justifyContent: 'space-between' }}>
+        <div className="modal-footer" style={{ padding: '10px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
             {profileLabel && <span>Account: {profileLabel}</span>}
             {profileLabel && fileSizeLabel && <span> · </span>}
             {fileSizeLabel && <span>File Size: {fileSizeLabel}</span>}
           </div>
-          <button className="btn-secondary btn-sm" onClick={onClose}>
-            Close Preview
-          </button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {mediaPath && (
+              <button
+                className="btn-secondary btn-sm"
+                onClick={() => {
+                  if (window.flowApi?.revealAsset && mediaPath) {
+                    window.flowApi.revealAsset(mediaPath);
+                  }
+                }}
+                title="Show file in Windows Explorer"
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                <FolderIcon size={13} />
+                Reveal in Explorer
+              </button>
+            )}
+            <button className="btn-secondary btn-sm" onClick={onClose}>
+              Close Preview
+            </button>
+          </div>
         </div>
       </div>
     </div>

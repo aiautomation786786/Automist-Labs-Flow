@@ -265,4 +265,84 @@ describe('Workspace Asset Rendering & Protocol Resolution', () => {
     expect(sorted[2].promptText).toContain('plant');
     expect(sorted[3].promptText).toContain('bicycle');
   });
+
+  // Requirement 9: PromptSlotCard displays model badge and triggers revealAsset
+  it('9. PromptSlotCard displays model badge and triggers revealAsset when Reveal is clicked', () => {
+    const revealAsset = vi.fn();
+    window.flowApi = {
+      ...(window.flowApi || {}),
+      revealAsset,
+    } as any;
+
+    const videoSlot: PromptSlotEntity = {
+      slotIndex: 0,
+      promptId: 'slot_vid_0',
+      projectId: 'proj_test_123',
+      type: 'video',
+      promptText: 'A cinematic drone shot over snow-capped mountains',
+      status: 'completed',
+      createdAt: '2026-09-08T07:55:00.000Z',
+      updatedAt: '2026-09-08T07:55:00.000Z',
+      result: {
+        assetId: 'uuid_vid_0',
+        mediaPath: 'C:/assets/vid_0.mp4',
+        modelUsed: 'Veo 3.1 - Quality',
+        ratioUsed: '16:9',
+        fileSizeBytes: 2048000,
+        completedAt: '2026-09-08T07:55:00.000Z',
+        durationFormatted: '4.0s',
+      },
+    };
+
+    render(
+      <PromptSlotCard
+        slot={videoSlot}
+        onViewPrompt={vi.fn()}
+        onPreviewMedia={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('Veo 3.1 - Quality')).toBeDefined();
+    const revealBtn = screen.getByText('Reveal');
+    expect(revealBtn).toBeDefined();
+    fireEvent.click(revealBtn);
+    expect(revealAsset).toHaveBeenCalledWith('C:/assets/vid_0.mp4');
+  });
+
+  // Requirement 10: PromptSlotCard renders retry button when failed
+  it('10. PromptSlotCard displays retry button when failed and triggers onRetry', () => {
+    const onRetry = vi.fn();
+
+    const failedSlot: PromptSlotEntity = {
+      slotIndex: 1,
+      promptId: 'slot_fail_1',
+      projectId: 'proj_test_123',
+      type: 'image',
+      promptText: 'A surreal landscape with floating islands',
+      status: 'failed',
+      createdAt: '2026-09-08T07:55:00.000Z',
+      updatedAt: '2026-09-08T07:55:00.000Z',
+      error: {
+        code: 'GENERATION_TIMEOUT',
+        message: 'Flow timed out',
+        timestamp: '2026-09-08T07:55:00.000Z',
+        retryCount: 1,
+      },
+    };
+
+    render(
+      <PromptSlotCard
+        slot={failedSlot}
+        onViewPrompt={vi.fn()}
+        onPreviewMedia={vi.fn()}
+        onRetry={onRetry}
+      />
+    );
+
+    expect(screen.getByText('Failed')).toBeDefined();
+    const retryBtn = screen.getByText('Retry');
+    expect(retryBtn).toBeDefined();
+    fireEvent.click(retryBtn);
+    expect(onRetry).toHaveBeenCalledWith(failedSlot);
+  });
 });
