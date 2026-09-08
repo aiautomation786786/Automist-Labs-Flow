@@ -75,24 +75,39 @@ export class WorkerPool {
   }
 
   /**
-   * Returns the next available, idle, and connected worker.
-   * Uses FIFO ordering based on registration.
+   * Returns a randomly selected available, idle, and connected worker.
+   *
+   * RANDOMIZED SELECTION:
+   *  - Builds the full list of eligible workers (available + allowed profile filter).
+   *  - Shuffles the list using a Fisher-Yates shuffle.
+   *  - Returns the first worker from the shuffled list.
+   *
+   * This ensures:
+   *  - No single profile is always preferred (load is spread).
+   *  - No ready worker is left idle while queued jobs exist.
+   *  - Same-profile sequential guarantee is preserved via worker.isAvailable check.
    */
   getAvailableWorker(allowedProfileIds?: string[]): ProfileWorker | null {
     this.syncWithSessionManager();
 
     const allowedSet = allowedProfileIds && allowedProfileIds.length > 0 ? new Set(allowedProfileIds) : null;
 
+    // Build eligible list
+    const eligible: ProfileWorker[] = [];
     for (const worker of this.workers.values()) {
-      if (allowedSet && !allowedSet.has(worker.profileId)) {
-        continue;
-      }
-      if (worker.isAvailable) {
-        return worker;
-      }
+      if (allowedSet && !allowedSet.has(worker.profileId)) continue;
+      if (worker.isAvailable) eligible.push(worker);
     }
 
-    return null;
+    if (eligible.length === 0) return null;
+
+    // Fisher-Yates shuffle for uniform random selection
+    for (let i = eligible.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [eligible[i], eligible[j]] = [eligible[j]!, eligible[i]!];
+    }
+
+    return eligible[0]!;
   }
 
   /**

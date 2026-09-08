@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import type {
   SupportedAspectRatio,
-  ProfileSessionSnapshot,
 } from '../../shared/types';
 import { PromptParser } from '../../shared/PromptParser';
 import { SUPPORTED_IMAGE_MODELS, getImageModelConfig } from '../../shared/image-models';
@@ -13,7 +12,6 @@ import {
   ClapperboardIcon,
   SparklesIcon,
   ClockIcon,
-  CheckIcon,
 } from '../components/Icons';
 
 export type GenerationMode = 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video';
@@ -43,7 +41,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
   initialMode = 'single_image',
   onProjectCreated,
   onCancel,
-  onNavigateProfiles,
+  onNavigateProfiles: _onNavigateProfiles,
 }) => {
   const [mode] = useState<GenerationMode>(initialMode);
   const [projectName, setProjectName] = useState(() => {
@@ -71,56 +69,12 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
   const [omniDuration, setOmniDuration] = useState<'4s' | '6s' | '8s' | '10s'>('6s');
   const [videoDownloadQuality, setVideoDownloadQuality] = useState<'original' | '1080p'>('original');
 
-  // Profiles
-  const [profiles, setProfiles] = useState<ProfileSessionSnapshot[]>([]);
-  const [selectedProfileId, setSelectedProfileId] = useState<string>(''); // For single modes
-  const [selectedBulkProfileIds, setSelectedBulkProfileIds] = useState<Set<string>>(new Set()); // For bulk modes
-
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const isImageMode = mode === 'single_image' || mode === 'bulk_image';
   const isBulkMode = mode === 'bulk_image' || mode === 'bulk_video';
 
-  // Load profiles on mount
-  useEffect(() => {
-    const fetchProfiles = async () => {
-      if (!window.flowApi) return;
-      try {
-        const list = await window.flowApi.listProfiles();
-        setProfiles(list);
-
-        const ready = list.find((p) => p.status === 'ready');
-        if (ready) {
-          setSelectedProfileId(ready.profileId);
-        } else if (list.length > 0) {
-          setSelectedProfileId(list[0]!.profileId);
-        }
-
-        const allIds = new Set(list.map((p) => p.profileId));
-        setSelectedBulkProfileIds(allIds);
-      } catch (err) {
-        console.error('Failed to load profiles', err);
-      }
-    };
-    fetchProfiles();
-  }, []);
-
-  // Set default project name on mode change
-  useEffect(() => {
-    const modeLabel =
-      mode === 'single_image'
-        ? 'Single Image'
-        : mode === 'single_video'
-        ? 'Single Video'
-        : mode === 'bulk_image'
-        ? 'Bulk Images'
-        : 'Bulk Videos';
-    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    setProjectName(`${modeLabel} · ${nowStr}`);
-  }, [mode]);
-
-  // Parse bulk prompts
   const parsedBulkPrompts = useMemo(() => {
     if (!isBulkMode) return [];
     return PromptParser.parseRawText(bulkPromptsText, isImageMode ? 'image' : 'video');
@@ -147,27 +101,6 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
     setBulkPromptsText(list.join('\n\n'));
   };
 
-  const handleToggleBulkProfile = (profileId: string) => {
-    const updated = new Set(selectedBulkProfileIds);
-    if (updated.has(profileId)) {
-      if (updated.size > 1) {
-        updated.delete(profileId);
-      }
-    } else {
-      updated.add(profileId);
-    }
-    setSelectedBulkProfileIds(updated);
-  };
-
-  const handleSelectAllReadyProfiles = () => {
-    const readyIds = profiles.filter((p) => p.status === 'ready').map((p) => p.profileId);
-    if (readyIds.length > 0) {
-      setSelectedBulkProfileIds(new Set(readyIds));
-    } else {
-      setSelectedBulkProfileIds(new Set(profiles.map((p) => p.profileId)));
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!window.flowApi) return;
@@ -184,10 +117,6 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
       const promptsList: Array<{ text: string; type: 'image' | 'video' }> = isBulkMode
         ? parsedBulkPrompts.map((p) => ({ text: p.text, type: p.type }))
         : [{ text: singlePrompt.trim(), type: isImageMode ? 'image' : 'video' }];
-
-      const selectedProfileIds = isBulkMode
-        ? Array.from(selectedBulkProfileIds)
-        : selectedProfileId ? [selectedProfileId] : undefined;
 
       const project = await window.flowApi.createProject({
         name: projectName.trim() || `${mode} project`,
@@ -207,7 +136,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
             ? omniDuration
             : veoDuration
           : undefined,
-        selectedProfileIds,
+        // No selectedProfileIds — the WorkerPool automatically picks an available account
         prompts: promptsList,
       });
 
@@ -219,8 +148,6 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
     }
   };
 
-  // Get active profile display
-  const activeProfile = profiles.find((p) => p.profileId === selectedProfileId);
 
   return (
     <div className="studio-canvas">
@@ -723,115 +650,36 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
               )}
             </div>
 
-            {/* Target Account(s) */}
+            {/* Automatic Account Dispatch */}
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  {isBulkMode ? 'Parallel Account Dispatch' : 'Execution Account'}
-                </label>
-                {isBulkMode && (
-                  <button
-                    type="button"
-                    onClick={handleSelectAllReadyProfiles}
-                    style={{ fontSize: '11px', color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
-                  >
-                    Select Ready ({profiles.filter((p) => p.status === 'ready').length})
-                  </button>
-                )}
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Account Dispatch
+              </label>
+              <div
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--primary-border)',
+                  backgroundColor: 'var(--primary-subtle)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  fontSize: '12.5px',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                <span style={{ fontSize: '16px' }}>⚡</span>
+                <div>
+                  <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '2px' }}>
+                    Automatic Worker Dispatch
+                  </div>
+                  <div style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                    {isBulkMode
+                      ? 'Jobs are distributed across all ready accounts automatically. Multiple profiles run concurrently; same-profile jobs run sequentially.'
+                      : 'The next available ready account is selected automatically. No manual selection needed.'}
+                  </div>
+                </div>
               </div>
-
-              {profiles.length === 0 ? (
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  No Flow profiles configured.{' '}
-                  <button
-                    type="button"
-                    onClick={onNavigateProfiles}
-                    style={{ color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-                  >
-                    Manage Profiles
-                  </button>
-                </div>
-              ) : !isBulkMode ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <select
-                    aria-label="Execution Account"
-                    value={selectedProfileId}
-                    onChange={(e) => setSelectedProfileId(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '9px 14px',
-                      borderRadius: 'var(--radius-md)',
-                      border: '1px solid var(--border-color)',
-                      fontSize: '13px',
-                      backgroundColor: 'var(--bg-surface)',
-                      color: 'var(--text-primary)',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {profiles.map((p) => (
-                      <option key={p.profileId} value={p.profileId}>
-                        {p.displayName} ({p.status === 'ready' ? 'Ready' : p.status}) {p.detectedEmail ? `· ${p.detectedEmail}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  {activeProfile && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-muted)' }}>
-                      <div
-                        style={{
-                          width: '7px',
-                          height: '7px',
-                          borderRadius: '50%',
-                          backgroundColor: activeProfile.status === 'ready' ? 'var(--success)' : 'var(--warning)',
-                        }}
-                      />
-                      <span>{activeProfile.status === 'ready' ? 'Session authenticated & ready' : `Status: ${activeProfile.status}`}</span>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                    {profiles.map((p) => {
-                      const isSel = selectedBulkProfileIds.has(p.profileId);
-                      const isReady = p.status === 'ready';
-                      return (
-                        <button
-                          key={p.profileId}
-                          type="button"
-                          onClick={() => handleToggleBulkProfile(p.profileId)}
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            padding: '6px 12px',
-                            borderRadius: 'var(--radius-md)',
-                            border: `1px solid ${isSel ? 'var(--primary)' : 'var(--border-color)'}`,
-                            backgroundColor: isSel ? 'var(--primary-subtle)' : 'var(--bg-surface)',
-                            color: isSel ? 'var(--text-primary)' : 'var(--text-secondary)',
-                            fontSize: '12px',
-                            fontWeight: isSel ? 600 : 500,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: '7px',
-                              height: '7px',
-                              borderRadius: '50%',
-                              backgroundColor: isReady ? 'var(--success)' : 'var(--warning)',
-                            }}
-                          />
-                          <span>{p.displayName}</span>
-                          {isSel && <CheckIcon size={12} />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="parallel-badge">
-                    ⚡ {selectedBulkProfileIds.size} Accounts Active · Concurrent Parallel Worker Dispatch
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
