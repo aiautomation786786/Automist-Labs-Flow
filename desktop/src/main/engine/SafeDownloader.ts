@@ -152,6 +152,10 @@ export class SafeDownloader {
       return { mimeType: 'image/gif', extension: '.gif', isValid: true };
     }
     if (buffer.length >= 12 && buffer.toString('ascii', 4, 8) === 'ftyp') {
+      const brand = buffer.toString('ascii', 8, 12).toLowerCase();
+      if (brand.startsWith('mp4') || brand.startsWith('iso') || brand.startsWith('m4v')) {
+        return { mimeType: 'video/mp4', extension: '.mp4', isValid: true };
+      }
       return { mimeType: 'image/avif', extension: '.avif', isValid: true };
     }
     if (buffer.length >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4d) {
@@ -167,6 +171,11 @@ export class SafeDownloader {
         else if (cleanHeader === 'image/webp') ext = '.webp';
         else if (cleanHeader === 'image/gif') ext = '.gif';
         else if (cleanHeader === 'image/avif') ext = '.avif';
+        return { mimeType: cleanHeader, extension: ext, isValid: true };
+      }
+      if (cleanHeader.startsWith('video/')) {
+        let ext = '.mp4';
+        if (cleanHeader === 'video/webm') ext = '.webm';
         return { mimeType: cleanHeader, extension: ext, isValid: true };
       }
     }

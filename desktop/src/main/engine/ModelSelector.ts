@@ -298,6 +298,7 @@ export class ModelSelector {
       const isAlreadySelected =
         (targetLower.includes('lite') && currentModelText.includes('lite')) ||
         (targetLower.includes('fast') && currentModelText.includes('fast')) ||
+        (targetLower.includes('quality') && currentModelText.includes('quality')) ||
         (targetLower.includes('omni') && currentModelText.includes('omni'));
 
       if (!isAlreadySelected) {
@@ -398,6 +399,7 @@ export class ModelSelector {
     const modelVerified =
       (targetLower.includes('lite') && modelTextLower.includes('lite')) ||
       (targetLower.includes('fast') && modelTextLower.includes('fast')) ||
+      (targetLower.includes('quality') && modelTextLower.includes('quality')) ||
       (targetLower.includes('omni') && modelTextLower.includes('omni'));
 
     const resVerified = paneState?.hasResRadios ? (paneState?.resText || '').includes(targetRes) : true;
