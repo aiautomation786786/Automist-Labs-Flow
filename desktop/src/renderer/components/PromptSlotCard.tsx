@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { PromptSlotEntity } from '../../shared/types';
-import { EyeIcon, PlayIcon, RefreshIcon, FolderIcon } from './Icons';
+import { EyeIcon, PlayIcon, RefreshIcon, FolderIcon, AlertCircleIcon } from './Icons';
 import { formatAssetUrl } from '../utils/assetUrl';
 
 interface PromptSlotCardProps {
@@ -11,12 +11,10 @@ interface PromptSlotCardProps {
   onRetry?: (slot: PromptSlotEntity) => void;
 }
 
-// Re-export for compatibility across components and unit tests
 export function formatMediaUrl(mediaPath?: string, projectId?: string): string {
   return formatAssetUrl(mediaPath, projectId);
 }
 
-// Friendly profile name map
 const KNOWN_PROFILES: Record<string, string> = {
   profile_71b66ea2: 'AI Automation',
   profile_b75159bb: 'Heidi Mason',
@@ -30,11 +28,12 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
   onRetry,
 }) => {
   const [imgError, setImgError] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const slotNumber = `#${String(slot.slotIndex + 1).padStart(2, '0')}`;
   const thumbUrl = formatMediaUrl(slot.result?.thumbnailPath || slot.result?.mediaPath, slot.projectId);
   const isVideo = slot.type === 'video';
 
-  // Compute CSS aspect ratio from slot result or project settings
+  // Compute strict CSS aspect ratio
   const rawRatio = slot.result?.ratioUsed || aspectRatio || '16:9';
   const cssAspectRatio = rawRatio.includes('9:16') || rawRatio.includes('9_16')
     ? '9 / 16'
@@ -44,7 +43,6 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
     ? '4 / 3'
     : '16 / 9';
 
-  // Human-readable status mapping
   const getStatusBadge = () => {
     switch (slot.status) {
       case 'completed':
@@ -73,18 +71,36 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
     : null;
 
   return (
-    <div className="prompt-slot-card" data-testid={`prompt-slot-card-${slot.slotIndex}`}>
-      {/* Top row: slot number, type badge, status */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <div
+      className="prompt-slot-card"
+      data-testid={`prompt-slot-card-${slot.slotIndex}`}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      style={{
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+        backgroundColor: 'var(--bg-card)',
+        border: '1px solid var(--border-color)',
+        borderRadius: 'var(--radius-lg)',
+        padding: '12px',
+        boxShadow: isHovered ? '0 8px 24px rgba(0, 0, 0, 0.45), 0 0 16px rgba(99, 102, 241, 0.15)' : 'var(--shadow-sm)',
+        borderColor: isHovered ? 'rgba(99, 102, 241, 0.35)' : 'var(--border-color)',
+        transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+      }}
+    >
+      {/* Top row: minimalist slot # + model badge + status */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 2px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontWeight: 700, fontSize: '13px', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
+          <span style={{ fontWeight: 700, fontSize: '12.5px', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
             {slotNumber}
           </span>
           <span
             style={{
               fontSize: '11px',
-              padding: '1.5px 7px',
-              borderRadius: 'var(--radius-sm)',
+              padding: '1px 6px',
+              borderRadius: '4px',
               backgroundColor: isVideo ? 'var(--info-video-bg)' : 'var(--info-image-bg)',
               color: isVideo ? 'var(--info-video)' : 'var(--info-image)',
               border: `1px solid ${isVideo ? 'var(--info-video-border)' : 'var(--info-image-border)'}`,
@@ -97,11 +113,11 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
             <span
               style={{
                 fontSize: '11px',
-                padding: '1.5px 7px',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: 'var(--bg-subtle)',
+                padding: '1px 7px',
+                borderRadius: '4px',
+                backgroundColor: 'rgba(255, 255, 255, 0.04)',
                 color: 'var(--text-secondary)',
-                border: '1px solid var(--border-color)',
+                border: '1px solid var(--border-subtle)',
                 fontWeight: 500,
               }}
             >
@@ -112,13 +128,13 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
         {getStatusBadge()}
       </div>
 
-      {/* Media Thumbnail Container with strict project aspect-ratio */}
+      {/* Media Visual Hero Container (70-80% visual presence) */}
       <div
         style={{
           width: '100%',
           aspectRatio: cssAspectRatio,
-          backgroundColor: '#0b0f19',
-          borderRadius: 'var(--radius-sm)',
+          backgroundColor: '#070a10',
+          borderRadius: 'var(--radius-md)',
           border: '1px solid var(--border-color)',
           display: 'flex',
           alignItems: 'center',
@@ -132,79 +148,129 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
             onPreviewMedia(slot);
           }
         }}
-        title={slot.status === 'completed' ? 'Click to open full preview' : undefined}
+        title={slot.status === 'completed' ? 'Click to open full media preview' : undefined}
       >
         {slot.status === 'completed' && thumbUrl && !imgError ? (
           <>
-            {isVideo ? (
-              <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <img
-                  src={thumbUrl}
-                  alt={`Slot ${slotNumber}: ${slot.promptText}`}
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover',
-                    display: 'block',
-                  }}
-                  onError={() => setImgError(true)}
-                />
-                <div
-                  style={{
-                    position: 'absolute',
-                    backgroundColor: 'rgba(15, 23, 42, 0.7)',
-                    borderRadius: '50%',
-                    width: '36px',
-                    height: '36px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: '#ffffff',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-                    pointerEvents: 'none',
-                  }}
-                >
-                  <PlayIcon size={18} />
-                </div>
-                {slot.result?.durationFormatted && (
-                  <div
-                    className="duration-badge"
-                    style={{
-                      position: 'absolute',
-                      bottom: '8px',
-                      right: '8px',
-                      backgroundColor: 'rgba(0, 0, 0, 0.75)',
-                      color: '#ffffff',
-                      fontSize: '11px',
-                      fontWeight: 600,
-                      padding: '2px 6px',
-                      borderRadius: '4px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      zIndex: 2,
-                      pointerEvents: 'none',
-                    }}
-                  >
-                    <span>▶</span> {slot.result.durationFormatted}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <img
-                src={thumbUrl}
-                alt={`Slot ${slotNumber}: ${slot.promptText}`}
+            <img
+              src={thumbUrl}
+              alt={`Slot ${slotNumber}: ${slot.promptText}`}
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                display: 'block',
+                transform: isHovered ? 'scale(1.02)' : 'scale(1)',
+                transition: 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+              }}
+              onError={() => setImgError(true)}
+            />
+
+            {/* Video Play Overlay */}
+            {isVideo && (
+              <div
                 style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover',
-                  display: 'block',
-                  transition: 'transform 0.2s ease',
+                  position: 'absolute',
+                  backgroundColor: 'rgba(10, 14, 24, 0.75)',
+                  borderRadius: '50%',
+                  width: '40px',
+                  height: '40px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#ffffff',
+                  boxShadow: '0 4px 14px rgba(0, 0, 0, 0.5)',
+                  backdropFilter: 'blur(4px)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  pointerEvents: 'none',
                 }}
-                loading="lazy"
-                onError={() => setImgError(true)}
-              />
+              >
+                <PlayIcon size={18} />
+              </div>
             )}
+
+            {/* Video Duration Badge */}
+            {isVideo && slot.result?.durationFormatted && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: '8px',
+                  right: '8px',
+                  backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                  color: '#ffffff',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  padding: '2px 7px',
+                  borderRadius: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  backdropFilter: 'blur(4px)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  zIndex: 2,
+                  pointerEvents: 'none',
+                }}
+              >
+                <span>▶</span> {slot.result.durationFormatted}
+              </div>
+            )}
+
+            {/* Media Hover Action Strip (Reveal in Explorer & View) */}
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                backgroundColor: 'rgba(9, 12, 19, 0.55)',
+                backdropFilter: 'blur(2px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px',
+                opacity: isHovered ? 1 : 0,
+                transition: 'opacity 0.18s ease',
+                pointerEvents: isHovered ? 'auto' : 'none',
+                zIndex: 5,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {slot.result?.mediaPath && (
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.flowApi?.revealAsset && slot.result?.mediaPath) {
+                      window.flowApi.revealAsset(slot.result.mediaPath);
+                    }
+                  }}
+                  style={{
+                    backgroundColor: 'rgba(18, 24, 38, 0.88)',
+                    borderColor: 'rgba(255, 255, 255, 0.25)',
+                    color: '#ffffff',
+                    boxShadow: '0 2px 10px rgba(0,0,0,0.5)',
+                  }}
+                  title="Reveal file in Windows Explorer"
+                >
+                  <FolderIcon size={13} />
+                  Reveal
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn-primary btn-sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPreviewMedia(slot);
+                }}
+                style={{
+                  boxShadow: '0 2px 10px rgba(99, 102, 241, 0.5)',
+                }}
+                title="Open full media viewer"
+              >
+                <EyeIcon size={13} />
+                View
+              </button>
+            </div>
           </>
         ) : slot.status === 'running' ? (
           <div
@@ -213,120 +279,127 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
-              gap: '8px',
+              gap: '10px',
               color: 'var(--primary)',
             }}
           >
             <div
               style={{
-                width: '22px',
-                height: '22px',
+                width: '26px',
+                height: '26px',
                 border: '2.5px solid var(--primary-border)',
                 borderTopColor: 'var(--primary)',
                 borderRadius: '50%',
                 animation: 'spin 0.8s linear infinite',
               }}
             />
-            <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-inverse)' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
               Generating...
             </span>
           </div>
         ) : slot.status === 'failed' ? (
-          <div style={{ textAlign: 'center', padding: '12px', color: 'var(--text-inverse)' }}>
-            <span style={{ fontSize: '11px', color: '#fca5a5', display: 'block', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div style={{ textAlign: 'center', padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <AlertCircleIcon size={22} style={{ color: 'var(--danger)' }} />
+            <span style={{ fontSize: '11.5px', color: '#fca5a5', maxWidth: '240px', lineHeight: 1.4 }}>
               {slot.error?.message ?? 'Generation failed'}
             </span>
+            {onRetry && (
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRetry(slot);
+                }}
+                style={{
+                  marginTop: '4px',
+                  backgroundColor: 'var(--danger-bg)',
+                  borderColor: 'var(--danger-border)',
+                  color: '#fb7185',
+                }}
+              >
+                <RefreshIcon size={12} />
+                Retry Slot
+              </button>
+            )}
           </div>
         ) : imgError ? (
           <div style={{ textAlign: 'center', padding: '12px', color: '#94a3b8' }}>
             <span style={{ fontSize: '11px' }}>Asset preview unavailable</span>
           </div>
         ) : (
-          <span style={{ fontSize: '12px', color: '#64748b' }}>Waiting in queue</span>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Waiting in queue</span>
         )}
       </div>
 
-      {/* Prompt preview snippet with clamp and click-to-view */}
+      {/* Prompt snippet with clean typography */}
       <div
         className="prompt-clamp"
         onClick={() => onViewPrompt(slot)}
-        title="Click to view full prompt"
+        title="Click to view full prompt text"
         style={{
           fontSize: '12.5px',
-          color: 'var(--text-primary)',
+          color: isHovered ? 'var(--text-primary)' : 'var(--text-secondary)',
           lineHeight: '1.45',
           cursor: 'pointer',
-          minHeight: '36px',
+          minHeight: '34px',
+          transition: 'color 0.15s ease',
+          padding: '0 2px',
         }}
       >
         {slot.promptText}
       </div>
 
-      {/* Bottom row: Worker profile and Actions */}
+      {/* Footer bar: profile and metadata pills */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          borderTop: '1px solid var(--border-color)',
-          paddingTop: '10px',
+          borderTop: '1px solid var(--border-subtle)',
+          paddingTop: '8px',
           marginTop: 'auto',
+          fontSize: '11.5px',
+          color: 'var(--text-muted)',
+          padding: '8px 2px 0 2px',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {profileName}
           </span>
           {slot.result?.resolution && (
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-              · {slot.result.resolution}
-            </span>
+            <span>· {slot.result.resolution}</span>
           )}
           {fileSizeLabel && (
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-              · {fileSizeLabel}
-            </span>
+            <span>· {fileSizeLabel}</span>
           )}
         </div>
 
         <div style={{ display: 'flex', gap: '6px' }}>
-          {slot.status === 'completed' && slot.result?.mediaPath && (
+          {slot.status === 'failed' && onRetry && (
             <button
               className="btn-secondary btn-sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (window.flowApi?.revealAsset && slot.result?.mediaPath) {
-                  window.flowApi.revealAsset(slot.result.mediaPath);
-                }
-              }}
-              title="Reveal file in Windows Explorer"
+              onClick={() => onRetry(slot)}
+              style={{ padding: '3px 8px', fontSize: '11px' }}
+              title="Retry generation"
             >
-              <FolderIcon size={12} />
-              Reveal
-            </button>
-          )}
-
-          {slot.status === 'failed' && onRetry && (
-            <button className="btn-secondary btn-sm" onClick={() => onRetry(slot)} title="Retry generation">
-              <RefreshIcon size={12} />
+              <RefreshIcon size={11} />
               Retry
             </button>
           )}
 
-          <button
-            className="btn-secondary btn-sm"
-            onClick={() => {
-              if (slot.status === 'completed') {
-                onPreviewMedia(slot);
-              } else {
-                onViewPrompt(slot);
-              }
-            }}
-            title={slot.status === 'completed' ? 'Open media preview' : 'View full prompt'}
-          >
-            <EyeIcon size={12} />
-            View
-          </button>
+          {slot.status !== 'completed' && (
+            <button
+              className="btn-secondary btn-sm"
+              onClick={() => onViewPrompt(slot)}
+              style={{ padding: '3px 8px', fontSize: '11px' }}
+              title="View full prompt"
+            >
+              <EyeIcon size={11} />
+              View
+            </button>
+          )}
         </div>
       </div>
     </div>

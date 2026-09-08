@@ -9,6 +9,7 @@ import { PromptSlotCard } from '../components/PromptSlotCard';
 import { FullPromptModal } from '../components/FullPromptModal';
 import { MediaPreviewModal } from '../components/MediaPreviewModal';
 import { PlayIcon, RefreshIcon } from '../components/Icons';
+import { SegmentedControl } from '../components/SegmentedControl';
 import { formatAssetUrl } from '../utils/assetUrl';
 
 interface WorkspaceScreenProps {
@@ -28,7 +29,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
   const [selectedSlotForPrompt, setSelectedSlotForPrompt] = useState<PromptSlotEntity | null>(null);
   const [selectedSlotForMedia, setSelectedSlotForMedia] = useState<PromptSlotEntity | null>(null);
 
-  // Tab filter: 'all' | 'images' | 'videos'
+  // Filter: 'all' | 'images' | 'videos'
   const [typeFilter, setTypeFilter] = useState<'all' | 'images' | 'videos'>('all');
 
   // Load project initially
@@ -38,7 +39,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
       setLoading(true);
       const data = await window.flowApi.getProject(projectId);
       if (data) {
-        // Enforce strict invariant: ensure slots are ordered by slotIndex
+        // Strict invariant: slots are ordered by slotIndex
         data.slots.sort((a, b) => a.slotIndex - b.slotIndex);
         setProject(data);
       } else {
@@ -59,7 +60,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
   useEffect(() => {
     if (!window.flowApi) return;
 
-    // Surgical slot update
     const unsubSlot = window.flowApi.onSlotUpdated((event: SlotUpdatedEvent) => {
       if (event.projectId !== projectId) return;
 
@@ -96,7 +96,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
       });
     });
 
-    // Surgical progress update
     const unsubProgress = window.flowApi.onJobProgress((event: JobProgressEvent) => {
       if (event.projectId !== projectId) return;
 
@@ -122,7 +121,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
     };
   }, [projectId]);
 
-  // Separate image vs video slots, STRICTLY ORDERED by slotIndex
+  // Separate image vs video slots, strictly ordered by slotIndex
   const { imageSlots, videoSlots } = useMemo(() => {
     if (!project) return { imageSlots: [], videoSlots: [] };
     const sorted = [...project.slots].sort((a, b) => a.slotIndex - b.slotIndex);
@@ -181,35 +180,35 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
   const hasIncomplete = project.slots.some((s) => s.status === 'draft' || s.status === 'failed');
 
   return (
-    <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', height: '100%', overflowY: 'auto' }}>
-      {/* Top Header Bar */}
+    <div style={{ padding: '24px 36px', display: 'flex', flexDirection: 'column', gap: '22px', height: '100%', overflowY: 'auto' }}>
+      {/* Top Header Bar (De-boxed & Minimalist) */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <button className="btn-secondary btn-sm" onClick={onBackToProjects}>
+          <button className="btn-secondary btn-sm" onClick={onBackToProjects} title="Back to Projects">
             &larr; Projects
           </button>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <h1>{project.name}</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <h1 style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em' }}>{project.name}</h1>
               <span className={`badge badge-${project.status === 'completed' ? 'completed' : project.status === 'running' ? 'running' : 'draft'}`}>
                 {project.status}
               </span>
             </div>
-            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-              {project.stats.totalImages > 0 && `${project.stats.totalImages} Images`}
-              {project.stats.totalImages > 0 && project.stats.totalVideos > 0 && ' · '}
-              {project.stats.totalVideos > 0 && `${project.stats.totalVideos} Videos`}
-              {project.settings.videoModel && ` · ${project.settings.videoModel}`}
-              {project.settings.generationMode && ` · ${project.settings.generationMode.replace('_', ' ')}`}
-              {` · Ratio: ${project.settings.videoRatio || project.settings.imageRatio}`}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+              {project.stats.totalImages > 0 && <span>{project.stats.totalImages} Images</span>}
+              {project.stats.totalImages > 0 && project.stats.totalVideos > 0 && <span>·</span>}
+              {project.stats.totalVideos > 0 && <span>{project.stats.totalVideos} Videos</span>}
+              {project.settings.videoModel && <span>· {project.settings.videoModel}</span>}
+              {project.settings.generationMode && <span>· {project.settings.generationMode.replace('_', ' ')}</span>}
+              <span>· {project.settings.videoRatio || project.settings.imageRatio}</span>
             </div>
           </div>
         </div>
 
         {/* Global Action Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           {hasIncomplete && (
-            <button className="btn-primary" onClick={handleStartOrResume}>
+            <button className="btn-primary" onClick={handleStartOrResume} style={{ padding: '8px 16px', fontWeight: 600 }}>
               <PlayIcon size={14} />
               Resume Generation
             </button>
@@ -220,20 +219,20 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
         </div>
       </div>
 
-      {/* Progress Summary Bar */}
+      {/* Progress Summary Bar (Unboxed & Sleek) */}
       <div
         style={{
           backgroundColor: 'var(--bg-surface)',
           border: '1px solid var(--border-color)',
           borderRadius: 'var(--radius-md)',
-          padding: '12px 16px',
+          padding: '12px 18px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: '20px',
         }}
       >
-        <div style={{ display: 'flex', gap: '16px', fontSize: '13px' }}>
+        <div style={{ display: 'flex', gap: '20px', fontSize: '13px' }}>
           <span>Total: <strong>{totalSlots}</strong></span>
           <span>Completed: <strong style={{ color: 'var(--success)' }}>{completedSlots}</strong></span>
           {project.stats.failedCount > 0 && (
@@ -242,7 +241,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: '240px' }}>
-          <div style={{ flex: 1, height: '8px', backgroundColor: 'var(--bg-subtle)', borderRadius: '4px', overflow: 'hidden' }}>
+          <div style={{ flex: 1, height: '7px', backgroundColor: 'var(--bg-subtle)', borderRadius: '4px', overflow: 'hidden' }}>
             <div
               style={{
                 width: `${progressPercent}%`,
@@ -252,43 +251,37 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
               }}
             />
           </div>
-          <span style={{ fontSize: '12px', fontWeight: 600 }}>{progressPercent}%</span>
+          <span style={{ fontSize: '12px', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{progressPercent}%</span>
         </div>
       </div>
 
-      {/* Tabs / Filter Controls */}
+      {/* Filter Segmented Control */}
       {imageSlots.length > 0 && videoSlots.length > 0 && (
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button
-            className={typeFilter === 'all' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
-            onClick={() => setTypeFilter('all')}
-          >
-            All Prompts ({totalSlots})
-          </button>
-          <button
-            className={typeFilter === 'images' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
-            onClick={() => setTypeFilter('images')}
-          >
-            Image Prompts ({imageSlots.length})
-          </button>
-          <button
-            className={typeFilter === 'videos' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
-            onClick={() => setTypeFilter('videos')}
-          >
-            Video Prompts ({videoSlots.length})
-          </button>
+        <div>
+          <SegmentedControl<'all' | 'images' | 'videos'>
+            options={[
+              { value: 'all', label: `All Prompts (${totalSlots})` },
+              { value: 'images', label: `Images (${imageSlots.length})` },
+              { value: 'videos', label: `Videos (${videoSlots.length})` },
+            ]}
+            value={typeFilter}
+            onChange={(val) => setTypeFilter(val)}
+            size="sm"
+          />
         </div>
       )}
 
       {/* IMAGE PROMPTS SECTION */}
       {(typeFilter === 'all' || typeFilter === 'images') && imageSlots.length > 0 && (
-        <div>
-          <h2 style={{ fontSize: '15px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            IMAGE PROMPTS
-            <span style={{ fontSize: '12px', fontWeight: 'normal', color: 'var(--text-muted)' }}>
-              ({imageSlots.length} slots)
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h2 style={{ fontSize: '14px', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+              Image Prompts
+            </h2>
+            <span style={{ fontSize: '11px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', backgroundColor: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>
+              {imageSlots.length} slots
             </span>
-          </h2>
+          </div>
           <div className="workspace-grid">
             {imageSlots.map((slot) => (
               <PromptSlotCard
@@ -306,13 +299,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
 
       {/* VIDEO PROMPTS SECTION */}
       {(typeFilter === 'all' || typeFilter === 'videos') && videoSlots.length > 0 && (
-        <div style={{ marginTop: '12px' }}>
-          <h2 style={{ fontSize: '15px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            VIDEO PROMPTS
-            <span style={{ fontSize: '12px', fontWeight: 'normal', color: 'var(--text-muted)' }}>
-              ({videoSlots.length} slots)
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h2 style={{ fontSize: '14px', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+              Video Prompts
+            </h2>
+            <span style={{ fontSize: '11px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', backgroundColor: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>
+              {videoSlots.length} slots
             </span>
-          </h2>
+          </div>
           <div className="workspace-grid">
             {videoSlots.map((slot) => (
               <PromptSlotCard
@@ -328,7 +323,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
         </div>
       )}
 
-      {/* Full Prompt Inspection Modal */}
+      {/* Full Prompt Modal */}
       {selectedSlotForPrompt && (
         <FullPromptModal
           isOpen={selectedSlotForPrompt !== null}
