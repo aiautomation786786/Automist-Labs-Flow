@@ -129,7 +129,7 @@ describe('WorkerPool', () => {
     expect(pool.getWorker('profile_unknown')).toBeNull();
   });
 
-  it('getAvailableWorker should return next idle and ready worker in FIFO order', () => {
+  it('getAvailableWorker should return an idle/ready worker (randomized selection)', () => {
     const pool = new WorkerPool();
     const s1 = new ProfileSession(createMockProfileConfig('profile_a'));
     const s2 = new ProfileSession(createMockProfileConfig('profile_b'));
@@ -144,10 +144,11 @@ describe('WorkerPool', () => {
     pool.registerWorker(w1);
     pool.registerWorker(w2);
 
-    // Both free -> returns first (w1)
-    expect(pool.getAvailableWorker()).toBe(w1);
+    // Both free -> returns one of them (randomized, not necessarily w1)
+    const firstPick = pool.getAvailableWorker();
+    expect(firstPick === w1 || firstPick === w2).toBe(true);
 
-    // Assign job to w1 -> returns w2
+    // Assign job to w1 -> only w2 is available
     w1.assignJob(createMockJob('job_1'));
     expect(pool.getAvailableWorker()).toBe(w2);
     expect(pool.busyCount).toBe(1);
@@ -157,7 +158,7 @@ describe('WorkerPool', () => {
     expect(pool.getAvailableWorker()).toBeNull();
     expect(pool.busyCount).toBe(2);
 
-    // Release w1 -> returns w1 again
+    // Release w1 -> returns w1 (only available one)
     w1.release();
     expect(pool.getAvailableWorker()).toBe(w1);
     expect(pool.busyCount).toBe(1);

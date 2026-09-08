@@ -190,7 +190,7 @@ describe('GenerationStudioScreen', () => {
           { text: 'First video scene', type: 'video' },
           { text: 'Second video scene with steam', type: 'video' },
         ],
-        selectedProfileIds: expect.arrayContaining(['prof_1', 'prof_2']),
+        // No selectedProfileIds — automatic worker dispatch
       })
     );
 

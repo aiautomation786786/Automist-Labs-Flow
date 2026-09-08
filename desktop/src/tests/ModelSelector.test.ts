@@ -205,5 +205,89 @@ describe('ModelSelector', () => {
       expect(result.error).toContain('is not a supported image model');
     });
   });
-});
 
+  describe('exact model name matching (disambiguation)', () => {
+    it('should NOT treat "Nano Banana 2 Lite" as already matching "Nano Banana 2" target', async () => {
+      // This is the CRITICAL bug fix test:
+      // The old code used .includes() which caused "Nano Banana 2 Lite" to match "Nano Banana 2"
+      const fakePage = {
+        // Simulate: current model is "Nano Banana 2 Lite" but we want "Nano Banana 2"
+        evaluate: vi.fn(async () => 'Nano Banana 2 Lite'),
+        locator: vi.fn(() => ({
+          first: () => ({
+            isVisible: vi.fn(async () => false),
+          }),
+        })),
+        keyboard: { press: vi.fn() },
+      } as unknown as import('playwright').Page;
+
+      const result = await ModelSelector.ensureImageModel(fakePage, { modelName: 'Nano Banana 2' });
+
+      // Must NOT return verified=true with selectionAttempted=false
+      // (the old code would short-circuit and say "already active")
+      expect(result.selectionAttempted).toBe(false); // no dropdown found (mock)
+      expect(result.verified).toBe(false); // not verified because dropdown not found
+      // The key assertion: it did NOT short-circuit claiming "already active"
+      // If it had, selectionAttempted would be false AND verified would be true - that's the bug
+      expect(!(result.selectionAttempted === false && result.verified === true)).toBe(true);
+    });
+
+    it('should NOT treat "Nano Banana Pro" as already matching "Nano Banana 2" target', async () => {
+      const fakePage = {
+        evaluate: vi.fn(async () => 'Nano Banana Pro'),
+        locator: vi.fn(() => ({
+          first: () => ({
+            isVisible: vi.fn(async () => false),
+          }),
+        })),
+        keyboard: { press: vi.fn() },
+      } as unknown as import('playwright').Page;
+
+      const result = await ModelSelector.ensureImageModel(fakePage, { modelName: 'Nano Banana 2' });
+      // Must attempt selection (not short-circuit)
+      expect(result.verified).toBe(false);
+    });
+
+    it('should treat "🍌 Nano Banana 2 arrow_drop_down" as exact match for "Nano Banana 2"', async () => {
+      // The composite pill button text includes emoji and Material icon text
+      const fakePage = {
+        evaluate: vi.fn(async () => '🍌 Nano Banana 2 arrow_drop_down'),
+        locator: vi.fn(),
+      } as unknown as import('playwright').Page;
+
+      const result = await ModelSelector.ensureNanoBanana2(fakePage);
+      // After normalization, this should match and short-circuit as verified
+      expect(result.selectionAttempted).toBe(false);
+      expect(result.verified).toBe(true);
+    });
+
+    it('should NOT treat "🍌 Nano Banana 2 Lite arrow_drop_down" as match for "Nano Banana 2"', async () => {
+      const fakePage = {
+        evaluate: vi.fn(async () => '🍌 Nano Banana 2 Lite arrow_drop_down'),
+        locator: vi.fn(() => ({
+          first: () => ({
+            isVisible: vi.fn(async () => false),
+          }),
+        })),
+        keyboard: { press: vi.fn() },
+      } as unknown as import('playwright').Page;
+
+      const result = await ModelSelector.ensureNanoBanana2(fakePage);
+      // Nano Banana 2 Lite must NOT match Nano Banana 2 target
+      expect(result.verified).toBe(false);
+      // Should not short-circuit with verified=true
+      expect(result.selectionAttempted === false && result.verified === true).toBe(false);
+    });
+
+    it('should correctly identify "Nano Banana 2 Lite" as already active when requesting "Nano Banana 2 Lite"', async () => {
+      const fakePage = {
+        evaluate: vi.fn(async () => 'Nano Banana 2 Lite'),
+        locator: vi.fn(),
+      } as unknown as import('playwright').Page;
+
+      const result = await ModelSelector.ensureImageModel(fakePage, { modelName: 'Nano Banana 2 Lite' });
+      expect(result.selectionAttempted).toBe(false);
+      expect(result.verified).toBe(true);
+    });
+  });
+});
