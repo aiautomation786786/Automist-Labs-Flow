@@ -84,17 +84,33 @@ async function createWindow(): Promise<void> {
 }
 
 function registerAssetProtocol(): void {
-  // Protocol: flow-asset://project/{projectId}/{subPath}
+  // Protocol: flow-asset://project/{projectId}/{subPath} or flow-asset://{projectId}/{subPath}
   // Maps to: %LOCALAPPDATA%\GoogleFlowApp\projects\{projectId}\{subPath}
   protocol.handle('flow-asset', (request) => {
     try {
       const url = new URL(request.url);
-      const relativePath = decodeURIComponent(url.pathname.replace(/^\//, ''));
       const projectsRoot = path.resolve(AssetManager.getProjectsRootDir());
-      const targetFilePath = path.resolve(path.join(projectsRoot, relativePath));
+      let targetFilePath: string;
+
+      if (url.host === 'project') {
+        const relativePath = decodeURIComponent(url.pathname.replace(/^\//, ''));
+        targetFilePath = path.resolve(path.join(projectsRoot, relativePath));
+      } else if (url.host && url.host !== 'localhost' && !/^[a-zA-Z]$/.test(url.host)) {
+        // host is projectId (e.g. flow-asset://proj_b121fc951973/images/img.jpg)
+        const relativePath = path.join(decodeURIComponent(url.host), decodeURIComponent(url.pathname.replace(/^\//, '')));
+        targetFilePath = path.resolve(path.join(projectsRoot, relativePath));
+      } else if (/^[a-zA-Z]$/.test(url.host)) {
+        // drive letter on Windows (e.g. flow-asset://C:/appdata/...)
+        const full = decodeURIComponent(url.host + ':' + url.pathname);
+        targetFilePath = path.resolve(full);
+      } else {
+        const relativePath = decodeURIComponent(url.pathname.replace(/^\//, ''));
+        targetFilePath = path.resolve(path.join(projectsRoot, relativePath));
+      }
 
       // Security check: strictly enforce path containment
       if (!targetFilePath.startsWith(projectsRoot) || !fs.existsSync(targetFilePath)) {
+        logger.warn('main', `flow-asset 404: ${targetFilePath} not found or outside ${projectsRoot}`);
         return new Response('Not Found or Access Denied', { status: 404 });
       }
 

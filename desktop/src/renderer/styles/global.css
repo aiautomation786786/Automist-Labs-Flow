@@ -283,3 +283,60 @@ button:disabled {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* ==========================================================================
+   Workspace Grid & Slot Card Polish
+   ========================================================================== */
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+@media (min-width: 720px) {
+  .workspace-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1160px) {
+  .workspace-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.prompt-slot-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.prompt-slot-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.07);
+}
+
+@keyframes skeletonPulse {
+  0% { opacity: 0.55; }
+  50% { opacity: 0.95; }
+  100% { opacity: 0.55; }
+}
+
+.skeleton-pulse {
+  animation: skeletonPulse 1.6s ease-in-out infinite;
+}
+
+.prompt-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

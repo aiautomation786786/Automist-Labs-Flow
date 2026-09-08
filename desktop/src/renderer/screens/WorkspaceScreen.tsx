@@ -9,6 +9,7 @@ import { PromptSlotCard } from '../components/PromptSlotCard';
 import { FullPromptModal } from '../components/FullPromptModal';
 import { MediaPreviewModal } from '../components/MediaPreviewModal';
 import { PlayIcon, RefreshIcon } from '../components/Icons';
+import { formatAssetUrl } from '../utils/assetUrl';
 
 interface WorkspaceScreenProps {
   projectId: string;
@@ -279,17 +280,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
               ({imageSlots.length} slots)
             </span>
           </h2>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-              gap: '14px',
-            }}
-          >
+          <div className="workspace-grid">
             {imageSlots.map((slot) => (
               <PromptSlotCard
                 key={slot.promptId}
                 slot={slot}
+                aspectRatio={project.settings.imageRatio}
                 onViewPrompt={(s) => setSelectedSlotForPrompt(s)}
                 onPreviewMedia={(s) => setSelectedSlotForMedia(s)}
                 onRetry={(s) => handleRetrySlot(s)}
@@ -308,17 +304,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
               ({videoSlots.length} slots)
             </span>
           </h2>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-              gap: '14px',
-            }}
-          >
+          <div className="workspace-grid">
             {videoSlots.map((slot) => (
               <PromptSlotCard
                 key={slot.promptId}
                 slot={slot}
+                aspectRatio={project.settings.imageRatio}
                 onViewPrompt={(s) => setSelectedSlotForPrompt(s)}
                 onPreviewMedia={(s) => setSelectedSlotForMedia(s)}
                 onRetry={(s) => handleRetrySlot(s)}
@@ -344,8 +335,16 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
         <MediaPreviewModal
           isOpen={selectedSlotForMedia !== null}
           type={selectedSlotForMedia.type}
-          mediaUrl={selectedSlotForMedia.result?.mediaPath ?? ''}
-          title={`Slot #${String(selectedSlotForMedia.slotIndex + 1).padStart(2, '0')} (${selectedSlotForMedia.type === 'video' ? 'Video' : 'Image'})`}
+          mediaUrl={formatAssetUrl(selectedSlotForMedia.result?.mediaPath, selectedSlotForMedia.projectId)}
+          promptText={selectedSlotForMedia.promptText}
+          slotIndex={selectedSlotForMedia.slotIndex}
+          metadata={{
+            model: selectedSlotForMedia.result?.modelUsed,
+            ratio: selectedSlotForMedia.result?.ratioUsed || project.settings.imageRatio,
+            fileSize: selectedSlotForMedia.result?.fileSizeBytes,
+            profile: selectedSlotForMedia.assignedProfileId,
+          }}
+          title={`Slot #${String(selectedSlotForMedia.slotIndex + 1).padStart(2, '0')}`}
           onClose={() => setSelectedSlotForMedia(null)}
         />
       )}
