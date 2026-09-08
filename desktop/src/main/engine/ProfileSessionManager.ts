@@ -20,8 +20,7 @@ import type {
   ProfileSessionSnapshot,
   ProfileSessionStatus,
 } from '../../shared/types';
-import { ProfileSession, FLOW_BASE_URL, probeCdpPort } from './ProfileSession';
-import { FlowAuthDetector } from './FlowAuthDetector';
+import { ProfileSession, probeCdpPort } from './ProfileSession';
 import { ProfileConfigManager } from './ProfileConfig';
 import { ChromePortAllocator } from './ChromePortAllocator';
 import { WindowsChromeFinder } from './WindowsChromeFinder';
@@ -248,6 +247,12 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
     let session = this.sessions.get(profileId);
 
     if (session && session.status !== 'stopped' && session.status !== 'error') {
+      if (session.status === 'browser_open' || (session.isProcessAlive() && !session.getPage())) {
+        appLogger.info('session_manager', 'Connecting to existing running session', { profileId });
+        await session.connectToRunningBrowser();
+        await session.verifyAuth();
+        return;
+      }
       appLogger.warn('session_manager', 'Profile already running', {
         profileId,
         status: session.status,
@@ -272,9 +277,25 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       }
     }
 
+    // Check if Chrome is already active on the configured CDP port
+    let isPortActive = false;
+    try {
+      await probeCdpPort(config.cdpPort);
+      isPortActive = true;
+    } catch {
+      isPortActive = false;
+    }
+
     session = new ProfileSession(config);
     this.sessions.set(profileId, session);
     this.attachSessionEvents(session);
+
+    if (isPortActive) {
+      appLogger.info('session_manager', 'CDP port already active; attaching to running Chrome', { profileId, port: config.cdpPort });
+      await session.connectToRunningBrowser();
+      await session.verifyAuth();
+      return;
+    }
 
     appLogger.info('session_manager', 'Starting profile', { profileId, headless });
 
@@ -417,36 +438,58 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
   }
 
   /**
-   * Opens a visible Chrome window for manual user sign-in.
-   * If already running, navigates the page to the Flow base URL.
+   * Opens or activates Google Flow in the dedicated browser.
+   * If Chrome is already running, reconnects to it and brings Flow tab to front.
    */
   async openSignIn(profileId: string): Promise<ProfileSessionSnapshot> {
-    const session = this.sessions.get(profileId);
-    if (!session || session.status === 'stopped' || session.status === 'error') {
-      await this.startProfile(profileId, false);
+    const config = ProfileConfigManager.read(profileId);
+    let session = this.sessions.get(profileId);
+    if (!session) {
+      const existingPort = this.portAllocator.getPort(profileId);
+      if (!existingPort) {
+        this.portAllocator.setAllocation(profileId, config.cdpPort);
+      }
+      session = new ProfileSession(config);
+      this.sessions.set(profileId, session);
+      this.attachSessionEvents(session);
     }
-    const activeSession = this.sessions.get(profileId);
-    if (!activeSession) {
-      throw new Error(`Failed to initialize session for profile ${profileId}`);
-    }
-    const page = activeSession.getPage();
-    if (page) {
+
+    let isRunning = session.isProcessAlive();
+    if (!isRunning) {
       try {
-        const config = ProfileConfigManager.read(profileId);
-        const url = config.flowUrlLocale
-          ? `https://labs.google${config.flowUrlLocale}`
-          : FLOW_BASE_URL;
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+        await probeCdpPort(config.cdpPort);
+        isRunning = true;
       } catch {
-        /* ignore navigation errors during sign-in open */
+        isRunning = false;
       }
     }
-    return activeSession.getSnapshot();
+
+    if (isRunning) {
+      // Reconnect to existing browser and reuse/open Flow tab
+      const page = await session.connectToRunningBrowser();
+      await page.bringToFront().catch(() => {});
+      return session.getSnapshot();
+    }
+
+    // Otherwise do a full start
+    await session.start(false);
+    return session.getSnapshot();
   }
 
   /**
-   * Probes the current Google Flow authentication state using FlowAuthDetector.
-   * Updates detectedEmail and locale in profile.json if found.
+   * Activates or opens Google Flow for an account.
+   * Reconnects to running dedicated browser without spawning duplicate instances.
+   */
+  async openFlow(profileId: string): Promise<ProfileSessionSnapshot> {
+    return this.openSignIn(profileId);
+  }
+
+  /**
+   * Verifies the current Google Flow authentication state.
+   *
+   * Automatically reconnects to an already-running dedicated Chrome process
+   * (e.g. launched via launchLoginBrowser) over CDP, finds the active Flow tab,
+   * evaluates authentication via FlowAuthDetector, and updates status/metadata.
    */
   async verifyAccount(profileId: string): Promise<{
     success: boolean;
@@ -454,40 +497,90 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
     detectedEmail: string | null;
     error?: string;
   }> {
+    const config = ProfileConfigManager.read(profileId);
+
+    // 1. Get or instantiate session
     let session = this.sessions.get(profileId);
-    if (!session || session.status === 'stopped' || session.status === 'error') {
-      await this.startProfile(profileId, false);
-      session = this.sessions.get(profileId);
-    }
-
     if (!session) {
-      return { success: false, status: 'error', detectedEmail: null, error: 'Session failed to start' };
+      const existingPort = this.portAllocator.getPort(profileId);
+      if (!existingPort) {
+        this.portAllocator.setAllocation(profileId, config.cdpPort);
+      }
+      session = new ProfileSession(config);
+      this.sessions.set(profileId, session);
+      this.attachSessionEvents(session);
     }
 
-    const page = session.getPage();
-    if (!page) {
-      return { success: false, status: session.status, detectedEmail: null, error: 'Browser page unavailable' };
-    }
-
+    // 2. Check if Chrome process is alive or CDP port is responsive
+    const isPidAlive = session.isProcessAlive();
+    let isPortActive = false;
     try {
-      const config = ProfileConfigManager.read(profileId);
-      const url = config.flowUrlLocale ? `https://labs.google${config.flowUrlLocale}` : FLOW_BASE_URL;
-      const result = await FlowAuthDetector.navigateAndCheck(page, url, profileId);
+      await probeCdpPort(config.cdpPort);
+      isPortActive = true;
+    } catch {
+      isPortActive = false;
+    }
 
-      if (result.detectedEmail || result.locale) {
+    appLogger.info('session_manager', 'verifyAccount: Checking browser state', {
+      profileId,
+      pid: session.pid,
+      pidAlive: isPidAlive,
+      cdpPort: config.cdpPort,
+      cdpPortActive: isPortActive,
+      sessionStatus: session.status,
+    });
+
+    if (!isPidAlive && !isPortActive && session.status !== 'ready' && session.status !== 'connected' && session.status !== 'browser_open') {
+      return {
+        success: false,
+        status: session.status,
+        detectedEmail: null,
+        error: 'Dedicated Chrome is not running. Click "Open Login" to launch it.',
+      };
+    }
+
+    // 3. Connect to running browser & verify auth
+    try {
+      const authResult = await session.verifyAuth();
+
+      // Diagnostic logging (Requirement 7)
+      console.log(`[Diagnostic] PID alive: ${isPidAlive || isPortActive ? 'YES' : 'NO'} (PID: ${session.pid ?? 'attached'})`);
+      console.log(`[Diagnostic] CDP port: ${config.cdpPort}`);
+      console.log(`[Diagnostic] CDP endpoint: READY`);
+      console.log(`[Diagnostic] Playwright attached: YES`);
+      console.log(`[Diagnostic] Pages found: ${authResult.pagesCount}`);
+      console.log(`[Diagnostic] Flow page found: ${authResult.flowPageFound ? 'YES' : 'NO'}`);
+      console.log(`[Diagnostic] Flow URL: ${authResult.url}`);
+      console.log(`[Diagnostic] Auth state: ${authResult.state}`);
+      console.log(`[Diagnostic] Detected account: ${authResult.detectedEmail ?? 'none'}`);
+
+      appLogger.info('session_manager', 'verifyAccount: Diagnostic summary', {
+        pidAlive: isPidAlive || isPortActive,
+        cdpPort: config.cdpPort,
+        playwrightAttached: true,
+        pagesFound: authResult.pagesCount,
+        flowPageFound: authResult.flowPageFound,
+        flowUrl: authResult.url,
+        authState: authResult.state,
+        detectedEmail: authResult.detectedEmail,
+      });
+
+      // Update persistent metadata if email or locale discovered
+      if (authResult.detectedEmail || authResult.locale) {
         ProfileConfigManager.update(profileId, {
-          ...(result.detectedEmail ? { detectedEmail: result.detectedEmail } : {}),
-          ...(result.locale ? { flowUrlLocale: `/fx/${result.locale}/tools/flow` } : {}),
+          ...(authResult.detectedEmail ? { detectedEmail: authResult.detectedEmail } : {}),
+          ...(authResult.locale ? { flowUrlLocale: `/fx/${authResult.locale}/tools/flow` } : {}),
         });
       }
 
       return {
-        success: result.state === 'authenticated',
+        success: authResult.state === 'authenticated',
         status: session.status,
-        detectedEmail: result.detectedEmail ?? session.getSnapshot().detectedEmail,
-        error: result.state === 'login_required' ? 'User login required' : undefined,
+        detectedEmail: authResult.detectedEmail ?? session.getSnapshot().detectedEmail,
+        error: authResult.state === 'login_required' ? 'User sign-in required in Chrome window.' : undefined,
       };
     } catch (err) {
+      appLogger.error('session_manager', `verifyAccount failed for ${profileId}`, err as Error);
       return {
         success: false,
         status: session.status,

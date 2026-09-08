@@ -196,6 +196,16 @@ export class IpcHandlers {
       };
     });
 
+    ipcMain.handle('profiles:openFlow', async (_event, profileId: unknown) => {
+      if (typeof profileId !== 'string') throw new Error('Invalid profileId');
+      const snapshot = await sessionManager.openFlow(profileId);
+      return {
+        success: true,
+        message: `Google Flow is active for profile ${snapshot.displayName}.`,
+        snapshot,
+      };
+    });
+
     ipcMain.handle('profiles:launchLoginBrowser', async (_event, profileId: unknown) => {
       if (typeof profileId !== 'string') throw new Error('Invalid profileId');
       // Fast path: spawns Chrome visibly, returns when PID confirmed.

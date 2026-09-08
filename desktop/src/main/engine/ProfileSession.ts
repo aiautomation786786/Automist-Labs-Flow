@@ -25,6 +25,7 @@ import type {
   ProfileConfig,
   ProfileSessionStatus,
   ProfileSessionSnapshot,
+  FlowAuthCheckResult,
 } from '../../shared/types';
 import { AppLogger } from '../utils/AppLogger';
 import { FlowAuthDetector } from './FlowAuthDetector';
@@ -124,10 +125,24 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
 
   /** Starts the session: launches Chrome, connects Playwright, checks auth. */
   async start(headless = false): Promise<void> {
-    if (this._status !== 'created' && this._status !== 'stopped' && this._status !== 'error') {
+    if (
+      this._status !== 'created' &&
+      this._status !== 'stopped' &&
+      this._status !== 'error' &&
+      this._status !== 'browser_open'
+    ) {
       throw new Error(
         `Cannot start profile ${this.profileId}: current status is '${this._status}'.`
       );
+    }
+
+    // If browser process is already running (e.g. from launchLoginBrowser), attach without re-spawning
+    if (this._status === 'browser_open' || (this.chromeProcess && this.isProcessAlive())) {
+      this.log.info('session', 'Chrome is already running for profile; attaching Playwright and checking auth');
+      this.isExistingBrowser = false;
+      await this.connectToRunningBrowser();
+      await this.checkAuth();
+      return;
     }
 
     this.setStatus('starting');
@@ -342,6 +357,205 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
 
     return { pid, cdpPort, userDataDir };
   }
+
+  /** Returns true if the Chrome child process is currently known to be alive. */
+  isProcessAlive(): boolean {
+    if (!this.chromeProcess) return false;
+    return !this.chromeProcess.killed && this.chromeProcess.exitCode === null;
+  }
+
+  /**
+   * Connects Playwright over CDP to an already-running Chrome browser for this profile.
+   *
+   * Reuses the existing browser process (never re-spawns, never kills).
+   * Finds and reuses the existing Google Flow tab if open;
+   * otherwise creates one new tab and navigates to Google Flow.
+   *
+   * @param timeoutMs Max time to wait for CDP port to be responsive (default: 15000ms).
+   * @returns The active Flow Page.
+   */
+  async connectToRunningBrowser(timeoutMs = 15000): Promise<Page> {
+    const { cdpPort, flowUrlLocale } = this.config;
+
+    // 1. Check if known process is explicitly dead
+    if (this.chromeProcess && (this.chromeProcess.killed || this.chromeProcess.exitCode !== null)) {
+      throw new Error(`Dedicated Chrome process (PID ${this.chromeProcess.pid}) has exited.`);
+    }
+
+    // 2. Poll CDP endpoint until ready or timeout (polling every 300ms)
+    const startTime = Date.now();
+    let portReady = false;
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        await probeCdpPort(cdpPort);
+        portReady = true;
+        break;
+      } catch {
+        await delay(300);
+      }
+    }
+
+    if (!portReady) {
+      throw new Error(
+        `Dedicated Chrome is running, but its automation endpoint (port ${cdpPort}) is not available yet.`
+      );
+    }
+
+    // 3. Connect Playwright over CDP if not already connected
+    const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
+    if (!this.browser || !this.browser.isConnected()) {
+      this.setStatus('connecting');
+      this.log.info('reconnect', 'Connecting Playwright to running browser over CDP', { endpoint: cdpEndpoint });
+      try {
+        this.browser = await chromium.connectOverCDP(cdpEndpoint, { timeout: 15000 });
+      } catch (err) {
+        throw new Error(
+          `Failed to connect Playwright to running Chrome on port ${cdpPort}: ${(err as Error).message}`
+        );
+      }
+    }
+
+    const contexts = this.browser.contexts();
+    this.context = contexts[0] ?? await this.browser.newContext();
+
+    // 4. Inspect existing tabs/pages
+    const allPages = this.context.pages();
+    this.log.info('reconnect', `Inspect existing tabs: found ${allPages.length} tabs`);
+
+    // First priority: find a page already on Google Flow (labs.google or flow.google.com)
+    let flowPage: Page | null = null;
+    for (const p of allPages) {
+      try {
+        const url = p.url();
+        if (url.includes('labs.google') || url.includes('flow.google.com')) {
+          flowPage = p;
+          this.log.info('reconnect', `Found and reusing existing Flow tab: ${url}`);
+          await flowPage.bringToFront().catch(() => {});
+          break;
+        }
+      } catch {
+        /* page may be closing */
+      }
+    }
+
+    // Second priority: find an accounts.google.com sign-in tab if user is currently there
+    if (!flowPage) {
+      for (const p of allPages) {
+        try {
+          const url = p.url();
+          if (url.includes('accounts.google.com') || url.includes('google.com/signin')) {
+            flowPage = p;
+            this.log.info('reconnect', `Found and reusing Google sign-in tab: ${url}`);
+            await flowPage.bringToFront().catch(() => {});
+            break;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    // Third priority: if no Flow or sign-in tab, create one new tab and navigate to Flow
+    if (!flowPage) {
+      this.log.info('reconnect', 'No Flow tab found in running browser; creating new Flow tab');
+      flowPage = await this.context.newPage();
+      const targetUrl = flowUrlLocale
+        ? `https://labs.google${flowUrlLocale}`
+        : FLOW_BASE_URL;
+      await flowPage.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch((e) => {
+        this.log.warn('reconnect', `Navigation to Flow tab returned warning: ${(e as Error).message}`);
+      });
+    }
+
+    this.page = flowPage;
+    this.setStatus('connected');
+
+    return flowPage;
+  }
+
+  /**
+   * Reconnects to the running dedicated browser if needed, finds the Flow page,
+   * runs FlowAuthDetector, and updates session state and metadata.
+   */
+  async verifyAuth(): Promise<FlowAuthCheckResult & { pagesCount: number; flowPageFound: boolean }> {
+    // 1. Ensure connected to running browser
+    let page = this.page;
+    if (!page || page.isClosed() || !this.browser || !this.browser.isConnected()) {
+      page = await this.connectToRunningBrowser();
+    }
+
+    const pages = this.context ? this.context.pages() : [];
+    const pagesCount = pages.length;
+    const currentUrl = page.url();
+    const flowPageFound = currentUrl.includes('labs.google') || currentUrl.includes('flow.google.com');
+
+    this.log.info('auth_verify', 'Verifying Google Flow authentication state', {
+      url: currentUrl,
+      pagesCount,
+      flowPageFound,
+      pid: this.pid,
+      cdpPort: this.config.cdpPort,
+    });
+
+    // 2. If page is loading, poll briefly (up to 6 seconds) for Flow to finish initialising
+    let result = await FlowAuthDetector.check(page, this.profileId);
+    if (result.state === 'loading') {
+      const startPoll = Date.now();
+      while (Date.now() - startPoll < 6000) {
+        await delay(1000);
+        result = await FlowAuthDetector.check(page, this.profileId);
+        if (result.state !== 'loading') break;
+      }
+    }
+
+    // If page is on an unexpected URL (e.g. blank page), navigate to Flow
+    if (result.state === 'unknown' && !currentUrl.includes('labs.google') && !currentUrl.includes('accounts.google')) {
+      const targetUrl = this.config.flowUrlLocale
+        ? `https://labs.google${this.config.flowUrlLocale}`
+        : FLOW_BASE_URL;
+      this.log.info('auth_verify', 'Page not on Flow or Google login; navigating to Flow URL', { targetUrl });
+      result = await FlowAuthDetector.navigateAndCheck(page, targetUrl, this.profileId);
+    }
+
+    this.flowUrl = result.url;
+    this.detectedEmail = result.detectedEmail ?? this.detectedEmail;
+
+    // 3. Update status based on detected result
+    switch (result.state) {
+      case 'authenticated':
+        this.setStatus('ready');
+        this.emit('status_change', this.getSnapshot());
+        this.log.info('auth_verify', 'Flow authenticated and ready', {
+          email: this.detectedEmail,
+          locale: result.locale,
+        });
+        break;
+
+      case 'login_required':
+        this.setStatus('auth_required');
+        this.emit('status_change', this.getSnapshot());
+        this.log.info('auth_verify', 'Login required — user needs to sign in via Chrome');
+        break;
+
+      case 'captcha':
+        this.setStatus('auth_required');
+        this.log.warn('auth_verify', 'CAPTCHA detected on Flow page');
+        break;
+
+      case 'loading':
+      case 'unknown':
+        this.setStatus('auth_required');
+        this.log.warn('auth_verify', `Indeterminate auth state: ${result.state}`);
+        break;
+    }
+
+    return {
+      ...result,
+      pagesCount,
+      flowPageFound,
+    };
+  }
+
 
   /** Returns the current snapshot for this session. */
   getSnapshot(): ProfileSessionSnapshot {
@@ -598,9 +812,19 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
         totalTabs: this.context.pages().length,
       });
     } else {
-      // In dedicated application-managed browser mode, use the initial blank tab or open a new one
+      // In dedicated application-managed browser mode, reuse existing Flow tab if present
       const pages = this.context.pages();
-      this.page = pages[0] ?? await this.context.newPage();
+      let flowPage: Page | null = null;
+      for (const p of pages) {
+        try {
+          const url = p.url();
+          if (url.includes('labs.google') || url.includes('flow.google.com') || url.includes('accounts.google')) {
+            flowPage = p;
+            break;
+          }
+        } catch { /* ignore */ }
+      }
+      this.page = flowPage ?? pages[0] ?? await this.context.newPage();
     }
 
     this.setStatus('connected');

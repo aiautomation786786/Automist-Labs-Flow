@@ -54,6 +54,8 @@ const flowApi: FlowApi = {
     ipcRenderer.invoke('profiles:openChrome', profileId),
   openSignIn: (profileId: string): Promise<{ success: boolean; message: string }> =>
     ipcRenderer.invoke('profiles:openSignIn', profileId),
+  openFlow: (profileId: string): Promise<{ success: boolean; message: string; snapshot: ProfileSessionSnapshot }> =>
+    ipcRenderer.invoke('profiles:openFlow', profileId),
   launchLoginBrowser: (profileId: string): Promise<{ success: boolean; pid: number; cdpPort: number; userDataDir: string; message: string }> =>
     ipcRenderer.invoke('profiles:launchLoginBrowser', profileId),
   verifyAccount: (profileId: string): Promise<{ success: boolean; status: ProfileSessionStatus; detectedEmail: string | null; error?: string }> =>

@@ -57,28 +57,59 @@ vi.mock('child_process', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Mock http so probeCdpPort resolves successfully
+// ---------------------------------------------------------------------------
+
+vi.mock('http', () => ({
+  get: vi.fn().mockImplementation((_url: unknown, _opts: unknown, cb: unknown) => {
+    const res = {
+      statusCode: 200,
+      resume: vi.fn(),
+    };
+    if (typeof cb === 'function') (cb as (r: typeof res) => void)(res);
+    return {
+      on: vi.fn(),
+      destroy: vi.fn(),
+    };
+  }),
+}));
+
+// ---------------------------------------------------------------------------
 // Mock Playwright so we never try to connect to CDP
 // ---------------------------------------------------------------------------
 
+const { mockPage, mockContext, mockBrowser } = vi.hoisted(() => {
+  const mockPage = {
+    url: vi.fn().mockReturnValue('https://labs.google/fx/en/tools/flow'),
+    goto: vi.fn().mockResolvedValue(null),
+    bringToFront: vi.fn().mockResolvedValue(undefined),
+    isClosed: vi.fn().mockReturnValue(false),
+    close: vi.fn().mockResolvedValue(undefined),
+    evaluate: vi.fn().mockResolvedValue(true),
+    waitForLoadState: vi.fn().mockResolvedValue(undefined),
+    waitForTimeout: vi.fn().mockResolvedValue(undefined),
+    waitForSelector: vi.fn().mockResolvedValue(null),
+  };
+
+  const mockContext = {
+    pages: vi.fn().mockReturnValue([mockPage]),
+    newPage: vi.fn().mockResolvedValue(mockPage),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+
+  const mockBrowser = {
+    contexts: vi.fn().mockReturnValue([mockContext]),
+    newContext: vi.fn().mockResolvedValue(mockContext),
+    isConnected: vi.fn().mockReturnValue(true),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+
+  return { mockPage, mockContext, mockBrowser };
+});
+
 vi.mock('playwright', () => ({
   chromium: {
-    connectOverCDP: vi.fn().mockResolvedValue({
-      contexts: vi.fn().mockReturnValue([]),
-      newContext: vi.fn().mockResolvedValue({
-        pages: vi.fn().mockReturnValue([]),
-        newPage: vi.fn().mockResolvedValue({
-          url: vi.fn().mockReturnValue('about:blank'),
-          goto: vi.fn().mockResolvedValue(null),
-          isClosed: vi.fn().mockReturnValue(false),
-          close: vi.fn().mockResolvedValue(undefined),
-          evaluate: vi.fn().mockResolvedValue(null),
-          waitForLoadState: vi.fn().mockResolvedValue(undefined),
-          waitForSelector: vi.fn().mockResolvedValue(null),
-        }),
-        close: vi.fn().mockResolvedValue(undefined),
-      }),
-      close: vi.fn().mockResolvedValue(undefined),
-    }),
+    connectOverCDP: vi.fn().mockResolvedValue(mockBrowser),
   },
 }));
 
@@ -92,8 +123,9 @@ vi.mock('fs', async () => {
     ...actual,
     existsSync: vi.fn().mockImplementation((p: unknown) => {
       const pathStr = String(p);
-      // chrome.exe: pretend it exists
+      // chrome.exe and profile.json: pretend they exist
       if (pathStr.includes('chrome') && pathStr.endsWith('.exe')) return true;
+      if (pathStr.includes('profile.json')) return true;
       // userDataDir: pretend it doesn't exist so launchLoginBrowser creates it
       if (pathStr.includes('chrome-user-data')) return false;
       return actual.existsSync(pathStr);
@@ -133,6 +165,7 @@ vi.mock('fs', async () => {
 import { ProfileSession } from '../main/engine/ProfileSession';
 import { ChromePortAllocator } from '../main/engine/ChromePortAllocator';
 import { ProfileSessionManager } from '../main/engine/ProfileSessionManager';
+import { FlowAuthDetector } from '../main/engine/FlowAuthDetector';
 
 // Helper to create a minimal valid ProfileConfig
 function makeConfig(overrides: Partial<import('../../shared/types').ProfileConfig> = {}): import('../../shared/types').ProfileConfig {
@@ -292,4 +325,125 @@ describe('FlowAccountManager (Phase 5.5)', () => {
     expect(typeof result.userDataDir).toBe('string');
     expect(result.userDataDir.length).toBeGreaterThan(0);
   });
+
+  // ── Test 11 ─────────────────────────────────────────────────────────────
+  it('11. connectToRunningBrowser connects Playwright over CDP and reuses existing Flow tab', async () => {
+    const { chromium } = await import('playwright');
+    const session = new ProfileSession(makeConfig());
+    await session.launchLoginBrowser();
+
+    const page = await session.connectToRunningBrowser();
+    expect(chromium.connectOverCDP).toHaveBeenCalledWith(
+      expect.stringContaining('http://127.0.0.1:9222'),
+      expect.any(Object)
+    );
+    expect(page).toBeDefined();
+    expect(session.getPage()).toBe(page);
+    expect(session.status).toBe('connected');
+    expect(mockPage.bringToFront).toHaveBeenCalled();
+  });
+
+  // ── Test 12 ─────────────────────────────────────────────────────────────
+  it('12. connectToRunningBrowser creates new Flow tab when no existing Flow tab is open', async () => {
+    mockContext.pages.mockReturnValueOnce([
+      { url: () => 'about:blank', isClosed: () => false, bringToFront: vi.fn() } as any,
+    ]);
+    const session = new ProfileSession(makeConfig());
+    await session.launchLoginBrowser();
+
+    await session.connectToRunningBrowser();
+    expect(mockContext.newPage).toHaveBeenCalled();
+  });
+
+  // ── Test 13 ─────────────────────────────────────────────────────────────
+  it('13. verifyAuth runs FlowAuthDetector and transitions status to ready when authenticated', async () => {
+    vi.spyOn(FlowAuthDetector, 'check').mockResolvedValueOnce({
+      state: 'authenticated',
+      url: 'https://labs.google/fx/en/tools/flow',
+      detectedEmail: 'aiautomation786786@gmail.com',
+      locale: 'en',
+    });
+
+    const session = new ProfileSession(makeConfig());
+    await session.launchLoginBrowser();
+
+    const authResult = await session.verifyAuth();
+    expect(authResult.state).toBe('authenticated');
+    expect(session.status).toBe('ready');
+  });
+
+  // ── Test 14 ─────────────────────────────────────────────────────────────
+  it('14. verifyAccount in manager reconnects to running browser without returning "Browser page unavailable"', async () => {
+    vi.spyOn(FlowAuthDetector, 'check').mockResolvedValueOnce({
+      state: 'authenticated',
+      url: 'https://labs.google/fx/en/tools/flow',
+      detectedEmail: 'aiautomation786786@gmail.com',
+      locale: 'en',
+    });
+
+    const portAllocator = new ChromePortAllocator({ portStart: 9350, portEnd: 9450 });
+    const manager = new ProfileSessionManager({ portAllocator, chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' });
+
+    // First launch via launchLoginBrowser
+    await manager.launchLoginBrowser('profile_test001');
+
+    // Then verify account — must reconnect over CDP and succeed
+    const res = await manager.verifyAccount('profile_test001');
+    expect(res.error).toBeUndefined();
+    expect(res.success).toBe(true);
+    expect(res.status).toBe('ready');
+  });
+
+  // ── Test 15 ─────────────────────────────────────────────────────────────
+  it('15. openSignIn and openFlow on running browser reconnect without spawning duplicate Chrome', async () => {
+    const { spawn } = await import('child_process');
+    const portAllocator = new ChromePortAllocator({ portStart: 9350, portEnd: 9450 });
+    const manager = new ProfileSessionManager({ portAllocator, chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' });
+
+    // First launch login browser
+    await manager.launchLoginBrowser('profile_test001');
+    const spawnCountBefore = (spawn as any).mock.calls.length;
+
+    // Call openSignIn on the already-running profile
+    await manager.openSignIn('profile_test001');
+    // Spawn should NOT have been called again!
+    expect((spawn as any).mock.calls.length).toBe(spawnCountBefore);
+
+    // Call openFlow on the already-running profile
+    await manager.openFlow('profile_test001');
+    expect((spawn as any).mock.calls.length).toBe(spawnCountBefore);
+  });
+
+  // ── Test 16 ─────────────────────────────────────────────────────────────
+  it('16. startProfile on browser_open session attaches and verifies without re-spawning', async () => {
+    vi.spyOn(FlowAuthDetector, 'check').mockResolvedValueOnce({
+      state: 'authenticated',
+      url: 'https://labs.google/fx/en/tools/flow',
+      detectedEmail: 'aiautomation786786@gmail.com',
+      locale: 'en',
+    });
+
+    const { spawn } = await import('child_process');
+    const portAllocator = new ChromePortAllocator({ portStart: 9350, portEnd: 9450 });
+    const manager = new ProfileSessionManager({ portAllocator, chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' });
+
+    await manager.launchLoginBrowser('profile_test001');
+    const spawnCountBefore = (spawn as any).mock.calls.length;
+
+    await manager.startProfile('profile_test001');
+    expect((spawn as any).mock.calls.length).toBe(spawnCountBefore);
+  });
+
+  // ── Test 17 ─────────────────────────────────────────────────────────────
+  it('17. isProcessAlive correctly tracks child process state', async () => {
+    const session = new ProfileSession(makeConfig());
+    expect(session.isProcessAlive()).toBe(false);
+
+    await session.launchLoginBrowser();
+    expect(session.isProcessAlive()).toBe(true);
+
+    await session.stop();
+    expect(session.isProcessAlive()).toBe(false);
+  });
 });
+

@@ -154,6 +154,26 @@ export const ProfilesScreen: React.FC = () => {
     }
   };
 
+  const handleOpenFlow = async (profileId: string) => {
+    if (!window.flowApi) return;
+    try {
+      setActionLoading((prev) => ({ ...prev, [profileId]: true }));
+      setFeedback(profileId, 'Activating Google Flow tab…');
+      if (window.flowApi.openFlow) {
+        const res = await window.flowApi.openFlow(profileId);
+        setFeedback(profileId, res.message || 'Flow tab active.');
+      } else {
+        await window.flowApi.openSignIn(profileId);
+        setFeedback(profileId, 'Flow tab active.');
+      }
+      await loadProfiles();
+    } catch (err) {
+      setFeedback(profileId, `Open Flow failed: ${(err as Error).message}`, true);
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [profileId]: false }));
+    }
+  };
+
   const handleStart = async (profileId: string) => {
     if (!window.flowApi) return;
     try {
@@ -557,7 +577,7 @@ export const ProfilesScreen: React.FC = () => {
                     {p.status === 'ready' && (
                       <button
                         className="btn-primary btn-sm"
-                        onClick={() => handleStart(p.profileId)}
+                        onClick={() => handleOpenFlow(p.profileId)}
                         disabled={busy}
                         title="Open Google Flow in this account's browser"
                       >

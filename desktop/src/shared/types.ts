@@ -703,6 +703,7 @@ export interface FlowApi {
   deleteProfile: (profileId: string) => Promise<void>;
   openChrome: (profileId: string) => Promise<{ success: boolean; message: string }>;
   openSignIn: (profileId: string) => Promise<{ success: boolean; message: string }>;
+  openFlow?: (profileId: string) => Promise<{ success: boolean; message: string; snapshot?: ProfileSessionSnapshot }>;
   /**
    * Launches the dedicated Chrome window for manual login.
    * Returns as soon as the OS process is confirmed running (PID alive).

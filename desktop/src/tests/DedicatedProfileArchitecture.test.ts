@@ -31,12 +31,12 @@ describe('Phase 5.3: Dedicated Profile Architecture & Multi-Account Isolation', 
     const rootDir = ProfileConfigManager.getProfilesRootDir();
     expect(rootDir).toBe(path.join(tempDir, 'AutomistLabs', 'FlowProfiles'));
 
-    const portAllocator = new ChromePortAllocator({ startPort: 9222 });
+    const portAllocator = new ChromePortAllocator({ portStart: 19222, portEnd: 19350 });
     const p1Port = await portAllocator.allocate('profile-1');
     const p2Port = await portAllocator.allocate('profile-2');
 
-    expect(p1Port).toBe(9222);
-    expect(p2Port).toBe(9223);
+    expect(p1Port).toBe(19222);
+    expect(p2Port).toBe(19223);
 
     const config1 = ProfileConfigManager.create({
       displayName: 'Flow Profile A',
@@ -64,11 +64,11 @@ describe('Phase 5.3: Dedicated Profile Architecture & Multi-Account Isolation', 
     // Verify expectedEmail is persisted
     const reloaded1 = ProfileConfigManager.read(config1.profileId);
     expect(reloaded1.expectedEmail).toBe('flow.worker1@gmail.com');
-    expect(reloaded1.cdpPort).toBe(9222);
+    expect(reloaded1.cdpPort).toBe(p1Port);
 
     const reloaded2 = ProfileConfigManager.read(config2.profileId);
     expect(reloaded2.expectedEmail).toBe('flow.worker2@gmail.com');
-    expect(reloaded2.cdpPort).toBe(9223);
+    expect(reloaded2.cdpPort).toBe(p2Port);
   });
 
   it('Requirement 4: strictly zero password, cookie, or token storage in profile config schema', () => {
