@@ -296,7 +296,13 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       }
     }
 
-    const { chromePath, cdpPort, userDataDir, chromeProfileName } = this.config;
+    const { chromePath, cdpPort } = this.config;
+    const userDataDir = (this.config.connectionMode === 'existing_chrome' && this.config.localUserDataDir)
+      ? this.config.localUserDataDir
+      : this.config.userDataDir;
+    const chromeProfileName = (this.config.connectionMode === 'existing_chrome' && this.config.localProfileDirectory)
+      ? this.config.localProfileDirectory
+      : (this.config.chromeProfileName || 'Default');
 
     // Verify Chrome executable exists
     if (!fs.existsSync(chromePath)) {
@@ -429,13 +435,34 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     }
 
     // 3. Connect Playwright over CDP if not already connected
+    const previousStatus = this._status;
     const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
+
+    // Verify existing browser connection if already held
+    if (this.browser && this.browser.isConnected()) {
+      try {
+        const testContexts = this.browser.contexts();
+        if (testContexts.length > 0 && testContexts[0].pages().length > 0) {
+          this.log.debug('reconnect', 'Reusing existing healthy Playwright connection');
+        }
+      } catch {
+        this.log.warn('reconnect', 'Existing Playwright connection is unresponsive, resetting');
+        try { await Promise.race([this.browser.close(), delay(1000)]); } catch {}
+        this.browser = null;
+        this.context = null;
+        this.page = null;
+      }
+    }
+
     if (!this.browser || !this.browser.isConnected()) {
       this.setStatus('connecting');
       this.log.info('reconnect', 'Connecting Playwright to running browser over CDP', { endpoint: cdpEndpoint });
       try {
-        this.browser = await chromium.connectOverCDP(cdpEndpoint, { timeout: 30000 });
+        this.browser = await chromium.connectOverCDP(cdpEndpoint, { timeout: 8000 });
       } catch (err) {
+        // Restore status instead of leaving stuck in 'connecting'
+        const fallbackStatus = (this.chromeProcess && this.isProcessAlive()) ? 'browser_open' : (previousStatus !== 'connecting' ? previousStatus : 'created');
+        this.setStatus(fallbackStatus);
         throw new Error(
           `Failed to connect Playwright to running Chrome on port ${cdpPort}: ${(err as Error).message}`
         );
@@ -457,7 +484,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
         if (url.includes('flow.google.com/project/') || url.includes('labs.google/fx/project/')) {
           flowPage = p;
           this.log.info('reconnect', `Found and reusing existing Flow project tab: ${url}`);
-          await flowPage.bringToFront().catch(() => {});
+          await Promise.race([flowPage.bringToFront(), delay(1500)]).catch(() => {});
           break;
         }
       } catch {
@@ -473,7 +500,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
           if (url.includes('labs.google') || url.includes('flow.google.com')) {
             flowPage = p;
             this.log.info('reconnect', `Found and reusing existing Flow tab: ${url}`);
-            await flowPage.bringToFront().catch(() => {});
+            await Promise.race([flowPage.bringToFront(), delay(1500)]).catch(() => {});
             break;
           }
         } catch {
@@ -490,7 +517,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
           if (url.includes('accounts.google.com') || url.includes('google.com/signin')) {
             flowPage = p;
             this.log.info('reconnect', `Found and reusing Google sign-in tab: ${url}`);
-            await flowPage.bringToFront().catch(() => {});
+            await Promise.race([flowPage.bringToFront(), delay(1500)]).catch(() => {});
             break;
           }
         } catch {
@@ -506,13 +533,16 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       const targetUrl = flowUrlLocale
         ? `https://labs.google${flowUrlLocale}`
         : FLOW_BASE_URL;
-      await flowPage.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch((e) => {
+      await flowPage.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch((e) => {
         this.log.warn('reconnect', `Navigation to Flow tab returned warning: ${(e as Error).message}`);
       });
     }
 
     this.page = flowPage;
     this.setStatus('connected');
+    if (this.config.connectionMode === 'existing_chrome') {
+      this.isExistingBrowser = true;
+    }
 
     return flowPage;
   }
@@ -541,12 +571,12 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       cdpPort: this.config.cdpPort,
     });
 
-    // 2. If page is loading, poll briefly (up to 6 seconds) for Flow to finish initialising
+    // 2. If page is loading, poll briefly (up to 4 seconds) for Flow to finish initialising
     let result = await FlowAuthDetector.check(page, this.profileId);
     if (result.state === 'loading') {
       const startPoll = Date.now();
-      while (Date.now() - startPoll < 6000) {
-        await delay(1000);
+      while (Date.now() - startPoll < 4000) {
+        await delay(800);
         result = await FlowAuthDetector.check(page, this.profileId);
         if (result.state !== 'loading') break;
       }
@@ -583,12 +613,14 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
 
       case 'captcha':
         this.setStatus('auth_required');
+        this.emit('status_change', this.getSnapshot());
         this.log.warn('auth_verify', 'CAPTCHA detected on Flow page');
         break;
 
       case 'loading':
       case 'unknown':
-        this.setStatus('auth_required');
+        this.setStatus('browser_open');
+        this.emit('status_change', this.getSnapshot());
         this.log.warn('auth_verify', `Indeterminate auth state: ${result.state}`);
         break;
     }
@@ -840,9 +872,11 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
 
     try {
       this.browser = await chromium.connectOverCDP(cdpEndpoint, {
-        timeout: 15000,
+        timeout: 8000,
       });
     } catch (err) {
+      const fallbackStatus = (this.chromeProcess && this.isProcessAlive()) ? 'browser_open' : 'error';
+      this.setStatus(fallbackStatus);
       throw new Error(
         `Playwright CDP connection failed on port ${cdpPort}: ${(err as Error).message}`
       );

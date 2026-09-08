@@ -577,9 +577,16 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       };
     }
 
-    // 3. Connect to running browser & verify auth
+    // 3. Connect to running browser & verify auth with defensive 12s timeout
     try {
-      const authResult = await session.verifyAuth();
+      const verifyPromise = session.verifyAuth();
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error('Verification timed out after 12s. Please ensure Google Flow is active in Chrome and click Verify again.')),
+          12000,
+        ),
+      );
+      const authResult = await Promise.race([verifyPromise, timeoutPromise]);
 
       // Diagnostic logging (Requirement 7)
       console.log(`[Diagnostic] PID alive: ${isPidAlive || isPortActive ? 'YES' : 'NO'} (PID: ${session.pid ?? 'attached'})`);
@@ -611,6 +618,11 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
         });
       }
 
+      this.emit('session:status', session.getSnapshot());
+      if (authResult.state === 'authenticated') {
+        this.emit('session:ready', profileId);
+      }
+
       return {
         success: authResult.state === 'authenticated',
         status: session.status,
@@ -619,6 +631,7 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       };
     } catch (err) {
       appLogger.error('session_manager', `verifyAccount failed for ${profileId}`, err as Error);
+      this.emit('session:status', session.getSnapshot());
       return {
         success: false,
         status: session.status,

@@ -24,14 +24,14 @@ function getStatusInfo(p: ProfileSessionSnapshot): StatusInfo {
   if (s === 'busy') {
     return { label: 'Busy (Generating)', color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', emoji: '⏳' };
   }
-  if (s === 'auth_required') {
+  if (s === 'auth_required' || cs === 'login_required') {
     return { label: 'Sign-In Required', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', emoji: '🔑' };
-  }
-  if (s === 'browser_open' || cs === 'browser_open') {
-    return { label: 'Browser Open', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)', emoji: '🌐' };
   }
   if (s === 'chrome_launched' || s === 'connecting' || s === 'connected') {
     return { label: 'Connecting...', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', emoji: '◌' };
+  }
+  if (s === 'browser_open' || cs === 'browser_open') {
+    return { label: 'Browser Open', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)', emoji: '🌐' };
   }
   if (s === 'starting') {
     return { label: 'Starting Background…', color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', emoji: '◌' };

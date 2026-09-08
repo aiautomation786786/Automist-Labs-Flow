@@ -323,6 +323,15 @@ export class IpcHandlers {
       });
     });
 
+    if (typeof (sessionManager as any)?.on === 'function') {
+      (sessionManager as any).on('session:status', (snapshot: any) => {
+        getWebContents?.()?.send('flow:worker:status', {
+          profileId: snapshot.profileId,
+          status: snapshot.status,
+        });
+      });
+    }
+
     logger.info('ipc', 'IPC handlers registered successfully');
   }
 }

@@ -39,9 +39,35 @@ const LOCALE_FROM_URL_PATTERN = /\/fx\/([a-z]{2})\/tools\/flow/;
  * This deliberately does NOT capture or store credentials — it reads the
  * displayed email only, which the user can already see in the browser UI.
  */
-async function detectEmail(page: Page): Promise<string | null> {
+/**
+ * Safely evaluates a function on the page with a hard timeout to prevent hangs.
+ */
+async function safeEvaluate<T>(page: Page, fn: () => T, fallback: T, timeoutMs = 2500): Promise<T> {
   try {
-    return await page.evaluate(() => {
+    const evalPromise = page.evaluate(fn);
+    const timerPromise = new Promise<T>((resolve) => setTimeout(() => resolve(fallback), timeoutMs));
+    return await Promise.race([evalPromise, timerPromise]);
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Attempts to extract the signed-in Google account email from the page.
+ * Returns null if not detectable (Google actively obfuscates this).
+ *
+ * Strategies tried in order:
+ *  1. NextData JSON (Next.js pages expose user data in __NEXT_DATA__)
+ *  2. DOM attribute selectors (data-email, data-account-email, aria-label)
+ *  3. GAIA/GAPI globals
+ *
+ * This deliberately does NOT capture or store credentials — it reads the
+ * displayed email only, which the user can already see in the browser UI.
+ */
+async function detectEmail(page: Page): Promise<string | null> {
+  return await safeEvaluate(
+    page,
+    () => {
       // Strategy 1: Next.js __NEXT_DATA__
       const nextData = document.getElementById('__NEXT_DATA__')?.textContent;
       if (nextData) {
@@ -83,10 +109,10 @@ async function detectEmail(page: Page): Promise<string | null> {
       } catch { /* cross-origin blocked */ }
 
       return null;
-    });
-  } catch {
-    return null;
-  }
+    },
+    null,
+    2000,
+  );
 }
 
 /**
@@ -128,21 +154,38 @@ export class FlowAuthDetector {
       return { state: 'login_required', url, detectedEmail: null, locale: null };
     }
 
-    // 2. URL is still on the Flow domain — check page content
+    // 2. Fast-path: If the URL is already on an active project canvas (/project/),
+    // the user is definitively authenticated (Google Flow strictly redirects unauthenticated visitors).
+    if (FLOW_PROJECT_URL_PATTERN.test(url) || url.includes('/project/')) {
+      const detectedEmail = await detectEmail(page);
+      const locale = extractLocale(url);
+      log.info('auth_detector', 'Flow authenticated (fast-path: active project URL)', {
+        locale,
+        hasEmail: !!detectedEmail,
+      });
+      return { state: 'authenticated', url, detectedEmail, locale };
+    }
+
+    // 3. URL is still on the Flow domain — check page content
     if (FLOW_DOMAIN_PATTERN.test(url)) {
       // Check for CAPTCHA / bot challenge indicators
-      const hasCaptcha = await page.evaluate(() => {
-        const bodyText = document.body?.innerText ?? '';
-        // "This site is protected by reCAPTCHA" in Google's legal footer is NOT a bot challenge
-        const textWithoutFooter = bodyText.replace(/This site is protected by reCAPTCHA[^\n]*/gi, '');
-        return (
-          textWithoutFooter.includes('reCAPTCHA') ||
-          textWithoutFooter.includes('verify you are human') ||
-          textWithoutFooter.includes('unusual traffic from your computer network') ||
-          !!document.querySelector('iframe[src*="recaptcha/api2/bframe"]') ||
-          !!document.querySelector('iframe[src*="recaptcha/enterprise/bframe"]')
-        );
-      }).catch(() => false);
+      const hasCaptcha = await safeEvaluate(
+        page,
+        () => {
+          const bodyText = document.body?.innerText ?? '';
+          // "This site is protected by reCAPTCHA" in Google's legal footer is NOT a bot challenge
+          const textWithoutFooter = bodyText.replace(/This site is protected by reCAPTCHA[^\n]*/gi, '');
+          return (
+            textWithoutFooter.includes('reCAPTCHA') ||
+            textWithoutFooter.includes('verify you are human') ||
+            textWithoutFooter.includes('unusual traffic from your computer network') ||
+            !!document.querySelector('iframe[src*="recaptcha/api2/bframe"]') ||
+            !!document.querySelector('iframe[src*="recaptcha/enterprise/bframe"]')
+          );
+        },
+        false,
+        2500,
+      );
 
       if (hasCaptcha) {
         log.warn('auth_detector', 'CAPTCHA or bot challenge detected');
@@ -150,22 +193,22 @@ export class FlowAuthDetector {
       }
 
       // Check if we're in a project or the Flow studio — both mean authenticated
-      const isFlowAuthenticated = await page.evaluate(() => {
-        // Presence of any Flow-specific structural elements:
-        // 1. A project-nav sidebar
-        // 2. A prompt textarea / contenteditable (generation UI)
-        // 3. A "New project" button
-        // 4. A project URL path segment
-        const sidebar = document.querySelector('[class*="sidebar"], [class*="nav-rail"]');
-        const promptInput = document.querySelector(
-          '[contenteditable="true"], textarea[placeholder], textarea'
-        );
-        const projectLink = document.querySelector('a[href*="/project/"]');
-        const isOnProjectPage = window.location.pathname.includes('/project/');
-        const hasAccountButton = !!document.querySelector('[aria-label*="Google Account"], [aria-label*="@"]');
+      const isFlowAuthenticated = await safeEvaluate(
+        page,
+        () => {
+          const sidebar = document.querySelector('[class*="sidebar"], [class*="nav-rail"]');
+          const promptInput = document.querySelector(
+            '[contenteditable="true"], textarea[placeholder], textarea'
+          );
+          const projectLink = document.querySelector('a[href*="/project/"]');
+          const isOnProjectPage = window.location.pathname.includes('/project/');
+          const hasAccountButton = !!document.querySelector('[aria-label*="Google Account"], [aria-label*="@"]');
 
-        return !!(sidebar || promptInput || projectLink || isOnProjectPage || hasAccountButton);
-      }).catch(() => false);
+          return !!(sidebar || promptInput || projectLink || isOnProjectPage || hasAccountButton);
+        },
+        false,
+        2500,
+      );
 
       if (isFlowAuthenticated) {
         const detectedEmail = await detectEmail(page);
@@ -178,14 +221,19 @@ export class FlowAuthDetector {
       }
 
       // Landing page with "Create with Google Flow" / Sign in button
-      const isLandingPage = await page.evaluate(() => {
-        const text = document.body?.innerText ?? '';
-        return (
-          text.includes('Create with Google Flow') ||
-          text.includes('Your AI creative studio') ||
-          !!document.querySelector('a[href*="signin"], button[aria-label*="Sign in"]')
-        );
-      }).catch(() => false);
+      const isLandingPage = await safeEvaluate(
+        page,
+        () => {
+          const text = document.body?.innerText ?? '';
+          return (
+            text.includes('Create with Google Flow') ||
+            text.includes('Your AI creative studio') ||
+            !!document.querySelector('a[href*="signin"], button[aria-label*="Sign in"]')
+          );
+        },
+        false,
+        2500,
+      );
 
       if (isLandingPage) {
         log.info('auth_detector', 'Flow landing page detected; login or project entry required');
@@ -193,9 +241,12 @@ export class FlowAuthDetector {
       }
 
       // Still on Flow domain but not recognizably authenticated — may be loading
-      const isLoading = await page.evaluate(() => {
-        return document.readyState !== 'complete';
-      }).catch(() => true);
+      const isLoading = await safeEvaluate(
+        page,
+        () => document.readyState !== 'complete',
+        true,
+        2000,
+      );
 
       if (isLoading) {
         log.debug('auth_detector', 'Page still loading');

@@ -39,7 +39,7 @@ const LEGAL_TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
   completed: [],
 
   // Terminal failure (retries exhausted or non-retryable)
-  failed: ['retry_waiting'],
+  failed: ['retry_waiting', 'manual_action_required', 'failed'],
 
   // Waiting for retry timer before re-entering queue
   retry_waiting: ['queued', 'cancelled', 'failed'],
