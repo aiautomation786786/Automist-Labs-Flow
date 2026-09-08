@@ -101,6 +101,13 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
     ? parsedBulkPrompts.length
     : singlePrompt.trim().length > 0 ? 1 : 0;
 
+  // Sync mode whenever initialMode prop changes (e.g. from sidebar clicks)
+  useEffect(() => {
+    if (initialMode) {
+      setMode(initialMode);
+    }
+  }, [initialMode]);
+
   // Set default project name on mode switch if unchanged
   useEffect(() => {
     const modeLabel = mode === 'single_image' ? 'Single Image' : mode === 'single_video' ? 'Single Video' : mode === 'bulk_image' ? 'Bulk Images' : 'Bulk Videos';
@@ -222,15 +229,15 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
               type="button"
               onClick={() => setMode(tab.id as GenerationMode)}
               style={{
-                backgroundColor: isActive ? 'var(--primary)' : '#ffffff',
+                background: isActive ? 'var(--primary-gradient)' : 'var(--bg-card)',
                 color: isActive ? '#ffffff' : 'var(--text-primary)',
-                border: `1px solid ${isActive ? 'var(--primary)' : 'var(--border-color)'}`,
+                border: isActive ? '1px solid rgba(255, 255, 255, 0.25)' : '1px solid var(--border-color)',
                 borderRadius: 'var(--radius-md)',
                 padding: '14px 16px',
                 textAlign: 'left',
                 cursor: 'pointer',
                 transition: 'all 0.15s ease',
-                boxShadow: isActive ? '0 4px 12px rgba(37, 99, 235, 0.2)' : 'var(--shadow-sm)',
+                boxShadow: isActive ? '0 4px 14px rgba(99, 102, 241, 0.35)' : 'var(--shadow-sm)',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
@@ -249,10 +256,10 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
         <div
           style={{
             padding: '12px 16px',
-            backgroundColor: '#fef2f2',
-            border: '1px solid #fecaca',
+            backgroundColor: 'var(--danger-bg)',
+            border: '1px solid var(--danger-border)',
             borderRadius: 'var(--radius-md)',
-            color: 'var(--error)',
+            color: '#fb7185',
             fontSize: '13px',
             marginBottom: '20px',
             display: 'flex',
@@ -264,7 +271,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
           <button
             type="button"
             onClick={() => setErrorMsg(null)}
-            style={{ background: 'none', border: 'none', color: 'var(--error)', cursor: 'pointer', fontWeight: 600 }}
+            style={{ background: 'none', border: 'none', color: '#fb7185', cursor: 'pointer', fontWeight: 600 }}
           >
             ×
           </button>
@@ -407,7 +414,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                       style={{
                         marginTop: '12px',
                         padding: '10px 12px',
-                        backgroundColor: 'var(--bg-secondary)',
+                        backgroundColor: 'var(--bg-input)',
                         borderRadius: 'var(--radius-sm)',
                         maxHeight: '140px',
                         overflowY: 'auto',
@@ -421,11 +428,11 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                           style={{
                             display: 'flex',
                             gap: '8px',
-                            padding: '3px 0',
-                            borderBottom: '1px solid rgba(0,0,0,0.04)',
+                            padding: '4px 0',
+                            borderBottom: '1px solid var(--border-subtle)',
                           }}
                         >
-                          <span style={{ fontWeight: 600, color: 'var(--primary)', width: '32px' }}>
+                          <span style={{ fontWeight: 700, color: 'var(--primary)', width: '36px', fontFamily: 'var(--font-mono)' }}>
                             #{String(idx + 1).padStart(2, '0')}
                           </span>
                           <span style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -458,18 +465,18 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                     <div
                       style={{
                         padding: '9px 12px',
-                        backgroundColor: '#eff6ff',
-                        border: '1px solid #bfdbfe',
+                        backgroundColor: 'var(--info-image-bg)',
+                        border: '1px solid var(--info-image-border)',
                         borderRadius: 'var(--radius-sm)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
                       }}
                     >
-                      <span style={{ fontWeight: 600, fontSize: '13px', color: '#1e40af' }}>
+                      <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--info-image)' }}>
                         Nano Banana 2
                       </span>
-                      <span style={{ fontSize: '11px', color: '#3b82f6', fontWeight: 500 }}>
+                      <span style={{ fontSize: '11px', color: 'var(--info-image)', fontWeight: 500 }}>
                         Active Default
                       </span>
                     </div>
@@ -479,11 +486,12 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                       onChange={(e) => setVideoModel(e.target.value as any)}
                       style={{
                         width: '100%',
-                        padding: '8px 10px',
+                        padding: '9px 12px',
                         borderRadius: 'var(--radius-sm)',
                         border: '1px solid var(--border-color)',
                         fontSize: '13px',
-                        backgroundColor: '#ffffff',
+                        backgroundColor: 'var(--bg-input)',
+                        color: 'var(--text-primary)',
                       }}
                     >
                       <option value="Veo 3.1 - Quality">Veo 3.1 - Quality (High Fidelity)</option>
@@ -511,8 +519,8 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                             padding: '8px 12px',
                             borderRadius: 'var(--radius-sm)',
                             border: `1px solid ${isSel ? 'var(--primary)' : 'var(--border-color)'}`,
-                            backgroundColor: isSel ? '#eff6ff' : '#ffffff',
-                            color: isSel ? 'var(--primary)' : 'var(--text-primary)',
+                            backgroundColor: isSel ? 'rgba(99, 102, 241, 0.2)' : 'var(--bg-surface)',
+                            color: isSel ? '#ffffff' : 'var(--text-secondary)',
                             fontWeight: isSel ? 600 : 500,
                             fontSize: '12px',
                             cursor: 'pointer',
@@ -545,8 +553,8 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                                   padding: '6px 8px',
                                   borderRadius: 'var(--radius-sm)',
                                   border: `1px solid ${isSel ? 'var(--primary)' : 'var(--border-color)'}`,
-                                  backgroundColor: isSel ? '#eff6ff' : '#ffffff',
-                                  color: isSel ? 'var(--primary)' : 'var(--text-primary)',
+                                  backgroundColor: isSel ? 'rgba(99, 102, 241, 0.2)' : 'var(--bg-surface)',
+                                  color: isSel ? '#ffffff' : 'var(--text-secondary)',
                                   fontWeight: isSel ? 600 : 500,
                                   fontSize: '12px',
                                   cursor: 'pointer',
@@ -576,8 +584,8 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                                   padding: '6px 8px',
                                   borderRadius: 'var(--radius-sm)',
                                   border: `1px solid ${isSel ? 'var(--primary)' : 'var(--border-color)'}`,
-                                  backgroundColor: isSel ? '#eff6ff' : '#ffffff',
-                                  color: isSel ? 'var(--primary)' : 'var(--text-primary)',
+                                  backgroundColor: isSel ? 'rgba(99, 102, 241, 0.2)' : 'var(--bg-surface)',
+                                  color: isSel ? '#ffffff' : 'var(--text-secondary)',
                                   fontWeight: isSel ? 600 : 500,
                                   fontSize: '12px',
                                   cursor: 'pointer',
@@ -595,19 +603,19 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                     ) : (
                       <div
                         style={{
-                          padding: '8px 12px',
-                          backgroundColor: '#f8fafc',
+                          padding: '9px 12px',
+                          backgroundColor: 'var(--bg-surface)',
                           borderRadius: 'var(--radius-sm)',
-                          border: '1px solid #e2e8f0',
+                          border: '1px solid var(--border-color)',
                           fontSize: '12px',
-                          color: '#475569',
+                          color: 'var(--text-primary)',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
                         }}
                       >
                         <span>Native Flow Duration</span>
-                        <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--primary)' }}>
                           {videoModel.includes('Quality') ? '4.0s' : '8.0s'}
                         </span>
                       </div>
@@ -636,8 +644,8 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                               padding: '8px 10px',
                               borderRadius: 'var(--radius-sm)',
                               border: `1px solid ${isSel ? 'var(--primary)' : 'var(--border-color)'}`,
-                              backgroundColor: isSel ? '#eff6ff' : '#ffffff',
-                              color: isSel ? 'var(--primary)' : 'var(--text-primary)',
+                              backgroundColor: isSel ? 'rgba(99, 102, 241, 0.2)' : 'var(--bg-surface)',
+                              color: isSel ? '#ffffff' : 'var(--text-secondary)',
                               fontWeight: isSel ? 600 : 500,
                               fontSize: '12px',
                               cursor: 'pointer',
@@ -664,8 +672,8 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                               padding: '8px 10px',
                               borderRadius: 'var(--radius-sm)',
                               border: `1px solid ${isSel ? 'var(--primary)' : 'var(--border-color)'}`,
-                              backgroundColor: isSel ? '#eff6ff' : '#ffffff',
-                              color: isSel ? 'var(--primary)' : 'var(--text-primary)',
+                              backgroundColor: isSel ? 'rgba(99, 102, 241, 0.2)' : 'var(--bg-surface)',
+                              color: isSel ? '#ffffff' : 'var(--text-secondary)',
                               fontWeight: isSel ? 600 : 500,
                               fontSize: '12px',
                               cursor: 'pointer',
@@ -731,12 +739,12 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
-                          padding: '8px 12px',
+                          padding: '10px 14px',
                           borderRadius: 'var(--radius-sm)',
                           border: `1px solid ${isSelected ? 'var(--primary)' : 'var(--border-color)'}`,
-                          backgroundColor: isSelected ? '#f8faff' : '#ffffff',
+                          backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.12)' : 'var(--bg-surface)',
                           cursor: 'pointer',
-                          transition: 'all 0.1s ease',
+                          transition: 'all 0.15s ease',
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -744,7 +752,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                             type={isBulkMode ? 'checkbox' : 'radio'}
                             checked={isSelected}
                             onChange={() => {}}
-                            style={{ cursor: 'pointer' }}
+                            style={{ cursor: 'pointer', accentColor: 'var(--primary)' }}
                           />
                           <div>
                             <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)' }}>
@@ -759,11 +767,12 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                         <span
                           style={{
                             fontSize: '11px',
-                            padding: '2px 6px',
+                            padding: '2px 8px',
                             borderRadius: '4px',
-                            backgroundColor: isReady ? '#dcfce7' : '#f1f5f9',
-                            color: isReady ? '#15803d' : '#64748b',
-                            fontWeight: 500,
+                            backgroundColor: isReady ? 'var(--success-bg)' : 'var(--bg-subtle)',
+                            color: isReady ? 'var(--success)' : 'var(--text-muted)',
+                            border: `1px solid ${isReady ? 'var(--success-border)' : 'var(--border-color)'}`,
+                            fontWeight: 600,
                           }}
                         >
                           {isReady ? 'Ready' : p.status}

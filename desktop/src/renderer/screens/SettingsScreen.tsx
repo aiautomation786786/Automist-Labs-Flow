@@ -65,11 +65,9 @@ export const SettingsScreen: React.FC = () => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         {/* Storage Location */}
         <div
+          className="card"
           style={{
-            backgroundColor: 'var(--bg-surface)',
-            border: '1px solid var(--border-color)',
-            borderRadius: 'var(--radius-md)',
-            padding: '16px',
+            padding: '18px 20px',
             display: 'flex',
             flexDirection: 'column',
             gap: '8px',
@@ -89,11 +87,9 @@ export const SettingsScreen: React.FC = () => {
 
         {/* Default Aspect Ratio */}
         <div
+          className="card"
           style={{
-            backgroundColor: 'var(--bg-surface)',
-            border: '1px solid var(--border-color)',
-            borderRadius: 'var(--radius-md)',
-            padding: '16px',
+            padding: '18px 20px',
             display: 'flex',
             flexDirection: 'column',
             gap: '10px',
@@ -116,11 +112,9 @@ export const SettingsScreen: React.FC = () => {
 
         {/* Default Processing Order */}
         <div
+          className="card"
           style={{
-            backgroundColor: 'var(--bg-surface)',
-            border: '1px solid var(--border-color)',
-            borderRadius: 'var(--radius-md)',
-            padding: '16px',
+            padding: '18px 20px',
             display: 'flex',
             flexDirection: 'column',
             gap: '10px',
@@ -147,11 +141,9 @@ export const SettingsScreen: React.FC = () => {
 
         {/* Retry Limits */}
         <div
+          className="card"
           style={{
-            backgroundColor: 'var(--bg-surface)',
-            border: '1px solid var(--border-color)',
-            borderRadius: 'var(--radius-md)',
-            padding: '16px',
+            padding: '18px 20px',
             display: 'flex',
             flexDirection: 'column',
             gap: '8px',
@@ -172,11 +164,9 @@ export const SettingsScreen: React.FC = () => {
 
         {/* About App */}
         <div
+          className="card"
           style={{
-            backgroundColor: 'var(--bg-surface)',
-            border: '1px solid var(--border-color)',
-            borderRadius: 'var(--radius-md)',
-            padding: '16px',
+            padding: '18px 20px',
             display: 'flex',
             flexDirection: 'column',
             gap: '6px',

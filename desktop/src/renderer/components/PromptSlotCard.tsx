@@ -77,18 +77,18 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
       {/* Top row: slot number, type badge, status */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}>
+          <span style={{ fontWeight: 700, fontSize: '13px', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
             {slotNumber}
           </span>
           <span
             style={{
               fontSize: '11px',
-              padding: '1px 7px',
+              padding: '1.5px 7px',
               borderRadius: 'var(--radius-sm)',
-              backgroundColor: isVideo ? '#f5f3ff' : '#eff6ff',
-              color: isVideo ? '#7c3aed' : '#2563eb',
-              border: `1px solid ${isVideo ? '#ddd6fe' : '#bfdbfe'}`,
-              fontWeight: 500,
+              backgroundColor: isVideo ? 'var(--info-video-bg)' : 'var(--info-image-bg)',
+              color: isVideo ? 'var(--info-video)' : 'var(--info-image)',
+              border: `1px solid ${isVideo ? 'var(--info-video-border)' : 'var(--info-image-border)'}`,
+              fontWeight: 600,
             }}
           >
             {isVideo ? 'Video' : 'Image'}
@@ -97,11 +97,11 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
             <span
               style={{
                 fontSize: '11px',
-                padding: '1px 6px',
+                padding: '1.5px 7px',
                 borderRadius: 'var(--radius-sm)',
-                backgroundColor: '#f1f5f9',
-                color: '#475569',
-                border: '1px solid #e2e8f0',
+                backgroundColor: 'var(--bg-subtle)',
+                color: 'var(--text-secondary)',
+                border: '1px solid var(--border-color)',
                 fontWeight: 500,
               }}
             >

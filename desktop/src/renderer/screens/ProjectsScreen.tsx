@@ -124,11 +124,9 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
             return (
               <div
                 key={p.projectId}
+                className="card"
                 style={{
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-color)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: '16px',
+                  padding: '18px',
                   display: 'flex',
                   flexDirection: 'column',
                   gap: '12px',

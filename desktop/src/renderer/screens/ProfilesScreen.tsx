@@ -485,11 +485,9 @@ export const ProfilesScreen: React.FC = () => {
             return (
               <div
                 key={p.profileId}
+                className="card"
                 style={{
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-color)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: '16px 20px',
+                  padding: '18px 20px',
                   display: 'flex',
                   flexDirection: 'column',
                   gap: '12px',

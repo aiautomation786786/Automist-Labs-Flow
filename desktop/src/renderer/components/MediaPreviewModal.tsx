@@ -82,10 +82,10 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                 fontSize: '11px',
                 padding: '2px 8px',
                 borderRadius: 'var(--radius-sm)',
-                backgroundColor: type === 'video' ? '#f5f3ff' : '#eff6ff',
-                color: type === 'video' ? '#7c3aed' : '#2563eb',
-                border: `1px solid ${type === 'video' ? '#ddd6fe' : '#bfdbfe'}`,
-                fontWeight: 500,
+                backgroundColor: type === 'video' ? 'var(--info-video-bg)' : 'var(--info-image-bg)',
+                color: type === 'video' ? 'var(--info-video)' : 'var(--info-image)',
+                border: `1px solid ${type === 'video' ? 'var(--info-video-border)' : 'var(--info-image-border)'}`,
+                fontWeight: 600,
               }}
             >
               {type === 'video' ? 'Video' : 'Image'}
