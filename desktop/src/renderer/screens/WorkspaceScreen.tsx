@@ -343,6 +343,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
             ratio: selectedSlotForMedia.result?.ratioUsed || project.settings.imageRatio,
             fileSize: selectedSlotForMedia.result?.fileSizeBytes,
             profile: selectedSlotForMedia.assignedProfileId,
+            duration: selectedSlotForMedia.result?.durationFormatted,
+            resolution: selectedSlotForMedia.result?.resolution,
           }}
           title={`Slot #${String(selectedSlotForMedia.slotIndex + 1).padStart(2, '0')}`}
           onClose={() => setSelectedSlotForMedia(null)}

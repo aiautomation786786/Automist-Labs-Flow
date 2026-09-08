@@ -201,6 +201,217 @@ export class ModelSelector {
     };
   }
 
+  /**
+   * Actively configures and verifies Google Flow Video mode and parameters:
+   *  - Switches mode to Video
+   *  - Selects model (e.g. "Omni 1.1 Flash")
+   *  - Selects resolution (e.g. "720p")
+   *  - Selects duration (e.g. "4s")
+   *  - Selects aspect ratio (e.g. "16:9")
+   *  - Enforces quantity (e.g. "x1")
+   */
+  static async ensureVideoModel(
+    page: Page,
+    options: {
+      modelName?: string;
+      resolution?: string;
+      duration?: string;
+      ratio?: string;
+      quantity?: string;
+    } = {}
+  ): Promise<{
+    verified: boolean;
+    mode: string;
+    model: string;
+    resolution: string;
+    duration: string;
+    ratio: string;
+    quantity: string;
+    error?: string;
+  }> {
+    const targetModel = options.modelName || 'Omni 1.1 Flash';
+    const targetRes = options.resolution || '720p';
+    const targetDur = options.duration || '4s';
+    const targetRatio = options.ratio || '16:9';
+    const targetQty = options.quantity || 'x1';
+
+    logger.info('model_selector', 'Configuring Video mode and model settings', {
+      targetModel,
+      targetRes,
+      targetDur,
+      targetRatio,
+      targetQty,
+    });
+
+    // Step 1: Open Settings popover if not already open
+    let paneVisible = await page.locator('.cdk-overlay-pane').isVisible().catch(() => false);
+    if (!paneVisible) {
+      const trigger = await this.findModelDropdownButton(page);
+      if (!trigger) {
+        return {
+          verified: false,
+          mode: 'unknown',
+          model: 'unknown',
+          resolution: 'unknown',
+          duration: 'unknown',
+          ratio: 'unknown',
+          quantity: 'unknown',
+          error: 'Could not locate settings trigger button on Flow toolbar.',
+        };
+      }
+      await trigger.click();
+      await page.waitForTimeout(600);
+    }
+
+    // Step 2: Switch to Video mode tab/radio
+    const videoTab = page.locator('.cdk-overlay-pane button[role="radio"]:has-text("Video"), .cdk-overlay-pane [role="radio"]:has-text("videocam")').first();
+    const isVideoTabVis = await videoTab.isVisible({ timeout: 1500 }).catch(() => false);
+    if (isVideoTabVis) {
+      const isChecked = await videoTab.getAttribute('aria-checked').catch(() => null);
+      if (isChecked !== 'true') {
+        logger.info('model_selector', 'Switching popover to Video mode...');
+        await videoTab.click().catch(() => {});
+        await page.waitForTimeout(600);
+      }
+    }
+
+    // Step 3: Aspect Ratio
+    const ratioRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${targetRatio}")`).first();
+    const isRatioVis = await ratioRadio.isVisible({ timeout: 1000 }).catch(() => false);
+    if (isRatioVis) {
+      const isChecked = await ratioRadio.getAttribute('aria-checked').catch(() => null);
+      if (isChecked !== 'true') {
+        logger.info('model_selector', `Selecting aspect ratio: ${targetRatio}`);
+        await ratioRadio.click().catch(() => {});
+        await page.waitForTimeout(300);
+      }
+    }
+
+    // Step 4: Model Selection (Omni 1.1 Flash)
+    const modelFamilyBtn = page.locator('.cdk-overlay-pane button[aria-label="Select model family"]').first();
+    const isModelFamilyVis = await modelFamilyBtn.isVisible({ timeout: 1000 }).catch(() => false);
+    if (isModelFamilyVis) {
+      const currentModelText = (await modelFamilyBtn.textContent().catch(() => '')) || '';
+      if (!currentModelText.includes('Omni')) {
+        logger.info('model_selector', `Opening model family dropdown to select ${targetModel}...`);
+        await modelFamilyBtn.click().catch(() => {});
+        await page.waitForTimeout(600);
+
+        const modelOption = page.locator(`.cdk-overlay-pane [role="menuitem"]:has-text("Omni 1.1 Flash"), .cdk-overlay-pane button:has-text("Omni 1.1 Flash")`).first();
+        if (await modelOption.isVisible({ timeout: 1500 }).catch(() => false)) {
+          await modelOption.click().catch(() => {});
+          await page.waitForTimeout(600);
+        } else {
+          logger.warn('model_selector', `Could not find "${targetModel}" menu item in model dropdown`);
+        }
+      }
+    }
+
+    // Step 5: Resolution
+    const resRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${targetRes}")`).first();
+    if (await resRadio.isVisible({ timeout: 1000 }).catch(() => false)) {
+      const isChecked = await resRadio.getAttribute('aria-checked').catch(() => null);
+      if (isChecked !== 'true') {
+        logger.info('model_selector', `Selecting resolution: ${targetRes}`);
+        await resRadio.click().catch(() => {});
+        await page.waitForTimeout(300);
+      }
+    }
+
+    // Step 6: Duration
+    const durRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${targetDur}")`).first();
+    if (await durRadio.isVisible({ timeout: 1000 }).catch(() => false)) {
+      const isChecked = await durRadio.getAttribute('aria-checked').catch(() => null);
+      if (isChecked !== 'true') {
+        logger.info('model_selector', `Selecting duration: ${targetDur}`);
+        await durRadio.click().catch(() => {});
+        await page.waitForTimeout(300);
+      }
+    }
+
+    // Step 7: Quantity (x1)
+    const qtyRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${targetQty}")`).first();
+    if (await qtyRadio.isVisible({ timeout: 1000 }).catch(() => false)) {
+      const isChecked = await qtyRadio.getAttribute('aria-checked').catch(() => null);
+      if (isChecked !== 'true') {
+        logger.info('model_selector', `Selecting quantity: ${targetQty}`);
+        await qtyRadio.click().catch(() => {});
+        await page.waitForTimeout(300);
+      }
+    }
+
+    // Step 8: Inspect active settings inside the pane before closing
+    const paneState = await page.evaluate(() => {
+      const pane = document.querySelector('.cdk-overlay-pane');
+      if (!pane) return null;
+
+      const radios = Array.from(pane.querySelectorAll('button[role="radio"], [role="radio"]'));
+      const getActiveRadioMatch = (regex: RegExp) => {
+        const active = radios.find(r => r.getAttribute('aria-checked') === 'true' && regex.test(r.textContent || ''));
+        if (!active) return '';
+        const match = (active.textContent || '').match(regex);
+        return match ? match[1] : (active.textContent || '').trim();
+      };
+
+      const videoActive = radios.some(b => (b.textContent || '').includes('Video') && b.getAttribute('aria-checked') === 'true');
+
+      const modelBtn = pane.querySelector('button[aria-label="Select model family"]');
+      const modelText = modelBtn ? (modelBtn.textContent || '').trim() : '';
+
+      const resText = getActiveRadioMatch(/(360p|720p|1080p)/);
+      const durText = getActiveRadioMatch(/\b(\d+s)\b/);
+      const ratioText = getActiveRadioMatch(/(16:9|9:16|4:3|3:4|1:1)/);
+      const qtyText = getActiveRadioMatch(/\b(x\d+)\b/);
+
+      return {
+        isVideo: videoActive,
+        modelText,
+        resText,
+        durText,
+        ratioText,
+        qtyText,
+      };
+    });
+
+    // Close popover
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+
+    // Step 9: Positively verify each setting
+    const modeVerified = paneState?.isVideo ?? false;
+    const modelVerified = (paneState?.modelText || '').toLowerCase().includes('omni');
+    const resVerified = (paneState?.resText || '').includes(targetRes);
+    const durVerified = (paneState?.durText || '').includes(targetDur);
+    const ratioVerified = (paneState?.ratioText || '').includes(targetRatio);
+    const qtyVerified = (paneState?.qtyText || '').includes(targetQty);
+
+    const allVerified = modeVerified && modelVerified && resVerified && durVerified && ratioVerified && qtyVerified;
+
+    logger.info('model_selector', 'Video settings verification complete', {
+      allVerified,
+      modeVerified,
+      modelVerified,
+      resVerified,
+      durVerified,
+      ratioVerified,
+      qtyVerified,
+      paneState,
+    });
+
+    return {
+      verified: allVerified,
+      mode: modeVerified ? 'Video' : 'Unknown',
+      model: paneState?.modelText || 'Unknown',
+      resolution: paneState?.resText || 'Unknown',
+      duration: paneState?.durText || 'Unknown',
+      ratio: paneState?.ratioText || 'Unknown',
+      quantity: paneState?.qtyText || 'Unknown',
+      ...(allVerified ? {} : {
+        error: `Video configuration verification failed. State: ${JSON.stringify(paneState)}`,
+      }),
+    };
+  }
+
   // ---- Private helpers -----------------------------------------------------
 
   private static async findModelDropdownButton(page: Page): Promise<Locator | null> {
@@ -218,6 +429,7 @@ export class ModelSelector {
       '[aria-label*="model" i]',
     ];
 
-    return await FlowDriver.findFirstVisible(page, candidateSelectors, 2000);
+    return await FlowDriver.findFirstVisible(page, candidateSelectors, 15000);
   }
 }
+

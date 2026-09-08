@@ -22,6 +22,7 @@ const logger = new AppLogger({ mirrorToStderr: false });
  */
 export const TRPC_IMAGE_REDIRECT_REGEX = /media\.getMediaUrlRedirect\?name=([a-zA-Z0-9_-]+)/;
 export const FLOW_CONTENT_MEDIA_REGEX = /flow-content\.google\/(?:image|video)\/([a-zA-Z0-9_-]+)/;
+export const FLOW_ASB_MEDIA_REGEX = /\/asb\/([a-zA-Z0-9_-]+)/;
 
 export class MediaDetector {
   /**
@@ -42,6 +43,12 @@ export class MediaDetector {
       const flowContentMatch = url.match(FLOW_CONTENT_MEDIA_REGEX);
       if (flowContentMatch?.[1]) {
         uuids.push(flowContentMatch[1]);
+        matchedUrls.push(url);
+        continue;
+      }
+      const asbMatch = url.match(FLOW_ASB_MEDIA_REGEX);
+      if (asbMatch?.[1]) {
+        uuids.push(asbMatch[1]);
         matchedUrls.push(url);
       }
     }
@@ -84,27 +91,45 @@ export class MediaDetector {
         // 2. Scan video elements
         const videos = Array.from(document.querySelectorAll('video'));
         videos.forEach((video) => {
-          const src = video.src || video.querySelector('source')?.src || video.getAttribute('poster') || '';
+          const src = video.src || (video as HTMLMediaElement).currentSrc || video.querySelector('source')?.src || video.getAttribute('src') || video.getAttribute('poster') || '';
           if (src) {
             videoSources.push(src);
           }
         });
 
-        return { imageSrcs, videoSources, hasVideo: videos.length > 0 };
+        // 3. Scan Google Flow dedicated flow-video-tile custom elements
+        const videoTiles = Array.from(document.querySelectorAll('flow-video-tile, [class*="video-tile"]'));
+        videoTiles.forEach((tile) => {
+          const tileVid = tile.querySelector('video');
+          if (tileVid) {
+            const s = tileVid.src || (tileVid as HTMLMediaElement).currentSrc || tileVid.getAttribute('src') || '';
+            if (s && !videoSources.includes(s)) videoSources.push(s);
+          }
+          const tileImg = tile.querySelector('img');
+          if (tileImg && tileImg.src && tileImg.src.includes('/asb/')) {
+            const vidUrl = tileImg.src.split('=')[0] + '=mm,22,15';
+            if (!videoSources.includes(vidUrl)) videoSources.push(vidUrl);
+          }
+        });
+
+        return { imageSrcs, videoSources, hasVideo: videos.length > 0 || videoTiles.length > 0 };
       });
 
-      const { uuids, matchedUrls } = this.parseMediaUuids(raw.imageSrcs);
+      const { uuids: imageUuids, matchedUrls: imageMatchedUrls } = this.parseMediaUuids(raw.imageSrcs);
+      const { uuids: videoUuids, matchedUrls: videoMatchedUrls } = this.parseMediaUuids(raw.videoSources);
 
       logger.debug('media_detector', 'Media scan complete', {
-        imagesFound: uuids.length,
+        imagesFound: imageUuids.length,
         videosFound: raw.videoSources.length,
+        videoUuidsFound: videoUuids.length,
       });
 
       return {
-        imageUuids: uuids,
-        mediaUrls: matchedUrls,
-        hasVideo: raw.hasVideo,
+        imageUuids,
+        mediaUrls: [...new Set([...imageMatchedUrls, ...videoMatchedUrls])],
+        hasVideo: raw.hasVideo || raw.videoSources.length > 0,
         videoSources: raw.videoSources,
+        videoUuids,
       };
     } catch (err) {
       logger.warn('media_detector', 'Failed to inspect media on page', {
@@ -115,6 +140,7 @@ export class MediaDetector {
         mediaUrls: [],
         hasVideo: false,
         videoSources: [],
+        videoUuids: [],
       };
     }
   }
@@ -139,5 +165,42 @@ export class MediaDetector {
     }
 
     return [];
+  }
+
+  /**
+   * Polls the page until a newly generated video source or UUID is detected (delta from beforeUrls),
+   * or the timeout expires.
+   */
+  static async waitForGeneratedVideo(
+    page: Page,
+    beforeUrls: Set<string>,
+    timeoutMs = 180000,
+    pollIntervalMs = 2500,
+  ): Promise<{ videoUrl: string; uuid?: string } | null> {
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+      const result = await this.detectMedia(page);
+
+      // Check for new video sources
+      for (const src of result.videoSources) {
+        if (!beforeUrls.has(src) && src.trim().length > 0) {
+          const parsed = this.parseMediaUuids([src]);
+          return { videoUrl: src, uuid: parsed.uuids[0] };
+        }
+      }
+
+      // Check for new media URLs pointing to video
+      for (const url of result.mediaUrls) {
+        if (!beforeUrls.has(url) && (url.includes('/video/') || url.includes('.mp4'))) {
+          const parsed = this.parseMediaUuids([url]);
+          return { videoUrl: url, uuid: parsed.uuids[0] };
+        }
+      }
+
+      await page.waitForTimeout(pollIntervalMs);
+    }
+
+    return null;
   }
 }

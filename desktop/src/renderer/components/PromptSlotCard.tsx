@@ -31,7 +31,7 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
 }) => {
   const [imgError, setImgError] = useState(false);
   const slotNumber = `#${String(slot.slotIndex + 1).padStart(2, '0')}`;
-  const mediaUrl = formatMediaUrl(slot.result?.mediaPath, slot.projectId);
+  const thumbUrl = formatMediaUrl(slot.result?.thumbnailPath || slot.result?.mediaPath, slot.projectId);
   const isVideo = slot.type === 'video';
 
   // Compute CSS aspect ratio from slot result or project settings
@@ -119,15 +119,19 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
         }}
         title={slot.status === 'completed' ? 'Click to open full preview' : undefined}
       >
-        {slot.status === 'completed' && mediaUrl && !imgError ? (
+        {slot.status === 'completed' && thumbUrl && !imgError ? (
           <>
             {isVideo ? (
               <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <video
-                  src={mediaUrl}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                  muted
-                  preload="metadata"
+                <img
+                  src={thumbUrl}
+                  alt={`Slot ${slotNumber}: ${slot.promptText}`}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    display: 'block',
+                  }}
                   onError={() => setImgError(true)}
                 />
                 <div
@@ -142,14 +146,38 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
                     justifyContent: 'center',
                     color: '#ffffff',
                     boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                    pointerEvents: 'none',
                   }}
                 >
                   <PlayIcon size={18} />
                 </div>
+                {slot.result?.durationFormatted && (
+                  <div
+                    className="duration-badge"
+                    style={{
+                      position: 'absolute',
+                      bottom: '8px',
+                      right: '8px',
+                      backgroundColor: 'rgba(0, 0, 0, 0.75)',
+                      color: '#ffffff',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      zIndex: 2,
+                      pointerEvents: 'none',
+                    }}
+                  >
+                    <span>▶</span> {slot.result.durationFormatted}
+                  </div>
+                )}
               </div>
             ) : (
               <img
-                src={mediaUrl}
+                src={thumbUrl}
                 alt={`Slot ${slotNumber}: ${slot.promptText}`}
                 style={{
                   width: '100%',
@@ -230,10 +258,15 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
           marginTop: 'auto',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
             {profileName}
           </span>
+          {slot.result?.resolution && (
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+              · {slot.result.resolution}
+            </span>
+          )}
           {fileSizeLabel && (
             <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
               · {fileSizeLabel}

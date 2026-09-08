@@ -11,6 +11,8 @@ interface MediaPreviewModalProps {
   metadata?: {
     model?: string;
     ratio?: string;
+    resolution?: string;
+    duration?: string;
     fileSize?: number;
     profile?: string;
   };
@@ -87,6 +89,16 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
             {metadata?.model && (
               <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                 · {metadata.model}
+              </span>
+            )}
+            {metadata?.resolution && (
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                · {metadata.resolution}
+              </span>
+            )}
+            {metadata?.duration && (
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                · {metadata.duration}
               </span>
             )}
             {metadata?.ratio && (

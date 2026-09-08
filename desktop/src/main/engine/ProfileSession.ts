@@ -306,7 +306,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
 
     const chromeProcess = spawn(chromePath, flags, {
       detached: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'ignore', 'pipe'],
       shell: false,
     });
 
@@ -707,7 +707,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       // Detach so the Chrome window is independent of the Node parent process
       detached: false,
       // Explicitly redirect stdio so Chrome logs don't bleed into our process
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'ignore', 'pipe'],
       // IMPORTANT: never use shell: true — prevents cmd.exe injection on Windows
       shell: false,
     });

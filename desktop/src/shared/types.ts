@@ -422,6 +422,8 @@ export interface MediaDetectionResult {
   hasVideo: boolean;
   /** Video sources or posters discovered */
   videoSources: string[];
+  /** Video UUIDs extracted from video sources or redirect URLs */
+  videoUuids?: string[];
 }
 
 /**
@@ -485,11 +487,13 @@ export interface SlotMediaResult {
   width?: number;
   height?: number;
   durationSeconds?: number;
+  durationFormatted?: string;  // e.g. "4.0s"
+  resolution?: string;         // e.g. "720p"
   modelUsed: string;           // e.g. "Nano Banana 2"
   ratioUsed: string;           // e.g. "16:9"
   completedAt: string;         // ISO 8601
   fileSizeBytes: number;
-  mimeType?: string;           // e.g. "image/png", "image/webp", "image/jpeg"
+  mimeType?: string;           // e.g. "image/png", "image/webp", "image/jpeg", "video/mp4"
 }
 
 /**
