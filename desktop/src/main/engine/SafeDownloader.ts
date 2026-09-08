@@ -80,8 +80,19 @@ export class SafeDownloader {
         throw new Error(`Download received empty (0 bytes) response body for URL: ${url}`);
       }
 
+      const rawHeaders = typeof response.headers === 'function' ? response.headers() : ((response as any).headers || {});
+      const headerContentType = (rawHeaders as Record<string, string>)['content-type'] || '';
+      const detection = SafeDownloader.detectImageMime(buffer, headerContentType);
+
+      let finalPath = destinationPath;
+      const currentExt = path.extname(destinationPath).toLowerCase();
+      if (detection.isValid && detection.extension && currentExt !== detection.extension) {
+        const basePath = destinationPath.slice(0, destinationPath.length - currentExt.length);
+        finalPath = `${basePath}${detection.extension}`;
+      }
+
       // Write directly to disk
-      fs.writeFileSync(destinationPath, buffer);
+      fs.writeFileSync(finalPath, buffer);
 
       const durationMs = Date.now() - startTime;
 
@@ -95,21 +106,72 @@ export class SafeDownloader {
       }
 
       logger.info('safe_downloader', 'Background download succeeded', {
-        destinationPath,
+        destinationPath: finalPath,
         bytes: buffer.length,
+        mimeType: detection.mimeType,
+        isValidImage: detection.isValid,
         durationMs,
       });
 
       return {
-        downloadedFiles: [destinationPath],
+        downloadedFiles: [finalPath],
         bytesDownloaded: buffer.length,
-        destinationPath,
+        destinationPath: finalPath,
         durationMs,
+        mimeType: detection.mimeType,
+        isValidImage: detection.isValid,
       };
     } catch (err) {
       logger.error('safe_downloader', 'Background download error', err as Error);
       throw err;
     }
+  }
+
+  /**
+   * Detects the real image MIME type from binary magic bytes and optional Content-Type header.
+   * Supports PNG, JPEG, WebP, GIF, AVIF, BMP, and SVG.
+   */
+  static detectImageMime(
+    buffer: Buffer,
+    headerContentType = '',
+  ): { mimeType: string; extension: string; isValid: boolean } {
+    if (buffer.length >= 8 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+      return { mimeType: 'image/png', extension: '.png', isValid: true };
+    }
+    if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+      return { mimeType: 'image/jpeg', extension: '.jpg', isValid: true };
+    }
+    if (
+      buffer.length >= 12 &&
+      buffer.toString('ascii', 0, 4) === 'RIFF' &&
+      buffer.toString('ascii', 8, 12) === 'WEBP'
+    ) {
+      return { mimeType: 'image/webp', extension: '.webp', isValid: true };
+    }
+    if (buffer.length >= 4 && buffer.toString('ascii', 0, 4) === 'GIF8') {
+      return { mimeType: 'image/gif', extension: '.gif', isValid: true };
+    }
+    if (buffer.length >= 12 && buffer.toString('ascii', 4, 8) === 'ftyp') {
+      return { mimeType: 'image/avif', extension: '.avif', isValid: true };
+    }
+    if (buffer.length >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4d) {
+      return { mimeType: 'image/bmp', extension: '.bmp', isValid: true };
+    }
+
+    // Inspect Content-Type header as fallback
+    if (headerContentType) {
+      const cleanHeader = headerContentType.split(';')[0]?.trim().toLowerCase() ?? '';
+      if (cleanHeader.startsWith('image/')) {
+        let ext = '.png';
+        if (cleanHeader === 'image/jpeg') ext = '.jpg';
+        else if (cleanHeader === 'image/webp') ext = '.webp';
+        else if (cleanHeader === 'image/gif') ext = '.gif';
+        else if (cleanHeader === 'image/avif') ext = '.avif';
+        return { mimeType: cleanHeader, extension: ext, isValid: true };
+      }
+    }
+
+    return { mimeType: 'application/octet-stream', extension: '.bin', isValid: false };
   }
 
   /**

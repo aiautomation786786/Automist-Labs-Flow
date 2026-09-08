@@ -120,8 +120,7 @@ export class ModelSelector {
       '[role="menuitem"]:has-text("Nano Banana 2")',
       'li:has-text("Nano Banana 2")',
       'div:has-text("Nano Banana 2")',
-      'button:has-text("Nano Banana")',
-      '[role="option"]:has-text("Nano Banana")',
+      'span:has-text("Nano Banana 2")',
     ];
 
     const optionLocator = await FlowDriver.findFirstVisible(page, optionSelectors, 3000);
@@ -144,9 +143,9 @@ export class ModelSelector {
     await optionLocator.click();
     await page.waitForTimeout(800);
 
-    // Step 5: Verify the newly selected model
+    // Step 5: Verify the newly selected model strictly contains "Nano Banana 2"
     const modelDetectedAfter = await this.detectCurrentModel(page);
-    const verified = !!modelDetectedAfter && modelDetectedAfter.includes('Nano Banana');
+    const verified = !!modelDetectedAfter && modelDetectedAfter.toLowerCase().includes('nano banana 2');
 
     logger.info('model_selector', 'Model selection complete', {
       modelDetectedBefore,

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { ProfileSessionSnapshot, ProfileSessionStatus } from '../../shared/types';
+import type { ProfileSessionSnapshot, DiscoveredLocalProfile } from '../../shared/types';
 import { PlusIcon, TrashIcon, ExternalLinkIcon, RefreshIcon, UsersIcon, CheckIcon } from '../components/Icons';
 import { ConfirmModal } from '../components/ConfirmModal';
 
@@ -12,12 +12,24 @@ export const ProfilesScreen: React.FC = () => {
   const [actionFeedback, setActionFeedback] = useState<Record<string, { msg: string; isError?: boolean }>>({});
   const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
 
-  // Add Profile Wizard Modal State
+  // Add Dedicated Profile Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newProfileName, setNewProfileName] = useState('');
   const [newProfileEmail, setNewProfileEmail] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [createMsg, setCreateMsg] = useState<string | null>(null);
+
+  // Connect Existing Profile Modal State
+  const [isExistingModalOpen, setIsExistingModalOpen] = useState(false);
+  const [detectedLocalProfiles, setDetectedLocalProfiles] = useState<
+    Array<DiscoveredLocalProfile & { isOpen: boolean; isAttachable: boolean; cdpPort?: number }>
+  >([]);
+  const [loadingLocalProfiles, setLoadingLocalProfiles] = useState(false);
+  const [selectedFolder, setSelectedFolder] = useState('Default');
+  const [existingDisplayName, setExistingDisplayName] = useState('');
+  const [existingEmail, setExistingEmail] = useState('');
+  const [isConnectingExisting, setIsConnectingExisting] = useState(false);
+  const [connectExistingMsg, setConnectExistingMsg] = useState<{ text: string; isError?: boolean } | null>(null);
 
   const loadProfiles = async () => {
     if (!window.flowApi) return;
@@ -52,7 +64,7 @@ export const ProfilesScreen: React.FC = () => {
         delete next[profileId];
         return next;
       });
-    }, 6000);
+    }, 8000);
   };
 
   const handleStart = async (profileId: string) => {
@@ -87,9 +99,9 @@ export const ProfilesScreen: React.FC = () => {
     if (!window.flowApi) return;
     try {
       setActionLoading((prev) => ({ ...prev, [profileId]: true }));
-      setFeedback(profileId, 'Opening visible Chrome window for manual sign-in...');
+      setFeedback(profileId, 'Opening Google Flow tab...');
       const res = await window.flowApi.openSignIn(profileId);
-      setFeedback(profileId, res.message || 'Chrome window opened.');
+      setFeedback(profileId, res.message || 'Browser opened.');
       await loadProfiles();
     } catch (err) {
       setFeedback(profileId, `Open failed: ${(err as Error).message}`, true);
@@ -114,6 +126,20 @@ export const ProfilesScreen: React.FC = () => {
       await loadProfiles();
     } catch (err) {
       setFeedback(profileId, `Verification check failed: ${(err as Error).message}`, true);
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [profileId]: false }));
+    }
+  };
+
+  const handleDetectState = async (profileId: string) => {
+    if (!window.flowApi?.detectProfileState) return;
+    try {
+      setActionLoading((prev) => ({ ...prev, [profileId]: true }));
+      const res = await window.flowApi.detectProfileState(profileId);
+      setFeedback(profileId, res.details, res.state === 'open_not_attachable');
+      await loadProfiles();
+    } catch (err) {
+      setFeedback(profileId, `Detection error: ${(err as Error).message}`, true);
     } finally {
       setActionLoading((prev) => ({ ...prev, [profileId]: false }));
     }
@@ -174,25 +200,149 @@ export const ProfilesScreen: React.FC = () => {
     }
   };
 
-  const getStatusBadge = (status: ProfileSessionStatus) => {
-    switch (status) {
-      case 'ready':
-        return <span className="badge badge-ready">Connected (Ready)</span>;
-      case 'auth_required':
-        return <span className="badge badge-attention">Login Required</span>;
-      case 'chrome_launched':
-      case 'connecting':
-      case 'connected':
-        return <span className="badge badge-draft">Browser Ready</span>;
-      case 'busy':
-        return <span className="badge badge-running">Busy</span>;
-      case 'error':
-        return <span className="badge badge-attention" style={{ backgroundColor: 'var(--danger-subtle)', color: 'var(--danger)' }}>Error</span>;
-      case 'stopped':
-      case 'created':
-      default:
-        return <span className="badge badge-draft">Stopped</span>;
+  const handleOpenConnectExistingModal = async () => {
+    setIsExistingModalOpen(true);
+    setConnectExistingMsg(null);
+    if (!window.flowApi?.detectLocalChromeProfiles) return;
+    try {
+      setLoadingLocalProfiles(true);
+      const list = await window.flowApi.detectLocalChromeProfiles();
+      setDetectedLocalProfiles(list);
+      if (list.length > 0) {
+        const first = list[0];
+        setSelectedFolder(first.profileDirectory);
+        setExistingDisplayName(first.accountDisplayName || first.profileDisplayName || 'AI Automation');
+        setExistingEmail(first.accountEmail || '');
+      } else {
+        setSelectedFolder('Default');
+        setExistingDisplayName('AI Automation');
+        setExistingEmail('');
+      }
+    } catch (err) {
+      setConnectExistingMsg({ text: `Failed to detect profiles: ${(err as Error).message}`, isError: true });
+    } finally {
+      setLoadingLocalProfiles(false);
     }
+  };
+
+  const handleSelectFolder = (folderName: string) => {
+    setSelectedFolder(folderName);
+    const found = detectedLocalProfiles.find((p) => p.profileDirectory === folderName);
+    if (found) {
+      setExistingDisplayName(found.accountDisplayName || found.profileDisplayName || 'AI Automation');
+      setExistingEmail(found.accountEmail || '');
+    }
+  };
+
+  const handleConnectExistingSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!window.flowApi?.createExistingProfile) return;
+    try {
+      setIsConnectingExisting(true);
+      setConnectExistingMsg({ text: 'Registering existing profile...' });
+      const created = await window.flowApi.createExistingProfile({
+        displayName: existingDisplayName.trim() || 'AI Automation',
+        localProfileDirectory: selectedFolder,
+        expectedEmail: existingEmail.trim() || undefined,
+      });
+
+      setConnectExistingMsg({ text: 'Checking whether this profile is currently open or attachable...' });
+      const detection = window.flowApi.detectProfileState
+        ? await window.flowApi.detectProfileState(created.profileId)
+        : null;
+
+      if (detection?.state === 'open_and_attachable') {
+        setConnectExistingMsg({ text: 'Profile is open and attachable! Opening Google Flow in a new tab...' });
+        await window.flowApi.openSignIn(created.profileId);
+        setIsExistingModalOpen(false);
+        setFeedback(created.profileId, 'Connected to running Chrome session! Flow opened in new tab.');
+      } else if (detection?.state === 'open_not_attachable') {
+        setIsExistingModalOpen(false);
+        setFeedback(created.profileId, detection.details, true);
+      } else {
+        setIsExistingModalOpen(false);
+        setFeedback(created.profileId, 'Profile registered (currently closed). Ready to launch.');
+      }
+      await loadProfiles();
+    } catch (err) {
+      setConnectExistingMsg({ text: `Error: ${(err as Error).message}`, isError: true });
+    } finally {
+      setIsConnectingExisting(false);
+    }
+  };
+
+  const getStatusBadge = (p: ProfileSessionSnapshot) => {
+    const badges: React.ReactNode[] = [];
+
+    // 1. Connection State Badge
+    if (p.connectionState === 'connected_existing') {
+      badges.push(
+        <span key="conn" className="badge badge-ready">
+          Connected — Existing Chrome
+        </span>
+      );
+    } else if (p.connectionState === 'connected_dedicated') {
+      badges.push(
+        <span key="conn" className="badge badge-ready">
+          Connected — Dedicated Flow Browser
+        </span>
+      );
+    } else if (p.connectionState === 'profile_open_not_attachable') {
+      badges.push(
+        <span
+          key="conn"
+          className="badge badge-attention"
+          style={{ backgroundColor: 'rgba(234, 179, 8, 0.15)', color: '#eab308' }}
+        >
+          Chrome Profile Open — Not Attachable
+        </span>
+      );
+    } else if (p.connectionState === 'profile_closed' || p.status === 'stopped' || p.status === 'created') {
+      badges.push(
+        <span key="conn" className="badge badge-draft">
+          Profile Closed
+        </span>
+      );
+    }
+
+    // 2. Auth / Operational State Badge
+    if (p.status === 'ready') {
+      badges.push(
+        <span key="status" className="badge badge-ready">
+          Ready (Authenticated)
+        </span>
+      );
+    } else if (p.status === 'auth_required') {
+      badges.push(
+        <span key="status" className="badge badge-attention">
+          Login Required
+        </span>
+      );
+    } else if (p.status === 'chrome_launched' || p.status === 'connecting' || p.status === 'connected') {
+      badges.push(
+        <span key="status" className="badge badge-draft">
+          Browser Ready
+        </span>
+      );
+    } else if (p.status === 'busy') {
+      badges.push(
+        <span key="status" className="badge badge-running">
+          Busy
+        </span>
+      );
+    } else if (p.status === 'error') {
+      badges.push(
+        <span
+          key="status"
+          className="badge badge-attention"
+          style={{ backgroundColor: 'var(--danger-subtle)', color: 'var(--danger)' }}
+        >
+          Error
+        </span>
+      );
+    }
+
+    return <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>{badges}</div>;
   };
 
   return (
@@ -208,6 +358,14 @@ export const ProfilesScreen: React.FC = () => {
         <div style={{ display: 'flex', gap: '10px' }}>
           <button className="btn-secondary" onClick={loadProfiles} title="Refresh profiles">
             <RefreshIcon size={14} />
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={handleOpenConnectExistingModal}
+            title="Connect an already open or existing local Chrome profile"
+          >
+            <UsersIcon size={14} />
+            Connect Existing Chrome Profile
           </button>
           <button className="btn-primary" onClick={() => setIsAddModalOpen(true)}>
             <PlusIcon size={16} />
@@ -233,7 +391,7 @@ export const ProfilesScreen: React.FC = () => {
       >
         <div style={{ fontSize: '18px', flexShrink: 0 }}>🛡️</div>
         <div>
-          <strong style={{ color: 'var(--text-primary)' }}>Isolated Browser Sessions:</strong> Flow profiles use separate browser sessions. Your normal Chrome profiles are not modified or closed.
+          <strong style={{ color: 'var(--text-primary)' }}>Safe Browser Architecture:</strong> Flow profiles use separate browser sessions. Supports attaching to running Chrome profiles without restarting them, or launching dedicated isolated profiles under <code>%LOCALAPPDATA%\AutomistLabs</code>. Normal browser sessions are never killed.
         </div>
       </div>
 
@@ -258,13 +416,19 @@ export const ProfilesScreen: React.FC = () => {
         >
           <UsersIcon size={36} style={{ color: 'var(--text-muted)' }} />
           <h3>No Google Flow profiles configured</h3>
-          <p style={{ maxWidth: '440px' }}>
-            Add at least one profile to begin running automation tasks. Each profile maintains its own dedicated directory, cookies, and CDP port, completely separate from your personal Chrome.
+          <p style={{ maxWidth: '480px' }}>
+            Connect an existing local Chrome profile (such as AI Automation) or create a dedicated Flow profile.
           </p>
-          <button className="btn-primary" onClick={() => setIsAddModalOpen(true)} style={{ marginTop: '8px' }}>
-            <PlusIcon size={16} />
-            Add First Profile
-          </button>
+          <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+            <button className="btn-secondary" onClick={handleOpenConnectExistingModal}>
+              <UsersIcon size={14} />
+              Connect Existing Chrome Profile
+            </button>
+            <button className="btn-primary" onClick={() => setIsAddModalOpen(true)}>
+              <PlusIcon size={16} />
+              Add Flow Profile
+            </button>
+          </div>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -291,15 +455,19 @@ export const ProfilesScreen: React.FC = () => {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <h3 style={{ fontSize: '15px', fontWeight: 600 }}>{p.displayName}</h3>
-                      {getStatusBadge(p.status)}
+                      {getStatusBadge(p)}
                     </div>
 
                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', flexWrap: 'wrap', gap: '16px', marginTop: '2px' }}>
+                      <span>
+                        Mode: <strong>{p.connectionMode === 'existing_chrome' ? `Existing Chrome (${p.localProfileDirectory ?? 'Default'})` : 'Dedicated Flow Browser'}</strong>
+                      </span>
                       <span>Account: <strong>{p.detectedEmail ?? p.expectedEmail ?? 'Not signed in yet'}</strong></span>
                       {p.expectedEmail && p.detectedEmail && p.expectedEmail !== p.detectedEmail && (
                         <span>Expected: <em>{p.expectedEmail}</em></span>
                       )}
                       <span>CDP Port: <code>{p.cdpPort}</code></span>
+                      {p.tabCount !== undefined && <span>Tabs: <code>{p.tabCount}</code></span>}
                       {p.flowUrl && <span>Locale URL: <code>{p.flowUrl}</code></span>}
                     </div>
                   </div>
@@ -310,10 +478,19 @@ export const ProfilesScreen: React.FC = () => {
                       className="btn-primary btn-sm"
                       onClick={() => handleOpenSignIn(p.profileId)}
                       disabled={busy}
-                      title="Open visible Chrome window to sign into Google Flow"
+                      title="Open Google Flow tab in this profile"
                     >
                       <ExternalLinkIcon size={12} />
                       Open Sign-In
+                    </button>
+
+                    <button
+                      className="btn-secondary btn-sm"
+                      onClick={() => handleDetectState(p.profileId)}
+                      disabled={busy}
+                      title="Detect whether Chrome profile is currently open or attachable"
+                    >
+                      Detect State
                     </button>
 
                     <button
@@ -376,6 +553,7 @@ export const ProfilesScreen: React.FC = () => {
                       backgroundColor: feedback.isError ? 'var(--danger-subtle)' : 'var(--bg-subtle)',
                       color: feedback.isError ? 'var(--danger)' : 'var(--text-secondary)',
                       border: `1px solid ${feedback.isError ? 'var(--danger)' : 'var(--border-color)'}`,
+                      lineHeight: '1.4',
                     }}
                   >
                     {feedback.msg}
@@ -391,20 +569,142 @@ export const ProfilesScreen: React.FC = () => {
       <ConfirmModal
         isOpen={profileToDelete !== null}
         title="Remove Profile"
-        message={`Are you sure you want to remove "${profileToDelete?.displayName}"? The profile's Chrome cookies and local directory will be deleted. You will need to sign in again if you re-create it.`}
+        message={`Are you sure you want to remove "${profileToDelete?.displayName}"? The profile registration will be removed.`}
         confirmLabel="Remove Profile"
         isDanger={true}
         onConfirm={handleDeleteConfirm}
         onCancel={() => setProfileToDelete(null)}
       />
 
-      {/* Add Profile Setup Modal */}
+      {/* Connect Existing Profile Modal */}
+      {isExistingModalOpen && (
+        <div className="modal-overlay" onClick={() => !isConnectingExisting && setIsExistingModalOpen(false)}>
+          <div className="modal-content" style={{ maxWidth: '560px' }} onClick={(e) => e.stopPropagation()}>
+            <form onSubmit={handleConnectExistingSubmit}>
+              <div className="modal-header">
+                <h2>Connect Existing Chrome Profile</h2>
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => setIsExistingModalOpen(false)}
+                  disabled={isConnectingExisting}
+                >
+                  &times;
+                </button>
+              </div>
+
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <p style={{ fontSize: '13px', lineHeight: '1.5' }}>
+                  Connect an existing Google Chrome profile without restarting or terminating your browser. If Chrome is already running with remote debugging enabled, Flow will open in a <strong>new tab</strong> while keeping all existing tabs open.
+                </p>
+
+                {loadingLocalProfiles ? (
+                  <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Scanning local Chrome profiles...
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '13px', fontWeight: 500 }}>Select Local Chrome Profile *</label>
+                      <select
+                        value={selectedFolder}
+                        onChange={(e) => handleSelectFolder(e.target.value)}
+                        style={{ padding: '8px 10px', borderRadius: 'var(--radius-sm)' }}
+                      >
+                        {detectedLocalProfiles.map((lp) => (
+                          <option key={lp.profileDirectory} value={lp.profileDirectory}>
+                            {lp.accountDisplayName || lp.profileDisplayName} ({lp.profileDirectory}) {lp.accountEmail ? `— ${lp.accountEmail}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '13px', fontWeight: 500 }}>Display Name *</label>
+                      <input
+                        type="text"
+                        value={existingDisplayName}
+                        onChange={(e) => setExistingDisplayName(e.target.value)}
+                        placeholder="e.g. AI Automation"
+                        required
+                      />
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '13px', fontWeight: 500 }}>Account Email Hint</label>
+                      <input
+                        type="text"
+                        value={existingEmail}
+                        onChange={(e) => setExistingEmail(e.target.value)}
+                        placeholder="e.g. aiautomation786786@gmail.com"
+                      />
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        Used only as a display label. Passwords and credentials are never requested or stored.
+                      </span>
+                    </div>
+
+                    <div
+                      style={{
+                        backgroundColor: 'var(--bg-subtle)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: 'var(--radius-sm)',
+                        padding: '10px 14px',
+                        fontSize: '12px',
+                        color: 'var(--text-secondary)',
+                      }}
+                    >
+                      <strong>Connection behavior:</strong>
+                      <ul style={{ paddingLeft: '18px', marginTop: '6px', lineHeight: '1.6' }}>
+                        <li><strong>Open &amp; attachable:</strong> Flow attaches to the live session and opens a new tab. Existing tabs remain untouched.</li>
+                        <li><strong>Open but not attachable:</strong> You will be notified safely. Chrome will not be closed or killed.</li>
+                        <li><strong>Closed:</strong> The app will launch the profile with remote debugging enabled.</li>
+                      </ul>
+                    </div>
+                  </>
+                )}
+
+                {connectExistingMsg && (
+                  <div
+                    style={{
+                      fontSize: '12px',
+                      color: connectExistingMsg.isError ? 'var(--danger)' : 'var(--primary)',
+                      fontWeight: 500,
+                    }}
+                  >
+                    {connectExistingMsg.text}
+                  </div>
+                )}
+              </div>
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setIsExistingModalOpen(false)}
+                  disabled={isConnectingExisting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={isConnectingExisting || !existingDisplayName.trim()}
+                >
+                  {isConnectingExisting ? 'Connecting...' : 'Connect Profile'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Dedicated Profile Setup Modal */}
       {isAddModalOpen && (
         <div className="modal-overlay" onClick={() => !isCreating && setIsAddModalOpen(false)}>
           <div className="modal-content" style={{ maxWidth: '540px' }} onClick={(e) => e.stopPropagation()}>
             <form onSubmit={handleCreateProfileSubmit}>
               <div className="modal-header">
-                <h2>Add Google Flow Profile</h2>
+                <h2>Add Dedicated Flow Profile</h2>
                 <button
                   type="button"
                   className="btn-secondary btn-sm"

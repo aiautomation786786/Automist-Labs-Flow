@@ -182,16 +182,22 @@ export class ImageExecutionService {
       // Step 8: Non-Navigating Background Download via SafeDownloader
       await this.updateJobStatus(projectId, jobId, 'downloading', 'Downloading generated image in background');
 
-      const destinationPath = AssetManager.getImageDestinationPath(projectId, slotIndex, promptId, jobId);
+      let destinationPath = AssetManager.getImageDestinationPath(projectId, slotIndex, promptId, jobId);
+      let detectedMimeType: string | undefined;
 
       if (triggerClick) {
-        await automation.downloadMedia(newUuid, destinationPath);
+        const downloadResult = await automation.downloadMedia(newUuid, destinationPath);
+        if (downloadResult.destinationPath) {
+          destinationPath = downloadResult.destinationPath;
+        }
+        detectedMimeType = downloadResult.mimeType;
       } else {
         // Write mock payload in dry-run tests
         const fs = await import('fs');
         const path = await import('path');
         fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
         fs.writeFileSync(destinationPath, Buffer.from('TEST_IMAGE_MOCK_PAYLOAD'));
+        detectedMimeType = 'image/png';
       }
 
       // Step 9: Validate Output File Safety
@@ -215,6 +221,7 @@ export class ImageExecutionService {
           ratioUsed: requestedRatio,
           completedAt: new Date().toISOString(),
           fileSizeBytes: fileCheck.sizeBytes,
+          mimeType: detectedMimeType,
         },
       });
 

@@ -29,6 +29,7 @@ import type {
 import { AppLogger } from '../utils/AppLogger';
 import { FlowAuthDetector } from './FlowAuthDetector';
 import { FlowAutomationSession } from './FlowAutomationSession';
+import { LocalChromeProfileDiscoverer } from './LocalChromeProfileDiscoverer';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -100,6 +101,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private automationSession: FlowAutomationSession | null = null;
+  private isExistingBrowser = false;
 
   // ---- Auth / locale (discovered at runtime) ------------------------------
   private detectedEmail: string | null = null;
@@ -132,6 +134,50 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     this.errorMessage = null;
 
     try {
+      if (this.config.connectionMode === 'existing_chrome') {
+        const detection = await LocalChromeProfileDiscoverer.detectProfileState({
+          userDataDir: this.config.localUserDataDir,
+          profileDirectory: this.config.localProfileDirectory || this.config.chromeProfileName,
+          email: this.config.expectedEmail ?? undefined,
+          displayName: this.config.displayName,
+          preferredCdpPort: this.config.cdpPort,
+        });
+
+        if (detection.state === 'open_not_attachable') {
+          // Case B: Profile is open but NOT automation-connectable
+          // Do NOT kill or close it. Do NOT launch another browser against the same normal profile.
+          this.log.warn('session', 'Existing profile is running without automation endpoint', {
+            profile: detection.profileDisplayName || detection.profileDirectory,
+            pids: detection.pids,
+          });
+          throw new Error(detection.details);
+        }
+
+        if (detection.state === 'open_and_attachable') {
+          // Case A: Profile is already open and automation-connectable
+          this.isExistingBrowser = true;
+          if (detection.cdpPort) {
+            this.config.cdpPort = detection.cdpPort;
+          }
+          this.log.info('session', 'Attaching to running Chrome profile', {
+            profile: detection.profileDisplayName || detection.profileDirectory,
+            cdpPort: this.config.cdpPort,
+          });
+          await this.connectPlaywright();
+          await this.checkAuth();
+          return;
+        }
+
+        // Case C: Profile is not open. Launch Chrome session targeting this local profile.
+        this.isExistingBrowser = false;
+        await this.launchChrome(headless);
+        await this.connectPlaywright();
+        await this.checkAuth();
+        return;
+      }
+
+      // Mode B: Dedicated application-managed profile
+      this.isExistingBrowser = false;
       await this.launchChrome(headless);
       await this.connectPlaywright();
       await this.checkAuth();
@@ -143,6 +189,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       this.emit('error', this.profileId, message);
       // Attempt cleanup so resources are not leaked
       await this.cleanupResources();
+      throw err;
     }
   }
 
@@ -172,6 +219,19 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
 
   /** Returns the current snapshot for this session. */
   getSnapshot(): ProfileSessionSnapshot {
+    let connectionState: ProfileSessionSnapshot['connectionState'] = 'profile_closed';
+    if (this._status === 'ready') {
+      connectionState = this.isExistingBrowser ? 'connected_existing' : 'connected_dedicated';
+    } else if (this._status === 'auth_required') {
+      connectionState = 'login_required';
+    } else if (this._status === 'error') {
+      connectionState = this.errorMessage?.includes('does not expose an automation connection')
+        ? 'profile_open_not_attachable'
+        : 'error';
+    } else if (this._status === 'connected' || this._status === 'busy') {
+      connectionState = this.isExistingBrowser ? 'connected_existing' : 'connected_dedicated';
+    }
+
     return {
       profileId: this.profileId,
       displayName: this.config.displayName,
@@ -184,6 +244,11 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       errorMessage: this.errorMessage,
       lastStatusChange: this.lastStatusChange.toISOString(),
       uptimeMs: this.launchedAt ? Date.now() - this.launchedAt : 0,
+      connectionMode: this.config.connectionMode ?? 'dedicated_flow_browser',
+      connectionState,
+      tabCount: this.context ? this.context.pages().length : 0,
+      flowTabUrl: this.page ? this.page.url() : null,
+      localProfileDirectory: this.config.localProfileDirectory,
     };
   }
 
@@ -258,19 +323,26 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       // Not yet active; proceed with launching fresh dedicated Chrome process
     }
 
+    const effectiveUserData = (this.config.connectionMode === 'existing_chrome' && this.config.localUserDataDir)
+      ? this.config.localUserDataDir
+      : userDataDir;
+    const effectiveProfileDir = (this.config.connectionMode === 'existing_chrome' && this.config.localProfileDirectory)
+      ? this.config.localProfileDirectory
+      : this.config.chromeProfileName;
+
     // Verify paths
     if (!fs.existsSync(chromePath)) {
       throw new Error(`Chrome not found at: ${chromePath}`);
     }
-    if (!fs.existsSync(userDataDir)) {
-      fs.mkdirSync(userDataDir, { recursive: true });
+    if (!fs.existsSync(effectiveUserData)) {
+      fs.mkdirSync(effectiveUserData, { recursive: true });
     }
 
     const flags: string[] = [
       ...CHROME_FLAGS_BASE,
       `--remote-debugging-port=${cdpPort}`,
-      `--user-data-dir=${userDataDir}`,
-      `--profile-directory=${this.config.chromeProfileName}`,
+      `--user-data-dir=${effectiveUserData}`,
+      `--profile-directory=${effectiveProfileDir}`,
     ];
 
     if (headless) {
@@ -282,7 +354,8 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       chromePath,
       cdpPort,
       headless,
-      userDataDir,
+      userDataDir: effectiveUserData,
+      profileDirectory: effectiveProfileDir,
     });
 
     const chromeProcess = spawn(chromePath, flags, {
@@ -386,14 +459,24 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     const contexts = this.browser.contexts();
     this.context = contexts[0] ?? await this.browser.newContext();
 
-    // Use the first existing page, or open a new one
-    const pages = this.context.pages();
-    this.page = pages[0] ?? await this.context.newPage();
+    if (this.isExistingBrowser || this.config.connectionMode === 'existing_chrome') {
+      // CRITICAL REQUIREMENT 5: Always create a NEW tab in the existing browser.
+      // NEVER navigate or close existing tabs!
+      this.page = await this.context.newPage();
+      this.log.info('playwright', 'Opened dedicated new tab for Google Flow in existing Chrome session', {
+        totalTabs: this.context.pages().length,
+      });
+    } else {
+      // In dedicated application-managed browser mode, use the initial blank tab or open a new one
+      const pages = this.context.pages();
+      this.page = pages[0] ?? await this.context.newPage();
+    }
 
     this.setStatus('connected');
     this.log.info('playwright', 'CDP connection established', {
       contextsFound: contexts.length,
-      pagesFound: pages.length,
+      pagesFound: this.context.pages().length,
+      isExistingBrowser: this.isExistingBrowser,
     });
   }
 
@@ -465,6 +548,25 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   // ---------------------------------------------------------------------------
 
   private async cleanupResources(): Promise<void> {
+    // If connected to an existing browser, close ONLY our dedicated Flow tab
+    if (this.isExistingBrowser) {
+      this.log.info('session', 'Detaching from existing Chrome session (preserving existing tabs & browser process)');
+      if (this.page && !this.page.isClosed()) {
+        try {
+          await this.page.close();
+        } catch { /* ignore */ }
+      }
+      this.page = null;
+      if (this.browser) {
+        try {
+          await Promise.race([this.browser.close(), delay(1000)]);
+        } catch { /* ignore */ }
+        this.browser = null;
+      }
+      this.context = null;
+      return; // NEVER terminate the user's running Chrome instance!
+    }
+
     await this.cleanupPlaywrightObjects();
     await this.killChrome();
   }

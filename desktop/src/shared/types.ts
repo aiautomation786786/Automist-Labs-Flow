@@ -76,6 +76,39 @@ export interface ProfileConfig {
    * Optional notes field for users to describe this profile.
    */
   notes: string;
+
+  /**
+   * Browser connection mode:
+   *  - 'dedicated_flow_browser': application-managed profile directory (%LOCALAPPDATA%\AutomistLabs\FlowProfiles\...)
+   *  - 'existing_chrome': connects to an existing local Chrome profile (e.g. "AI Automation" in Chrome's User Data)
+   */
+  connectionMode?: 'dedicated_flow_browser' | 'existing_chrome';
+
+  /** For existing_chrome mode: the local Chrome profile subfolder (e.g. 'Default', 'Profile 1') */
+  localProfileDirectory?: string;
+
+  /** For existing_chrome mode: the root Chrome user data dir (e.g. '%LOCALAPPDATA%\Google\Chrome\User Data') */
+  localUserDataDir?: string;
+
+  /** Preferred CDP port for existing profile attachment (defaults to 9222) */
+  preferredCdpPort?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Existing Profile State & Detection
+// ---------------------------------------------------------------------------
+
+export type ExistingProfileState = 'not_open' | 'open_and_attachable' | 'open_not_attachable';
+
+export interface ExistingProfileDetectionResult {
+  state: ExistingProfileState;
+  profileDirectory: string;
+  userDataDir: string;
+  profileDisplayName?: string;
+  accountEmail?: string;
+  pids: number[];
+  cdpPort?: number;
+  details: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +188,18 @@ export interface ProfileSessionSnapshot {
   errorMessage: string | null;
   lastStatusChange: string; // ISO 8601
   uptimeMs: number;         // Milliseconds since Chrome was launched.
+  connectionMode?: 'dedicated_flow_browser' | 'existing_chrome';
+  connectionState?:
+    | 'connected_existing'
+    | 'connected_dedicated'
+    | 'profile_open_not_attachable'
+    | 'profile_closed'
+    | 'login_required'
+    | 'authenticated'
+    | 'error';
+  tabCount?: number;
+  flowTabUrl?: string | null;
+  localProfileDirectory?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -387,6 +432,10 @@ export interface MediaDownloadResult {
   destinationPath: string;
   /** Time elapsed in milliseconds */
   durationMs: number;
+  /** Actual detected MIME type from response or file magic bytes */
+  mimeType?: string;
+  /** True if the downloaded binary is confirmed to be a valid supported image */
+  isValidImage?: boolean;
 }
 
 /**
@@ -427,7 +476,7 @@ export type PromptSlotStatus =
  */
 export interface SlotMediaResult {
   assetId: string;
-  mediaPath: string;           // Absolute path to local .png / .mp4
+  mediaPath: string;           // Absolute path to local image / video
   thumbnailPath?: string;      // Local thumbnail path
   width?: number;
   height?: number;
@@ -436,6 +485,7 @@ export interface SlotMediaResult {
   ratioUsed: string;           // e.g. "16:9"
   completedAt: string;         // ISO 8601
   fileSizeBytes: number;
+  mimeType?: string;           // e.g. "image/png", "image/webp", "image/jpeg"
 }
 
 /**
@@ -651,6 +701,9 @@ export interface FlowApi {
   openSignIn: (profileId: string) => Promise<{ success: boolean; message: string }>;
   verifyAccount: (profileId: string) => Promise<{ success: boolean; status: ProfileSessionStatus; detectedEmail: string | null; error?: string }>;
   testConnection: (profileId: string) => Promise<{ success: boolean; port: number; responsive: boolean; status: ProfileSessionStatus }>;
+  detectLocalChromeProfiles?: () => Promise<Array<DiscoveredLocalProfile & { isOpen: boolean; isAttachable: boolean; cdpPort?: number }>>;
+  detectProfileState?: (target: string | { userDataDir?: string; profileDirectory?: string; email?: string; displayName?: string; preferredCdpPort?: number }) => Promise<ExistingProfileDetectionResult>;
+  createExistingProfile?: (params: { displayName: string; localProfileDirectory: string; localUserDataDir?: string; expectedEmail?: string; notes?: string; preferredCdpPort?: number }) => Promise<ProfileConfig>;
 
   // Settings & System
   getAppInfo: () => Promise<{ appDataDir: string; version: string; platform: string }>;

@@ -444,6 +444,145 @@ export class LocalChromeProfileDiscoverer {
     }
   }
 
+  /**
+   * Checks whether a specific Chrome profile directory is actively in use
+   * by inspecting exclusive file locks on session files (e.g. Network\Cookies, Web Data, History).
+   */
+  static isProfileDirectoryLocked(profilePath: string): { inUse: boolean; lockedFile?: string } {
+    if (!fs.existsSync(profilePath)) {
+      return { inUse: false };
+    }
+
+    const checkFiles = [
+      path.join(profilePath, 'Network', 'Cookies'),
+      path.join(profilePath, 'Web Data'),
+      path.join(profilePath, 'History'),
+      path.join(profilePath, 'Preferences'),
+      path.join(profilePath, 'Session Storage'),
+    ];
+
+    for (const f of checkFiles) {
+      if (fs.existsSync(f)) {
+        try {
+          const fd = fs.openSync(f, 'r+');
+          fs.closeSync(fd);
+        } catch (err: unknown) {
+          const code = (err as { code?: string })?.code;
+          if (code === 'EBUSY' || code === 'EPERM') {
+            return { inUse: true, lockedFile: f };
+          }
+        }
+      }
+    }
+
+    return { inUse: false };
+  }
+
+  /**
+   * Searches for an active CDP endpoint across candidate ports.
+   */
+  static async findActiveCdpEndpoint(preferredPort?: number): Promise<{ port: number } | null> {
+    const candidatePorts = preferredPort
+      ? [preferredPort, 9222, 9223, 9224, 9225]
+      : [9222, 9223, 9224, 9225];
+    const uniquePorts = [...new Set(candidatePorts)];
+
+    for (const port of uniquePorts) {
+      try {
+        const isOk = await this.probePort(port);
+        if (isOk) {
+          return { port };
+        }
+      } catch {
+        // continue
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Inspects whether the requested Flow/Google profile is already running,
+   * distinguishing Case A (open & attachable), Case B (open but not attachable),
+   * and Case C (not open).
+   */
+  static async detectProfileState(target: {
+    userDataDir?: string;
+    profileDirectory?: string;
+    email?: string;
+    displayName?: string;
+    preferredCdpPort?: number;
+  }): Promise<import('../../shared/types').ExistingProfileDetectionResult> {
+    const userDataDir = target.userDataDir || this.discoverChromeUserDataDir() || '';
+    let profileDirectory = target.profileDirectory;
+    let profileDisplayName = target.displayName;
+    let accountEmail = target.email;
+
+    // If profileDirectory is not specified, resolve it via scanProfiles & findMatchingProfile
+    if (!profileDirectory && userDataDir && (target.email || target.displayName)) {
+      const profiles = this.scanProfiles(userDataDir);
+      const match = this.findMatchingProfile(profiles, { email: target.email, displayName: target.displayName });
+      if (match.status === 'exact_match' && match.match) {
+        profileDirectory = match.match.profileDirectory;
+        profileDisplayName = match.match.profileDisplayName;
+        accountEmail = match.match.accountEmail || accountEmail;
+      }
+    }
+
+    if (!profileDirectory) {
+      profileDirectory = 'Default';
+    }
+
+    const fullProfilePath = path.join(userDataDir, profileDirectory);
+
+    // 1. Check process-level in-use for this user-data directory
+    const procInfo = await this.isProfileInUse(userDataDir, profileDirectory);
+    // 2. Check profile-specific lock status
+    const lockInfo = this.isProfileDirectoryLocked(fullProfilePath);
+
+    // Specific profile is considered open if its folder is locked OR a dedicated Chrome instance is running it
+    const isProfileOpen = lockInfo.inUse || (procInfo.inUse && procInfo.pids.length > 0);
+
+    if (!isProfileOpen) {
+      return {
+        state: 'not_open',
+        profileDirectory,
+        userDataDir,
+        profileDisplayName,
+        accountEmail,
+        pids: [],
+        details: `Profile "${profileDisplayName || profileDirectory}" is not currently running.`,
+      };
+    }
+
+    // Profile IS OPEN! Check if automation / CDP connection is available
+    const activeCdp = await this.findActiveCdpEndpoint(procInfo.cdpPort || target.preferredCdpPort);
+
+    if (activeCdp) {
+      return {
+        state: 'open_and_attachable',
+        profileDirectory,
+        userDataDir,
+        profileDisplayName,
+        accountEmail,
+        pids: procInfo.pids,
+        cdpPort: activeCdp.port,
+        details: `Profile "${profileDisplayName || profileDirectory}" is running and exposes an active automation connection on CDP port ${activeCdp.port}.`,
+      };
+    }
+
+    // Profile is OPEN but NOT attachable (Case B)
+    const displayName = target.displayName || profileDisplayName || profileDirectory;
+    return {
+      state: 'open_not_attachable',
+      profileDirectory,
+      userDataDir,
+      profileDisplayName,
+      accountEmail,
+      pids: procInfo.pids,
+      details: `${displayName} profile is already open, but this Chrome session does not expose an automation connection. Please enable/launch this profile through the app's supported connection mode, or close only this profile and retry.`,
+    };
+  }
+
   private static probePort(port: number): Promise<boolean> {
     return new Promise((resolve) => {
       const req = http.get(`http://127.0.0.1:${port}/json/version`, { timeout: 800 }, (res) => {
@@ -458,3 +597,4 @@ export class LocalChromeProfileDiscoverer {
     });
   }
 }
+

@@ -36,6 +36,7 @@ describe('SafeDownloader', () => {
           ok: () => true,
           status: () => 200,
           statusText: () => 'OK',
+          headers: () => ({ 'content-type': 'image/png' }),
           body: async () => fakeImageBuffer,
         })),
       },

@@ -25,6 +25,7 @@ import { FlowAuthDetector } from './FlowAuthDetector';
 import { ProfileConfigManager } from './ProfileConfig';
 import { ChromePortAllocator } from './ChromePortAllocator';
 import { WindowsChromeFinder } from './WindowsChromeFinder';
+import { LocalChromeProfileDiscoverer } from './LocalChromeProfileDiscoverer';
 import { appLogger } from '../utils/AppLogger';
 
 // ---------------------------------------------------------------------------
@@ -129,6 +130,109 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
     }
 
     return config;
+  }
+
+  /**
+   * Creates a new profile configured to attach to an existing local Chrome profile.
+   */
+  async createExistingChromeProfile(params: {
+    displayName: string;
+    localProfileDirectory: string;
+    localUserDataDir?: string;
+    expectedEmail?: string;
+    notes?: string;
+    preferredCdpPort?: number;
+    autoStart?: boolean;
+  }): Promise<ProfileConfig> {
+    const userDataDir = params.localUserDataDir || LocalChromeProfileDiscoverer.discoverChromeUserDataDir() || '';
+    const tempKey = `pending_${process.hrtime.bigint().toString()}`;
+    const cdpPort = params.preferredCdpPort ?? await this.portAllocator.allocate(tempKey);
+
+    const config = ProfileConfigManager.create({
+      displayName: params.displayName,
+      chromePath: this.chromePath,
+      cdpPort,
+      notes: params.notes,
+      expectedEmail: params.expectedEmail,
+    });
+
+    const updated = ProfileConfigManager.update(config.profileId, {
+      connectionMode: 'existing_chrome',
+      localProfileDirectory: params.localProfileDirectory,
+      localUserDataDir: userDataDir,
+      preferredCdpPort: cdpPort,
+    });
+
+    this.portAllocator.release(tempKey);
+    this.portAllocator.setAllocation(config.profileId, cdpPort);
+
+    this.emit('profile:created', updated);
+
+    if (params.autoStart) {
+      await this.startProfile(config.profileId, false);
+    }
+
+    return updated;
+  }
+
+  /**
+   * Scans local Chrome profiles on Windows and checks their current runtime / lock status.
+   */
+  async detectLocalChromeProfiles(): Promise<Array<import('../../shared/types').DiscoveredLocalProfile & {
+    isOpen: boolean;
+    isAttachable: boolean;
+    cdpPort?: number;
+  }>> {
+    const userDataDir = LocalChromeProfileDiscoverer.discoverChromeUserDataDir();
+    if (!userDataDir) return [];
+
+    const discovered = LocalChromeProfileDiscoverer.scanProfiles(userDataDir);
+    const results: Array<import('../../shared/types').DiscoveredLocalProfile & {
+      isOpen: boolean;
+      isAttachable: boolean;
+      cdpPort?: number;
+    }> = [];
+
+    for (const p of discovered) {
+      const state = await LocalChromeProfileDiscoverer.detectProfileState({
+        userDataDir,
+        profileDirectory: p.profileDirectory,
+        email: p.accountEmail ?? undefined,
+        displayName: p.profileDisplayName,
+      });
+
+      results.push({
+        ...p,
+        isOpen: state.state === 'open_and_attachable' || state.state === 'open_not_attachable',
+        isAttachable: state.state === 'open_and_attachable',
+        cdpPort: state.cdpPort,
+      });
+    }
+
+    return results;
+  }
+
+  /**
+   * Detects the runtime / lock state of a specific target Chrome profile.
+   */
+  async detectExistingProfileState(profileIdOrTarget: string | {
+    userDataDir?: string;
+    profileDirectory?: string;
+    email?: string;
+    displayName?: string;
+    preferredCdpPort?: number;
+  }): Promise<import('../../shared/types').ExistingProfileDetectionResult> {
+    if (typeof profileIdOrTarget === 'string') {
+      const config = ProfileConfigManager.read(profileIdOrTarget);
+      return await LocalChromeProfileDiscoverer.detectProfileState({
+        userDataDir: config.localUserDataDir,
+        profileDirectory: config.localProfileDirectory,
+        displayName: config.displayName,
+        email: config.expectedEmail ?? undefined,
+        preferredCdpPort: config.preferredCdpPort ?? config.cdpPort,
+      });
+    }
+    return await LocalChromeProfileDiscoverer.detectProfileState(profileIdOrTarget);
   }
 
   /**
@@ -403,6 +507,9 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
           errorMessage: null,
           lastStatusChange: config.updatedAt,
           uptimeMs: 0,
+          connectionMode: config.connectionMode ?? 'dedicated_flow_browser',
+          connectionState: 'profile_closed',
+          localProfileDirectory: config.localProfileDirectory,
         });
       }
     }

@@ -58,6 +58,17 @@ const flowApi: FlowApi = {
     ipcRenderer.invoke('profiles:verifyAccount', profileId),
   testConnection: (profileId: string): Promise<{ success: boolean; port: number; responsive: boolean; status: ProfileSessionStatus }> =>
     ipcRenderer.invoke('profiles:testConnection', profileId),
+  detectLocalChromeProfiles: () => ipcRenderer.invoke('profiles:detectLocalChrome'),
+  detectProfileState: (target: string | { userDataDir?: string; profileDirectory?: string; email?: string; displayName?: string; preferredCdpPort?: number }) =>
+    ipcRenderer.invoke('profiles:detectState', target),
+  createExistingProfile: (params: {
+    displayName: string;
+    localProfileDirectory: string;
+    localUserDataDir?: string;
+    expectedEmail?: string;
+    notes?: string;
+    preferredCdpPort?: number;
+  }) => ipcRenderer.invoke('profiles:createExisting', params),
 
   // Settings & System
   getAppInfo: () => ipcRenderer.invoke('system:getAppInfo'),

@@ -206,6 +206,31 @@ export class IpcHandlers {
       return await sessionManager.testConnection(profileId);
     });
 
+    ipcMain.handle('profiles:detectLocalChrome', async () => {
+      return await sessionManager.detectLocalChromeProfiles();
+    });
+
+    ipcMain.handle('profiles:detectState', async (_event, target: unknown) => {
+      return await sessionManager.detectExistingProfileState(
+        target as { userDataDir?: string; profileDirectory?: string; email?: string; displayName?: string; preferredCdpPort?: number }
+      );
+    });
+
+    ipcMain.handle('profiles:createExisting', async (_event, params: unknown) => {
+      const p = params as {
+        displayName: string;
+        localProfileDirectory: string;
+        localUserDataDir?: string;
+        expectedEmail?: string;
+        notes?: string;
+        preferredCdpPort?: number;
+      };
+      if (!p || !p.displayName?.trim() || !p.localProfileDirectory?.trim()) {
+        throw new Error('Display name and local profile directory are required.');
+      }
+      return await sessionManager.createExistingChromeProfile(p);
+    });
+
     // -------------------------------------------------------------------------
     // Settings & System API
     // -------------------------------------------------------------------------
