@@ -221,9 +221,15 @@ export class GenerationScheduler {
   private async executeJobOnWorker(worker: ProfileWorker, job: GenerationJobEntity): Promise<void> {
     try {
       if (job.promptType === 'image') {
-        await ImageExecutionService.execute(worker, job, this.executionOptions);
+        await ImageExecutionService.execute(worker, job, {
+          ...this.executionOptions,
+          concurrencyLevel: Math.max(1, this.workerPool.busyCount),
+        });
       } else {
-        await VideoExecutionService.execute(worker, job, { mockMode: true });
+        await VideoExecutionService.execute(worker, job, {
+          ...this.executionOptions,
+          concurrencyLevel: Math.max(1, this.workerPool.busyCount),
+        });
       }
     } catch (err) {
       const errorMsg = (err as Error).message;

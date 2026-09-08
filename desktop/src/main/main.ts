@@ -9,9 +9,10 @@
  *  - Window creation and secure preload binding.
  */
 
-import { app, BrowserWindow, protocol, net, ipcMain } from 'electron';
+import { app, BrowserWindow, protocol, ipcMain } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import { Readable } from 'stream';
 import { ProfileSessionManager } from './engine/ProfileSessionManager';
 import { WorkerPool } from './scheduler/WorkerPool';
 import { GenerationScheduler } from './scheduler/GenerationScheduler';
@@ -31,6 +32,7 @@ protocol.registerSchemesAsPrivileged([
       secure: true,
       supportFetchAPI: true,
       corsEnabled: true,
+      stream: true,
     },
   },
 ]);
@@ -114,7 +116,62 @@ function registerAssetProtocol(): void {
         return new Response('Not Found or Access Denied', { status: 404 });
       }
 
-      return net.fetch(`file:///${targetFilePath.replace(/\\/g, '/')}`);
+      const ext = path.extname(targetFilePath).toLowerCase();
+      const mimeTypes: Record<string, string> = {
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm',
+        '.mov': 'video/quicktime',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp',
+        '.gif': 'image/gif',
+      };
+      const mimeType = mimeTypes[ext] || 'application/octet-stream';
+
+      const stat = fs.statSync(targetFilePath);
+      const fileSize = stat.size;
+      const rangeHeader = request.headers.get('range');
+
+      if (rangeHeader) {
+        const parts = rangeHeader.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+        if (isNaN(start) || start >= fileSize || end >= fileSize || start > end) {
+          return new Response('Requested Range Not Satisfiable', {
+            status: 416,
+            headers: { 'Content-Range': `bytes */${fileSize}` },
+          });
+        }
+
+        const chunkSize = end - start + 1;
+        const nodeStream = fs.createReadStream(targetFilePath, { start, end });
+        const webStream = Readable.toWeb(nodeStream) as ReadableStream;
+
+        return new Response(webStream, {
+          status: 206,
+          statusText: 'Partial Content',
+          headers: {
+            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': String(chunkSize),
+            'Content-Type': mimeType,
+          },
+        });
+      }
+
+      const nodeStream = fs.createReadStream(targetFilePath);
+      const webStream = Readable.toWeb(nodeStream) as ReadableStream;
+
+      return new Response(webStream, {
+        status: 200,
+        headers: {
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(fileSize),
+          'Content-Type': mimeType,
+        },
+      });
     } catch (err) {
       logger.error('main', 'Error serving asset protocol', err as Error);
       return new Response('Internal Protocol Error', { status: 500 });

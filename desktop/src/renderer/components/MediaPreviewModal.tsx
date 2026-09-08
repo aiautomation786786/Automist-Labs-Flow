@@ -8,6 +8,7 @@ interface MediaPreviewModalProps {
   title: string;
   promptText?: string;
   slotIndex?: number;
+  thumbnailUrl?: string;
   metadata?: {
     model?: string;
     ratio?: string;
@@ -31,6 +32,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   title,
   promptText,
   slotIndex,
+  thumbnailUrl,
   metadata,
   onClose,
 }) => {
@@ -149,6 +151,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
               <video
                 ref={videoRef}
                 src={mediaUrl}
+                poster={thumbnailUrl}
                 controls
                 autoPlay
                 playsInline

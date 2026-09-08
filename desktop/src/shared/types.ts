@@ -494,6 +494,11 @@ export interface SlotMediaResult {
   durationControl?: 'available' | 'unavailable';
   actualDuration?: string;     // e.g. "6.02s"
   upscaledAssetPath?: string;  // e.g. path to 1080p / 2K export
+  jobStartTime?: string;       // ISO 8601
+  generationClickTime?: string;// ISO 8601
+  completionTime?: string;     // ISO 8601
+  totalElapsedTimeMs?: number; // Total ms elapsed
+  concurrencyLevel?: number;   // Concurrently active jobs during execution
   modelUsed: string;           // e.g. "Nano Banana 2"
   ratioUsed: string;           // e.g. "16:9"
   quantityUsed?: string;        // e.g. "x1"
@@ -553,6 +558,8 @@ export interface ProjectSettings {
   processingOrder: ProcessingOrder;
   autoRetry: boolean;
   maxRetries: number;
+  imageDownloadQuality?: 'original' | '2k';
+  videoDownloadQuality?: 'original' | '1080p' | '4k';
 }
 
 /**
@@ -676,6 +683,8 @@ export interface AppSettings {
   defaultProcessingOrder: ProcessingOrder;
   maxRetries: number;
   logLevel: 'INFO' | 'WARN' | 'DEBUG' | 'ERROR';
+  defaultImageDownloadQuality?: 'original' | '2k';
+  defaultVideoDownloadQuality?: 'original' | '1080p' | '4k';
 }
 
 export interface CreateProjectParams {
@@ -686,6 +695,8 @@ export interface CreateProjectParams {
   processingOrder?: ProcessingOrder;
   autoRetry?: boolean;
   maxRetries?: number;
+  imageDownloadQuality?: 'original' | '2k';
+  videoDownloadQuality?: 'original' | '1080p' | '4k';
   prompts: Array<{ text: string; type: 'image' | 'video' }>;
 }
 

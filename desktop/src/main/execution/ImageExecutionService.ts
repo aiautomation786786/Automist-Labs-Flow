@@ -26,6 +26,7 @@ export interface ExecutionOptions {
   triggerGenerationClick?: boolean; // Default true; false for dry-run/mock tests
   pollTimeoutMs?: number;           // Timeout waiting for generation
   mockDeltaUuids?: string[];        // For controlled testing of delta matching & ambiguity
+  concurrencyLevel?: number;
 }
 
 export class ImageExecutionService {
@@ -40,6 +41,9 @@ export class ImageExecutionService {
     const { projectId, slotIndex, promptId, jobId } = job;
     const triggerClick = options.triggerGenerationClick ?? true;
     const pollTimeoutMs = options.pollTimeoutMs ?? 120000;
+    const jobStartTime = new Date().toISOString();
+    const startMs = Date.now();
+    let generationClickTime = jobStartTime;
 
     const log = new AppLogger({ profileId: worker.profileId, mirrorToStderr: false });
     log.info('image_exec', `Starting image execution for Job ${jobId} (Slot ${slotIndex})`);
@@ -124,7 +128,10 @@ export class ImageExecutionService {
         }
 
         await generateBtn.click();
+        generationClickTime = new Date().toISOString();
         log.info('image_exec', 'Clicked generate button');
+      } else {
+        generationClickTime = new Date().toISOString();
       }
 
       // Step 7: Transition to waiting_for_result and poll for delta media
@@ -216,6 +223,10 @@ export class ImageExecutionService {
         outputPath: destinationPath,
       });
 
+      const completionTime = new Date().toISOString();
+      const totalElapsedTimeMs = Date.now() - startMs;
+      const concurrencyLevel = options.concurrencyLevel ?? 1;
+
       const updatedSlot = await ProjectRepository.updateSlot(projectId, slotIndex, {
         status: 'completed',
         result: {
@@ -223,7 +234,14 @@ export class ImageExecutionService {
           mediaPath: destinationPath,
           modelUsed: 'Nano Banana 2',
           ratioUsed: requestedRatio,
-          completedAt: new Date().toISOString(),
+          generationResolution: 'Original',
+          downloadResolution: project?.settings?.imageDownloadQuality === '2k' ? '2K' : 'Original',
+          jobStartTime,
+          generationClickTime,
+          completionTime,
+          totalElapsedTimeMs,
+          concurrencyLevel,
+          completedAt: completionTime,
           fileSizeBytes: fileCheck.sizeBytes,
           mimeType: detectedMimeType,
         },

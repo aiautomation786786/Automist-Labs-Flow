@@ -134,6 +134,8 @@ describe('NewProjectScreen 5-Step Wizard', () => {
       campaignTag: undefined,
       imageRatio: '9:16',
       processingOrder: 'videos_first',
+      imageDownloadQuality: 'original',
+      videoDownloadQuality: 'original',
       prompts: [
         { text: 'First image prompt', type: 'image' },
         { text: 'Second image prompt', type: 'image' },

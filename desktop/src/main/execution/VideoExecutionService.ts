@@ -33,6 +33,7 @@ export interface VideoExecutionOptions {
   pollTimeoutMs?: number;
   mockVideoUrl?: string;
   mockDurationSeconds?: number;
+  concurrencyLevel?: number;
 }
 
 export class VideoExecutionService {
@@ -48,6 +49,9 @@ export class VideoExecutionService {
     const isMock = options.mockMode ?? false;
     const triggerClick = options.triggerGenerationClick ?? true;
     const pollTimeoutMs = options.pollTimeoutMs ?? 180000;
+    const jobStartTime = new Date().toISOString();
+    const startMs = Date.now();
+    let generationClickTime = jobStartTime;
 
     const log = new AppLogger({ profileId: worker.profileId, mirrorToStderr: false });
     log.info('video_exec', `Starting video job ${jobId} (Slot ${slotIndex}) [mock=${isMock}]`);
@@ -87,6 +91,10 @@ export class VideoExecutionService {
           thumbnailPath,
         });
 
+        const completionTime = new Date().toISOString();
+        const totalElapsedTimeMs = Date.now() - startMs;
+        const concurrencyLevel = options.concurrencyLevel ?? 1;
+
         const updatedSlot = await ProjectRepository.updateSlot(projectId, slotIndex, {
           status: 'completed',
           result: {
@@ -96,9 +104,16 @@ export class VideoExecutionService {
             modelUsed: 'Omni 1.1 Flash',
             ratioUsed: '16:9',
             resolution: '720p',
+            generationResolution: '720p',
+            downloadResolution: '720p',
             durationSeconds,
             durationFormatted,
-            completedAt: new Date().toISOString(),
+            jobStartTime,
+            generationClickTime,
+            completionTime,
+            totalElapsedTimeMs,
+            concurrencyLevel,
+            completedAt: completionTime,
             fileSizeBytes: fileCheck.sizeBytes,
             mimeType: 'video/mp4',
           },
@@ -234,14 +249,16 @@ export class VideoExecutionService {
 
         log.info('video_exec', 'Clicking Generate button (EXACTLY ONCE)...');
         await generateButton.click();
+        generationClickTime = new Date().toISOString();
         log.info('video_exec', 'Generate button clicked once. Transitioning to waiting_for_result.');
       } else {
         log.info('video_exec', 'Dry-run: skipping real Generate click.');
+        generationClickTime = new Date().toISOString();
       }
 
       await JobRepository.updateJob(projectId, jobId, { status: 'waiting_for_result' });
 
-      // Wait for newly generated video
+      // Wait for newly generated video (optimized detection via network sniffer & DOM tile inspection)
       log.info('video_exec', 'Waiting for new video result from Flow...');
       const pollStart = Date.now();
       let detectedVideoUrl: string | null = null;
@@ -265,7 +282,7 @@ export class VideoExecutionService {
         if (detectedVideoUrl) break;
 
         for (const url of postGenMedia.mediaUrls) {
-          if (!beforeVideoSources.has(url) && (url.includes('/video/') || url.includes('.mp4'))) {
+          if (!beforeVideoSources.has(url) && (url.includes('/video/') || url.includes('.mp4') || url.includes('/asb/'))) {
             detectedVideoUrl = url;
             detectedUuid = MediaDetector.parseMediaUuids([url]).uuids[0];
             break;
@@ -273,7 +290,30 @@ export class VideoExecutionService {
         }
         if (detectedVideoUrl) break;
 
-        await page.waitForTimeout(3000);
+        // Immediate tile inspection to avoid waiting for slow thumbnails
+        const tileMedia = await page.evaluate((beforeUrls) => {
+          const tiles = Array.from(document.querySelectorAll('flow-video-tile'));
+          for (const t of tiles) {
+            const spinner = t.querySelector('mat-progress-spinner, mat-spinner, .mat-mdc-progress-spinner');
+            if (spinner) continue;
+            const vid = t.querySelector('video');
+            if (vid && vid.src && !beforeUrls.includes(vid.src)) return vid.src;
+            const img = t.querySelector('img');
+            if (img && img.src && !beforeUrls.includes(img.src)) {
+              if (img.src.includes('/asb/')) return img.src.split('=')[0] + '=mm,22,15';
+              return img.src;
+            }
+          }
+          return null;
+        }, Array.from(beforeVideoSources)).catch(() => null);
+
+        if (tileMedia) {
+          detectedVideoUrl = tileMedia;
+          detectedUuid = MediaDetector.parseMediaUuids([tileMedia]).uuids[0];
+          break;
+        }
+
+        await page.waitForTimeout(1000);
       }
 
       page.off('response', responseHandler);
@@ -309,6 +349,10 @@ export class VideoExecutionService {
         method: durationResult?.method,
       });
 
+      const completionTime = new Date().toISOString();
+      const totalElapsedTimeMs = Date.now() - startMs;
+      const concurrencyLevel = options.concurrencyLevel ?? 1;
+
       // Complete job
       const completedJob = await JobRepository.updateJob(projectId, jobId, {
         status: 'completed',
@@ -316,7 +360,7 @@ export class VideoExecutionService {
         thumbnailPath: destinationPath,
       });
 
-      // Update Slot 0 in project
+      // Update Slot in project
       const updatedSlot = await ProjectRepository.updateSlot(projectId, slotIndex, {
         status: 'completed',
         result: {
@@ -326,9 +370,16 @@ export class VideoExecutionService {
           modelUsed: 'Omni 1.1 Flash',
           ratioUsed: '16:9',
           resolution: '720p',
+          generationResolution: '720p',
+          downloadResolution: project?.settings?.videoDownloadQuality === '1080p' ? '1080p' : '720p',
           durationSeconds,
           durationFormatted,
-          completedAt: new Date().toISOString(),
+          jobStartTime,
+          generationClickTime,
+          completionTime,
+          totalElapsedTimeMs,
+          concurrencyLevel,
+          completedAt: completionTime,
           fileSizeBytes: fileCheck.sizeBytes,
           mimeType: 'video/mp4',
         },

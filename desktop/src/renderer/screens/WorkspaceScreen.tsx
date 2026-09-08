@@ -336,6 +336,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
           isOpen={selectedSlotForMedia !== null}
           type={selectedSlotForMedia.type}
           mediaUrl={formatAssetUrl(selectedSlotForMedia.result?.mediaPath, selectedSlotForMedia.projectId)}
+          thumbnailUrl={formatAssetUrl(selectedSlotForMedia.result?.thumbnailPath, selectedSlotForMedia.projectId)}
           promptText={selectedSlotForMedia.promptText}
           slotIndex={selectedSlotForMedia.slotIndex}
           metadata={{

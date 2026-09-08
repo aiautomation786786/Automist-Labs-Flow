@@ -34,6 +34,8 @@ export interface CreateProjectParams {
   processingOrder?: ProcessingOrder;
   autoRetry?: boolean;
   maxRetries?: number;
+  imageDownloadQuality?: 'original' | '2k';
+  videoDownloadQuality?: 'original' | '1080p' | '4k';
   prompts: Array<{ text: string; type: 'image' | 'video' }>;
 }
 
@@ -72,6 +74,8 @@ export class ProjectRepository {
       processingOrder: params.processingOrder ?? 'images_first',
       autoRetry: params.autoRetry ?? true,
       maxRetries: params.maxRetries ?? 2,
+      imageDownloadQuality: params.imageDownloadQuality ?? 'original',
+      videoDownloadQuality: params.videoDownloadQuality ?? 'original',
     };
 
     const project: ProjectEntity = {

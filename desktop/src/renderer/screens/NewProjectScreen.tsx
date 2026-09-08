@@ -33,6 +33,8 @@ export const NewProjectScreen: React.FC<NewProjectScreenProps> = ({
   // Step 3: Generation Settings
   const [imageRatio, setImageRatio] = useState<SupportedAspectRatio>('16:9');
   const [processingOrder, setProcessingOrder] = useState<ProcessingOrder>('images_first');
+  const [imageDownloadQuality, setImageDownloadQuality] = useState<'original' | '2k'>('original');
+  const [videoDownloadQuality, setVideoDownloadQuality] = useState<'original' | '1080p' | '4k'>('original');
 
   // Step 4: Prompts
   const [imagePromptsText, setImagePromptsText] = useState('');
@@ -111,6 +113,8 @@ export const NewProjectScreen: React.FC<NewProjectScreenProps> = ({
         campaignTag: campaignTag.trim() || undefined,
         imageRatio: contentType !== 'videos_only' ? imageRatio : undefined,
         processingOrder: contentType === 'images_and_videos' ? processingOrder : 'automatic',
+        imageDownloadQuality,
+        videoDownloadQuality,
         prompts: combined,
       });
 
@@ -290,6 +294,51 @@ export const NewProjectScreen: React.FC<NewProjectScreenProps> = ({
                     style={{ minWidth: '100px' }}
                   >
                     {ratio} {ratio === '16:9' ? '(Landscape)' : '(Portrait)'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {contentType !== 'videos_only' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ fontSize: '13px', fontWeight: 500 }}>Image Download Quality</label>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                {[
+                  { id: 'original', label: 'Original' },
+                  { id: '2k', label: '2K Upscaled' },
+                ].map((q) => (
+                  <button
+                    key={q.id}
+                    type="button"
+                    className={imageDownloadQuality === q.id ? 'btn-primary' : 'btn-secondary'}
+                    onClick={() => setImageDownloadQuality(q.id as 'original' | '2k')}
+                    style={{ minWidth: '110px' }}
+                  >
+                    {q.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {contentType !== 'images_only' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ fontSize: '13px', fontWeight: 500 }}>Video Download Quality</label>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                {[
+                  { id: 'original', label: 'Original (Native)' },
+                  { id: '1080p', label: '1080p Upscaled' },
+                  { id: '4k', label: '4K Upscaled' },
+                ].map((q) => (
+                  <button
+                    key={q.id}
+                    type="button"
+                    className={videoDownloadQuality === q.id ? 'btn-primary' : 'btn-secondary'}
+                    onClick={() => setVideoDownloadQuality(q.id as 'original' | '1080p' | '4k')}
+                    style={{ minWidth: '130px' }}
+                  >
+                    {q.label}
                   </button>
                 ))}
               </div>
