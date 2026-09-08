@@ -222,21 +222,36 @@ export const AppShell: React.FC = () => {
                     key={item.id}
                     onClick={item.onClick}
                     style={{
+                      position: 'relative',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       width: '100%',
-                      padding: '8px 12px',
+                      padding: '8px 12px 8px 14px',
                       borderRadius: 'var(--radius-sm)',
-                      backgroundColor: active ? 'rgba(99, 102, 241, 0.16)' : 'transparent',
+                      backgroundColor: active ? 'rgba(99, 102, 241, 0.12)' : 'transparent',
                       color: active ? '#ffffff' : 'var(--text-secondary)',
                       fontWeight: active ? 600 : 500,
-                      border: active ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid transparent',
+                      border: active ? '1px solid rgba(99, 102, 241, 0.28)' : '1px solid transparent',
                       textAlign: 'left',
                       cursor: 'pointer',
                       transition: 'all 0.15s ease',
                     }}
                   >
+                    {active && (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          left: '0px',
+                          top: '6px',
+                          bottom: '6px',
+                          width: '3px',
+                          borderRadius: '0 2px 2px 0',
+                          backgroundColor: 'var(--primary)',
+                          boxShadow: '0 0 6px var(--primary)',
+                        }}
+                      />
+                    )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <span style={{ color: active ? 'var(--primary)' : 'var(--text-muted)' }}>
                         {item.icon}

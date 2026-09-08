@@ -49,112 +49,168 @@ export const SettingsScreen: React.FC = () => {
   }
 
   return (
-    <div style={{ padding: '24px', maxWidth: '680px', height: '100%', overflowY: 'auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+    <div style={{ padding: '28px 36px', maxWidth: '720px', height: '100%', overflowY: 'auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px' }}>
         <div>
-          <h1>Settings</h1>
-          <p style={{ marginTop: '4px' }}>Configure default generation behavior and storage preferences.</p>
+          <h1 style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em' }}>Settings</h1>
+          <p style={{ marginTop: '4px', fontSize: '13px', color: 'var(--text-muted)' }}>
+            Configure default generation behavior and storage preferences.
+          </p>
         </div>
         {savedMsg && (
-          <span style={{ fontSize: '13px', color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <span style={{ fontSize: '12.5px', color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
             <CheckIcon size={14} /> Saved
           </span>
         )}
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
         {/* Storage Location */}
         <div
-          className="card"
           style={{
-            padding: '18px 20px',
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '20px',
             display: 'flex',
             flexDirection: 'column',
             gap: '8px',
           }}
         >
-          <label style={{ fontSize: '13px', fontWeight: 600 }}>Application Data Directory</label>
-          <p style={{ fontSize: '12px' }}>
-            Local path where Chrome profiles, project files, and generated media are stored.
+          <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+            Application Data Directory
+          </label>
+          <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+            Local filesystem path where Chrome profiles, project state, and generated media assets are stored.
           </p>
           <input
             type="text"
             readOnly
             value={appInfo?.appDataDir ?? settings.appDataDir}
-            style={{ backgroundColor: 'var(--bg-subtle)', cursor: 'default', fontFamily: 'var(--font-mono)', fontSize: '12px' }}
+            style={{
+              backgroundColor: 'var(--bg-subtle)',
+              cursor: 'default',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '12px',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border-color)',
+              marginTop: '4px',
+            }}
           />
         </div>
 
         {/* Default Aspect Ratio */}
         <div
-          className="card"
           style={{
-            padding: '18px 20px',
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '20px',
             display: 'flex',
             flexDirection: 'column',
             gap: '10px',
           }}
         >
-          <label style={{ fontSize: '13px', fontWeight: 600 }}>Default Image Aspect Ratio</label>
-          <p style={{ fontSize: '12px' }}>Preselected ratio for newly created image generation projects.</p>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            {(['16:9', '9:16'] as SupportedAspectRatio[]).map((ratio) => (
-              <button
-                key={ratio}
-                className={settings.defaultImageRatio === ratio ? 'btn-primary' : 'btn-secondary'}
-                onClick={() => handleUpdate({ defaultImageRatio: ratio })}
-              >
-                {ratio} {ratio === '16:9' ? '(Landscape)' : '(Portrait)'}
-              </button>
-            ))}
+          <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+            Default Image Aspect Ratio
+          </label>
+          <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+            Preselected ratio for newly initialized image generation projects.
+          </p>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
+            {(['16:9', '9:16'] as SupportedAspectRatio[]).map((ratio) => {
+              const isSel = settings.defaultImageRatio === ratio;
+              return (
+                <button
+                  key={ratio}
+                  className={isSel ? 'btn-primary' : 'btn-secondary'}
+                  onClick={() => handleUpdate({ defaultImageRatio: ratio })}
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '12.5px',
+                    fontWeight: isSel ? 600 : 500,
+                  }}
+                >
+                  {ratio} {ratio === '16:9' ? '(Landscape)' : '(Portrait)'}
+                </button>
+              );
+            })}
           </div>
         </div>
 
         {/* Default Processing Order */}
         <div
-          className="card"
           style={{
-            padding: '18px 20px',
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '20px',
             display: 'flex',
             flexDirection: 'column',
             gap: '10px',
           }}
         >
-          <label style={{ fontSize: '13px', fontWeight: 600 }}>Default Mixed Processing Order</label>
-          <p style={{ fontSize: '12px' }}>Queue priority when a project contains both image and video prompts.</p>
-          <div style={{ display: 'flex', gap: '12px' }}>
+          <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+            Default Mixed Processing Order
+          </label>
+          <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+            Queue scheduling priority when a bulk project contains both image and video prompts.
+          </p>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
             {[
               { id: 'images_first', label: 'Images First' },
               { id: 'videos_first', label: 'Videos First' },
               { id: 'automatic', label: 'Automatic (FIFO)' },
-            ].map((po) => (
-              <button
-                key={po.id}
-                className={settings.defaultProcessingOrder === po.id ? 'btn-primary' : 'btn-secondary'}
-                onClick={() => handleUpdate({ defaultProcessingOrder: po.id as ProcessingOrder })}
-              >
-                {po.label}
-              </button>
-            ))}
+            ].map((po) => {
+              const isSel = settings.defaultProcessingOrder === po.id;
+              return (
+                <button
+                  key={po.id}
+                  className={isSel ? 'btn-primary' : 'btn-secondary'}
+                  onClick={() => handleUpdate({ defaultProcessingOrder: po.id as ProcessingOrder })}
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '12.5px',
+                    fontWeight: isSel ? 600 : 500,
+                  }}
+                >
+                  {po.label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
         {/* Retry Limits */}
         <div
-          className="card"
           style={{
-            padding: '18px 20px',
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '20px',
             display: 'flex',
             flexDirection: 'column',
             gap: '8px',
           }}
         >
-          <label style={{ fontSize: '13px', fontWeight: 600 }}>Maximum Transient Retries</label>
-          <p style={{ fontSize: '12px' }}>Number of automatic retry attempts before marking a transient error as failed.</p>
+          <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+            Maximum Transient Retries
+          </label>
+          <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+            Number of automatic retry attempts before marking a transient error as failed.
+          </p>
           <select
             value={settings.maxRetries}
             onChange={(e) => handleUpdate({ maxRetries: Number(e.target.value) })}
-            style={{ maxWidth: '160px' }}
+            style={{
+              maxWidth: '200px',
+              padding: '8px 12px',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--border-color)',
+              backgroundColor: 'var(--bg-input)',
+              color: 'var(--text-primary)',
+              marginTop: '4px',
+            }}
           >
             <option value={1}>1 Retry</option>
             <option value={2}>2 Retries (Default)</option>
@@ -164,8 +220,10 @@ export const SettingsScreen: React.FC = () => {
 
         {/* About App */}
         <div
-          className="card"
           style={{
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-lg)',
             padding: '18px 20px',
             display: 'flex',
             flexDirection: 'column',
@@ -174,9 +232,14 @@ export const SettingsScreen: React.FC = () => {
             color: 'var(--text-secondary)',
           }}
         >
-          <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>About Google Flow Desktop</div>
+          <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '13px' }}>
+            About Google Flow Desktop
+          </div>
           <div>Version: {appInfo?.version ?? '1.0.0'}</div>
           <div>Platform: {appInfo?.platform === 'win32' ? 'Windows 10 / 11 (x64)' : appInfo?.platform ?? 'Windows'}</div>
+          <div style={{ color: 'var(--text-muted)', marginTop: '4px', fontSize: '11px' }}>
+            Built for professional creative automation with dedicated isolated browser sessions.
+          </div>
         </div>
       </div>
     </div>

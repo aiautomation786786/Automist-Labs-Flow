@@ -495,27 +495,46 @@ export const ProfilesScreen: React.FC = () => {
                 }}
               >
                 {/* Card header row */}
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
-                  {/* Left: account info */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                      <h3 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>{p.displayName}</h3>
-                      {/* Status badge */}
-                      <span
-                        style={{
-                          fontSize: '11px',
-                          fontWeight: 600,
-                          padding: '2px 8px',
-                          borderRadius: '999px',
-                          backgroundColor: statusInfo.bg,
-                          color: statusInfo.color,
-                          letterSpacing: '0.02em',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {statusInfo.emoji} {statusInfo.label}
-                      </span>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px' }}>
+                  {/* Left: Avatar + Account info */}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        width: '40px',
+                        height: '40px',
+                        borderRadius: '10px',
+                        backgroundColor: p.status === 'ready' ? 'var(--primary-subtle)' : 'var(--bg-subtle)',
+                        color: p.status === 'ready' ? 'var(--primary)' : 'var(--text-muted)',
+                        border: `1px solid ${p.status === 'ready' ? 'var(--primary-border)' : 'var(--border-color)'}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontWeight: 700,
+                        fontSize: '14px',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {p.displayName.slice(0, 2).toUpperCase()}
                     </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        <h3 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>{p.displayName}</h3>
+                        {/* Status badge */}
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            padding: '2px 8px',
+                            borderRadius: '999px',
+                            backgroundColor: statusInfo.bg,
+                            color: statusInfo.color,
+                            letterSpacing: '0.02em',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {statusInfo.emoji} {statusInfo.label}
+                        </span>
+                      </div>
 
                     {/* Metadata row */}
                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', flexWrap: 'wrap', gap: '14px' }}>
@@ -555,8 +574,9 @@ export const ProfilesScreen: React.FC = () => {
                       </div>
                     )}
                   </div>
+                </div>
 
-                  {/* Right: action buttons */}
+                {/* Right: action buttons */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                     {/* Primary action: Open Login (when not authenticated or browser not running) */}
                     {(stopped || p.status === 'browser_open' || p.status === 'auth_required') && (
