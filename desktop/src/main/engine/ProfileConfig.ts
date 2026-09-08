@@ -172,6 +172,11 @@ export class ProfileConfigManager {
     return configs;
   }
 
+  /** Alias for readAll() */
+  static list(): ProfileConfig[] {
+    return this.readAll();
+  }
+
   // ---- Update -------------------------------------------------------------
 
   /** Writes an updated config to disk. Updates the updatedAt timestamp. */

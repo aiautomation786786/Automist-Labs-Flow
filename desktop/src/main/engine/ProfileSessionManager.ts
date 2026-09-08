@@ -335,6 +335,44 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
   }
 
   /**
+   * Automatically starts and reconnects all configured profiles in background mode on app launch.
+   * Performs an internal auth health check so profiles with valid Google cookies become 'ready' (● Ready)
+   * without requiring manual "Verify Account" or user browser interaction.
+   */
+  async autoStartProfiles(): Promise<void> {
+    const profiles = ProfileConfigManager.list();
+    if (profiles.length === 0) {
+      appLogger.info('session_manager', 'No configured profiles to auto-start');
+      return;
+    }
+
+    appLogger.info('session_manager', `Auto-starting ${profiles.length} background profile sessions...`);
+
+    for (const config of profiles) {
+      try {
+        let session = this.sessions.get(config.profileId);
+        if (!session) {
+          const existingPort = this.portAllocator.getPort(config.profileId);
+          if (!existingPort) {
+            this.portAllocator.setAllocation(config.profileId, config.cdpPort);
+          }
+          session = new ProfileSession(config);
+          this.sessions.set(config.profileId, session);
+          this.attachSessionEvents(session);
+        }
+
+        if (session.isReady || session.status === 'busy') continue;
+
+        // Auto-start in background off-screen mode
+        await session.start({ headless: false, background: true });
+        appLogger.info('session_manager', `Profile ${config.profileId} auto-start finished with status: ${session.status}`);
+      } catch (err) {
+        appLogger.warn('session_manager', `Auto-start notice for ${config.profileId}: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  /**
    * Stops all active sessions and releases all resources.
    * Should be called when the application is shutting down.
    */

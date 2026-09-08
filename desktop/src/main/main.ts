@@ -211,6 +211,13 @@ async function initializeApp(): Promise<void> {
 
   // Step 4: Create UI window
   await createWindow();
+
+  // Step 5: Automatically start & verify background Flow sessions
+  if (sessionManager) {
+    sessionManager.autoStartProfiles().catch((err) => {
+      logger.warn('main', 'Background auto-start notice', { error: (err as Error).message });
+    });
+  }
 }
 
 // Single-instance lock
@@ -229,9 +236,19 @@ if (!gotTheLock) {
     logger.error('main', 'Fatal initialization error', err as Error);
   });
 
+  app.on('before-quit', async () => {
+    scheduler?.stop();
+    if (sessionManager) {
+      await sessionManager.stopAll().catch(() => {});
+    }
+  });
+
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
       scheduler?.stop();
+      if (sessionManager) {
+        sessionManager.stopAll().catch(() => {});
+      }
       app.quit();
     }
   });

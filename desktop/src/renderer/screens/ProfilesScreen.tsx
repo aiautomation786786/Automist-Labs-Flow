@@ -19,10 +19,10 @@ function getStatusInfo(p: ProfileSessionSnapshot): StatusInfo {
   const cs = p.connectionState;
 
   if (s === 'ready') {
-    return { label: 'Authenticated', color: '#22c55e', bg: 'rgba(34,197,94,0.12)', emoji: '✅' };
+    return { label: 'Ready · Authenticated', color: '#10b981', bg: 'rgba(16,185,129,0.12)', emoji: '●' };
   }
   if (s === 'busy') {
-    return { label: 'Busy', color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', emoji: '⏳' };
+    return { label: 'Busy (Generating)', color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', emoji: '⏳' };
   }
   if (s === 'auth_required') {
     return { label: 'Sign-In Required', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', emoji: '🔑' };
@@ -31,10 +31,10 @@ function getStatusInfo(p: ProfileSessionSnapshot): StatusInfo {
     return { label: 'Browser Open', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)', emoji: '🌐' };
   }
   if (s === 'chrome_launched' || s === 'connecting' || s === 'connected') {
-    return { label: 'CDP Ready', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', emoji: '🔗' };
+    return { label: 'Connecting...', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', emoji: '◌' };
   }
   if (s === 'starting') {
-    return { label: 'Starting…', color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', emoji: '🚀' };
+    return { label: 'Starting Background…', color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', emoji: '◌' };
   }
   if (s === 'stopping') {
     return { label: 'Stopping…', color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', emoji: '⏹' };
@@ -545,8 +545,10 @@ export const ProfilesScreen: React.FC = () => {
                         </strong>
                       </span>
                       <span>
-                        Browser:{' '}
-                        <strong>Dedicated Flow Profile</strong>
+                        Session:{' '}
+                        <strong style={{ color: p.status === 'ready' ? 'var(--primary)' : 'var(--text-primary)' }}>
+                          {p.status === 'ready' || p.status === 'busy' ? 'Background (Managed)' : 'Dedicated Profile'}
+                        </strong>
                       </span>
                       <span>
                         CDP Port: <code>{p.cdpPort}</code>

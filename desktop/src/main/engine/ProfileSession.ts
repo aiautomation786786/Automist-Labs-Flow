@@ -124,7 +124,10 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   // ---------------------------------------------------------------------------
 
   /** Starts the session: launches Chrome, connects Playwright, checks auth. */
-  async start(headless = false): Promise<void> {
+  async start(options: boolean | { headless?: boolean; background?: boolean } = false): Promise<void> {
+    const headless = typeof options === 'boolean' ? options : (options?.headless ?? false);
+    const background = typeof options === 'boolean' ? !headless : (options?.background ?? !headless);
+
     if (
       this._status !== 'created' &&
       this._status !== 'stopped' &&
@@ -185,7 +188,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
 
         // Case C: Profile is not open. Launch Chrome session targeting this local profile.
         this.isExistingBrowser = false;
-        await this.launchChrome(headless);
+        await this.launchChrome(headless, background);
         await this.connectPlaywright();
         await this.checkAuth();
         return;
@@ -193,7 +196,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
 
       // Mode B: Dedicated application-managed profile
       this.isExistingBrowser = false;
-      await this.launchChrome(headless);
+      await this.launchChrome(headless, background);
       await this.connectPlaywright();
       await this.checkAuth();
     } catch (err) {
@@ -251,7 +254,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
    * @returns PID, CDP port, and userDataDir for confirmation.
    */
   async launchLoginBrowser(): Promise<{ pid: number; cdpPort: number; userDataDir: string }> {
-    // If Chrome is already running for this session (browser_open or chrome_launched), reuse it.
+    // If Chrome is already running for this session, reposition it on-screen and bring to front
     if (
       this._status === 'browser_open' ||
       this._status === 'chrome_launched' ||
@@ -263,10 +266,32 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     ) {
       const pid = this.chromeProcess?.pid;
       if (pid) {
-        this.log.info('session', 'launchLoginBrowser: Chrome already running, reusing', {
+        this.log.info('session', 'launchLoginBrowser: Chrome already running, repositioning on-screen for sign-in', {
           pid,
           status: this._status,
         });
+
+        try {
+          if (this.context) {
+            const pages = this.context.pages();
+            const p = this.page && !this.page.isClosed() ? this.page : (pages[0] ?? await this.context.newPage());
+            this.page = p;
+            const cdp = await this.context.newCDPSession(p);
+            const { windowId } = await cdp.send('Browser.getWindowForTarget');
+            await cdp.send('Browser.setWindowBounds', {
+              windowId,
+              bounds: { left: 100, top: 100, width: 1280, height: 900, windowState: 'normal' },
+            });
+            await p.bringToFront().catch(() => {});
+            const currentUrl = p.url();
+            if (!currentUrl.includes('labs.google') && !currentUrl.includes('accounts.google.com')) {
+              await p.goto('https://labs.google/fx/en/tools/flow', { waitUntil: 'domcontentloaded' }).catch(() => {});
+            }
+          }
+        } catch (repositionErr) {
+          this.log.debug('chrome_launch', 'CDP reposition notice', { error: (repositionErr as Error).message });
+        }
+
         return { pid, cdpPort: this.config.cdpPort, userDataDir: this.config.userDataDir };
       }
     }
@@ -289,10 +314,12 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       `--remote-debugging-port=${cdpPort}`,
       `--user-data-dir=${userDataDir}`,
       `--profile-directory=${chromeProfileName || 'Default'}`,
+      '--window-position=100,100',
+      '--window-size=1280,900',
       // Navigate to Google Flow immediately so the user lands there for sign-in
       'https://labs.google/fx/en/tools/flow',
     ];
-    // CRITICAL: no --headless flag — window must be visible
+    // CRITICAL: no --headless flag — window must be visible for manual user sign-in
 
     this.setStatus('starting');
     this.errorMessage = null;
@@ -672,7 +699,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   // Private: Chrome launch
   // ---------------------------------------------------------------------------
 
-  private async launchChrome(headless: boolean): Promise<void> {
+  private async launchChrome(headless: boolean, background = true): Promise<void> {
     const { chromePath, cdpPort, userDataDir } = this.config;
 
     // If an app-managed Flow profile is already running on this port, connect to it
@@ -710,12 +737,16 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     if (headless) {
       // Headless mode for CI/testing. Note: Chrome 112+ uses --headless=new.
       flags.push('--headless=new');
+    } else if (background) {
+      // Off-screen headed mode: Keeps full WebGL/Canvas/DOM rendering while running unobtrusively in background
+      flags.push('--window-position=-2400,-2400');
     }
 
     this.log.info('chrome_launch', 'Spawning Chrome', {
       chromePath,
       cdpPort,
       headless,
+      background,
       userDataDir: effectiveUserData,
       profileDirectory: effectiveProfileDir,
     });

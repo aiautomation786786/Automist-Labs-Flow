@@ -165,6 +165,28 @@ describe('ProfileSessionManager — unit tests (no Chrome)', () => {
     await manager.createProfile({ displayName: 'Counter Test' });
     expect(manager.activeCount).toBe(0);
   });
+
+  // SCENARIO 11: autoStartProfiles initializes background sessions with background flag
+  it('autoStartProfiles handles empty profile list and starts background sessions gracefully', async () => {
+    // When no profiles exist, autoStartProfiles resolves cleanly
+    await expect(manager.autoStartProfiles()).resolves.toBeUndefined();
+
+    // Create a test profile
+    await manager.createProfile({ displayName: 'Auto Start Test' });
+
+    // Mock start on ProfileSession prototype
+    const { ProfileSession } = await import('../main/engine/ProfileSession');
+    const origStart = ProfileSession.prototype.start;
+    const startSpy = vi.fn().mockResolvedValue(undefined);
+    ProfileSession.prototype.start = startSpy;
+
+    try {
+      await manager.autoStartProfiles();
+      expect(startSpy).toHaveBeenCalledWith({ headless: false, background: true });
+    } finally {
+      ProfileSession.prototype.start = origStart;
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
