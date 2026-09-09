@@ -7,7 +7,7 @@ import { FfmpegResolver } from '../main/utils/FfmpegResolver';
 
 describe('Gemini Image Watermark Quality & Detection Hardening Suite', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   // 1. Watermark Detection & Bounding-Box Scaling
@@ -108,6 +108,23 @@ describe('Gemini Image Watermark Quality & Detection Hardening Suite', () => {
         expect(res.originalImagePath).toBe(dummyPath);
       } finally {
         if (fs.existsSync(dummyPath)) fs.unlinkSync(dummyPath);
+      }
+    });
+
+    it('executes watermark removal when watermark is detected, preserves original and outputs clean image', async () => {
+      const src169 = path.join(__dirname, '..', '..', 'scratch', 'watermark_e2e_verification', 'source_watermarked_16_9.png');
+      if (!fs.existsSync(src169)) return;
+
+      const outputClean = path.join(__dirname, 'test_output_cleaned.png');
+      try {
+        const res = await GeminiImagePostProcessingService.cleanImageWatermark(src169, outputClean, { ratio: '16:9' });
+        expect(res.success).toBe(true);
+        expect(res.watermarkCleaned).toBe(true);
+        expect(res.cleanImagePath).toBe(outputClean);
+        expect(fs.existsSync(outputClean)).toBe(true);
+        expect(fs.existsSync(res.originalImagePath)).toBe(true);
+      } finally {
+        if (fs.existsSync(outputClean)) fs.unlinkSync(outputClean);
       }
     });
   });
