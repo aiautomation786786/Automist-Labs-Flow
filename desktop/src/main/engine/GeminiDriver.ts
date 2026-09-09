@@ -75,6 +75,7 @@ export class GeminiDriver {
    * Configures the requested aspect ratio (16:9 or 9:16).
    */
   static async ensureAspectRatio(page: Page, targetRatio: '16:9' | '9:16'): Promise<void> {
+    await page.bringToFront?.().catch(() => {});
     // 1. Detect current ratio
     const currentRatio = await GeminiUIDiscovery.getCurrentAspectRatio(page);
     if (currentRatio === targetRatio) {
@@ -113,6 +114,7 @@ export class GeminiDriver {
    * Attaches a reference image for Image-to-Video generation using filechooser interception.
    */
   static async attachSourceImage(page: Page, sourceImagePath: string): Promise<void> {
+    await page.bringToFront?.().catch(() => {});
     if (!fs.existsSync(sourceImagePath)) {
       throw new Error(`Source image file does not exist on disk: ${sourceImagePath}`);
     }
@@ -155,6 +157,7 @@ export class GeminiDriver {
    * Injects prompt text into the Quill editor and verifies it via read-back.
    */
   static async injectPrompt(page: Page, promptText: string): Promise<void> {
+    await page.bringToFront?.().catch(() => {});
     const editor = GeminiUIDiscovery.getPromptEditor(page);
     if (!(await editor.isVisible({ timeout: 5000 }).catch(() => false))) {
       throw new Error('Gemini prompt input editor not found.');
@@ -207,14 +210,31 @@ export class GeminiDriver {
    * Submits generation with single-click safety protection.
    */
   static async submitGeneration(page: Page): Promise<void> {
+    await page.bringToFront?.().catch(() => {});
     const sendBtn = GeminiUIDiscovery.getSendButton(page);
+
     if (!(await sendBtn.isVisible({ timeout: 3000 }).catch(() => false))) {
       throw new Error('Send button not visible for submission.');
     }
 
     logger.info('gemini_driver', 'Triggering single protected click on Send button...');
     await sendBtn.click({ timeout: 5000 });
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(2000);
+
+    // Verify submission started
+    const started = await page.waitForFunction(() => {
+      const hasStop = !!document.querySelector('button[aria-label="Stop generation"]');
+      const hasUserQuery = !!document.querySelector('user-query, .user-query-container');
+      const editor = document.querySelector('div.ql-editor') as HTMLElement;
+      const editorCleared = editor ? !editor.innerText.trim() : false;
+      return hasStop || hasUserQuery || editorCleared;
+    }, { timeout: 10000 }).then(() => true).catch(() => false);
+
+    if (!started) {
+      throw new Error('Failed to confirm generation submission on Gemini: input editor was not cleared and no response container appeared.');
+    }
+
+    logger.info('gemini_driver', 'Generation submission confirmed active on Gemini backend');
 
     // Dismiss any post-submission consent prompt
     await GeminiUIDiscovery.dismissKnownModals(page);
@@ -250,6 +270,12 @@ export class GeminiDriver {
         throw new Error(`QUOTA_EXHAUSTED: ${quotaError}`);
       }
 
+      // 3. Check for user-stopped or generation-failed messages
+      const failureText = await GeminiUIDiscovery.detectGenerationFailure(page);
+      if (failureText) {
+        throw new Error(`GENERATION_FAILED: ${failureText}`);
+      }
+
       // 3. Check for generated video element
       const videoHandle = await GeminiUIDiscovery.findLatestVideoElement(page);
       if (videoHandle) {
@@ -260,7 +286,7 @@ export class GeminiDriver {
           return { src, duration, ready };
         });
 
-        if (videoData.src && videoData.src.startsWith('http')) {
+        if (videoData.src && (videoData.src.startsWith('http') || videoData.src.startsWith('blob:'))) {
           logger.info('gemini_driver', `Detected generated video with valid source URL`, {
             src: videoData.src.substring(0, 100),
             duration: videoData.duration,
@@ -279,6 +305,8 @@ export class GeminiDriver {
         options.onProgress(`Gemini Omni generating video... (${elapsedSec}s elapsed)`, estimatedPercent);
       }
 
+      // Keep background tab alive by triggering DOM query
+      await page.evaluate(() => document.title).catch(() => {});
       await page.waitForTimeout(pollInterval);
     }
 
@@ -296,15 +324,49 @@ export class GeminiDriver {
   ): Promise<{ sizeBytes: number; isValid: boolean }> {
     fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
 
-    // Method 1: In-context fetch via SafeDownloader
-    try {
-      logger.info('gemini_driver', `Downloading video directly via SafeDownloader: ${destinationPath}`);
-      const downloadResult = await SafeDownloader.download(page, videoUrl, destinationPath, options);
-      if (downloadResult.bytesDownloaded > 50000) {
-        return { sizeBytes: downloadResult.bytesDownloaded, isValid: true };
+    // Method 0: In-browser blob fetch if URL is a blob: URL
+    if (videoUrl.startsWith('blob:')) {
+      try {
+        logger.info('gemini_driver', `Fetching blob video via in-browser fetch: ${videoUrl}`);
+        const base64Data = await page.evaluate(async (url) => {
+          const resp = await fetch(url);
+          const blob = await resp.blob();
+          return new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const res = reader.result as string;
+              const commaIdx = res.indexOf(',');
+              resolve(commaIdx >= 0 ? res.substring(commaIdx + 1) : res);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        }, videoUrl);
+
+        if (base64Data && base64Data.length > 50000) {
+          fs.writeFileSync(destinationPath, Buffer.from(base64Data, 'base64'));
+          const stats = fs.statSync(destinationPath);
+          if (stats.size > 50000) {
+            logger.info('gemini_driver', `Saved blob video (${stats.size} bytes) to: ${destinationPath}`);
+            return { sizeBytes: stats.size, isValid: true };
+          }
+        }
+      } catch (blobErr) {
+        logger.warn('gemini_driver', `Blob fetch failed: ${(blobErr as Error).message}; trying fallbacks`);
       }
-    } catch (directErr) {
-      logger.warn('gemini_driver', `Direct download failed: ${(directErr as Error).message}; trying UI download button fallback`);
+    }
+
+    // Method 1: In-context fetch via SafeDownloader (for http/https)
+    if (videoUrl.startsWith('http')) {
+      try {
+        logger.info('gemini_driver', `Downloading video directly via SafeDownloader: ${destinationPath}`);
+        const downloadResult = await SafeDownloader.download(page, videoUrl, destinationPath, options);
+        if (downloadResult.bytesDownloaded > 50000) {
+          return { sizeBytes: downloadResult.bytesDownloaded, isValid: true };
+        }
+      } catch (directErr) {
+        logger.warn('gemini_driver', `Direct download failed: ${(directErr as Error).message}; trying UI download button fallback`);
+      }
     }
 
     // Method 2: Click in-UI download button as fallback

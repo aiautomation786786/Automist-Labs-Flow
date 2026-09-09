@@ -274,7 +274,7 @@ export class GeminiUIDiscovery {
       if (await stopBtn.isVisible({ timeout: 300 }).catch(() => false)) {
         return true;
       }
-      const spinner = page.locator('mat-progress-spinner, .generating-state, .pending-response').first();
+      const spinner = page.locator('message-content mat-progress-spinner, model-response mat-progress-spinner, .generating-state, .pending-response').first();
       if (await spinner.isVisible({ timeout: 300 }).catch(() => false)) {
         return true;
       }
@@ -360,4 +360,24 @@ export class GeminiUIDiscovery {
     }
     return null;
   }
+
+  /**
+   * Scans document for explicit generation failure messages.
+   */
+  static async detectGenerationFailure(page: Page): Promise<string | null> {
+    try {
+      const text = await page.evaluate(() => {
+        return document.body ? document.body.innerText || '' : '';
+      });
+
+      if (!text || typeof text !== 'string') return null;
+
+      if (text.includes('You stopped this response')) return 'Generation was stopped';
+      if (text.includes('Something went wrong')) return 'Gemini error: Something went wrong';
+    } catch {
+      // Ignored
+    }
+    return null;
+  }
 }
+
