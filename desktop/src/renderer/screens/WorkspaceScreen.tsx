@@ -8,7 +8,7 @@ import type {
 import { PromptSlotCard } from '../components/PromptSlotCard';
 import { FullPromptModal } from '../components/FullPromptModal';
 import { MediaPreviewModal } from '../components/MediaPreviewModal';
-import { PlayIcon, RefreshIcon } from '../components/Icons';
+import { PlayIcon, RefreshIcon, FolderIcon } from '../components/Icons';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { formatAssetUrl } from '../utils/assetUrl';
 
@@ -45,6 +45,23 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
     elapsedSeconds?: number;
     description?: string;
   }>>({});
+
+  // Batch download and slot selection state
+  const [selectedSlotIndices, setSelectedSlotIndices] = useState<Set<number>>(new Set());
+  const [isExportingZip, setIsExportingZip] = useState(false);
+  const [profileMap, setProfileMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (window.flowApi?.listProfiles) {
+      window.flowApi.listProfiles().then((profs) => {
+        const map: Record<string, string> = {};
+        for (const p of profs) {
+          map[p.profileId] = p.displayName || p.detectedEmail || p.profileId;
+        }
+        setProfileMap(map);
+      }).catch(() => {});
+    }
+  }, []);
 
   // Load project initially
   const loadProject = useCallback(async () => {
@@ -221,6 +238,61 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
     setSelectedSlotForMedia(slot);
   }, []);
 
+  const completedSlotsList = useMemo(() => {
+    return (project?.slots || []).filter((s) => s.status === 'completed' && s.result?.mediaPath);
+  }, [project]);
+
+  const allCompletedSelected =
+    completedSlotsList.length > 0 &&
+    completedSlotsList.every((s) => selectedSlotIndices.has(s.slotIndex));
+
+  const toggleSelectAllCompleted = () => {
+    if (allCompletedSelected) {
+      setSelectedSlotIndices(new Set());
+    } else {
+      setSelectedSlotIndices(new Set(completedSlotsList.map((s) => s.slotIndex)));
+    }
+  };
+
+  const handleExportProjectZip = async () => {
+    if (!window.flowApi?.exportProjectZip || !project) return;
+    try {
+      setIsExportingZip(true);
+      await window.flowApi.exportProjectZip(projectId);
+    } catch (err) {
+      console.error('Failed to export project ZIP', err);
+    } finally {
+      setIsExportingZip(false);
+    }
+  };
+
+  const handleExportSelectedZip = async () => {
+    if (!window.flowApi?.exportProjectZip || !project || selectedSlotIndices.size === 0) return;
+    try {
+      setIsExportingZip(true);
+      await window.flowApi.exportProjectZip(projectId, Array.from(selectedSlotIndices));
+    } catch (err) {
+      console.error('Failed to export selected ZIP', err);
+    } finally {
+      setIsExportingZip(false);
+    }
+  };
+
+  const handleDownloadSelectedFolder = async () => {
+    if (!window.flowApi?.downloadSelected || !window.flowApi?.selectDirectory || selectedSlotIndices.size === 0) return;
+    const dir = await window.flowApi.selectDirectory();
+    if (!dir) return;
+    try {
+      await window.flowApi.downloadSelected({
+        projectId,
+        slotIndices: Array.from(selectedSlotIndices),
+        destinationDir: dir,
+      });
+    } catch (err) {
+      console.error('Failed to download selected to directory', err);
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
@@ -273,6 +345,18 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
 
         {/* Global Action Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {completedSlots > 0 && (
+            <button
+              className="btn-secondary"
+              onClick={handleExportProjectZip}
+              disabled={isExportingZip}
+              style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+              title="Download all completed videos as an ordered ZIP archive"
+            >
+              <FolderIcon size={14} />
+              {isExportingZip ? 'Exporting ZIP...' : 'Export Project ZIP'}
+            </button>
+          )}
           {hasIncomplete && (
             <button className="btn-primary" onClick={handleStartOrResume} style={{ padding: '8px 16px', fontWeight: 600 }}>
               <PlayIcon size={14} />
@@ -337,6 +421,61 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
         </div>
       )}
 
+      {/* Batch Download / Selection Strip */}
+      {completedSlotsList.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)',
+            padding: '8px 14px',
+            fontSize: '12.5px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', userSelect: 'none' }}>
+              <input
+                type="checkbox"
+                checked={allCompletedSelected}
+                onChange={toggleSelectAllCompleted}
+                style={{ accentColor: 'var(--primary)', cursor: 'pointer' }}
+              />
+              <span>Select All Completed ({completedSlotsList.length})</span>
+            </label>
+            {selectedSlotIndices.size > 0 && (
+              <span style={{ color: 'var(--text-muted)' }}>
+                &bull; {selectedSlotIndices.size} selected
+              </span>
+            )}
+          </div>
+
+          {selectedSlotIndices.size > 0 && (
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                className="btn-secondary btn-sm"
+                onClick={handleDownloadSelectedFolder}
+                style={{ fontSize: '12px' }}
+                title="Download selected files sequentially to a local folder"
+              >
+                Save to Folder ({selectedSlotIndices.size})
+              </button>
+              <button
+                className="btn-primary btn-sm"
+                onClick={handleExportSelectedZip}
+                disabled={isExportingZip}
+                style={{ fontSize: '12px' }}
+                title="Download selected files as an ordered ZIP"
+              >
+                {isExportingZip ? 'Exporting...' : `Export ZIP (${selectedSlotIndices.size})`}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* IMAGE PROMPTS SECTION */}
       {(typeFilter === 'all' || typeFilter === 'images') && imageSlots.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -355,6 +494,16 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
                 slot={slot}
                 progress={slotProgress[slot.slotIndex]}
                 aspectRatio={project.settings.imageRatio}
+                isSelected={selectedSlotIndices.has(slot.slotIndex)}
+                onToggleSelect={(idx) =>
+                  setSelectedSlotIndices((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(idx)) next.delete(idx);
+                    else next.add(idx);
+                    return next;
+                  })
+                }
+                profileMap={profileMap}
                 onViewPrompt={handleViewPrompt}
                 onPreviewMedia={handlePreviewMedia}
                 onRetry={handleRetrySlot}
@@ -401,6 +550,16 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
                 slot={slot}
                 progress={slotProgress[slot.slotIndex]}
                 aspectRatio={project.settings.videoRatio || project.settings.imageRatio}
+                isSelected={selectedSlotIndices.has(slot.slotIndex)}
+                onToggleSelect={(idx) =>
+                  setSelectedSlotIndices((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(idx)) next.delete(idx);
+                    else next.add(idx);
+                    return next;
+                  })
+                }
+                profileMap={profileMap}
                 onViewPrompt={handleViewPrompt}
                 onPreviewMedia={handlePreviewMedia}
                 onRetry={handleRetrySlot}

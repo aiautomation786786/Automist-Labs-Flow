@@ -3,6 +3,7 @@ import type {
   SupportedAspectRatio,
 } from '../../shared/types';
 import { PromptParser } from '../../shared/PromptParser';
+import { naturalSort, detectAmbiguousNumericOrder } from '../../shared/utils/NaturalSort';
 import { SUPPORTED_IMAGE_MODELS, getImageModelConfig } from '../../shared/image-models';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { formatAssetUrl } from '../utils/assetUrl';
@@ -134,22 +135,130 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
     }
   };
 
+  const [zipImportError, setZipImportError] = useState<string | null>(null);
+  const [zipAmbiguityWarning, setZipAmbiguityWarning] = useState<string | null>(null);
+
   const handleImportMultipleImages = async () => {
     if (window.flowApi?.selectMultipleImageFiles) {
       const files = await window.flowApi.selectMultipleImageFiles();
       if (files && files.length > 0) {
+        setZipImportError(null);
+        setZipAmbiguityWarning(null);
+        const sorted = naturalSort(files, (f) => f.split(/[/\\]/).pop() || f);
+
+        const filenames = sorted.map((f) => f.split(/[/\\]/).pop() || f);
+        const ambiguities = detectAmbiguousNumericOrder(filenames);
+        if (ambiguities.length > 0) {
+          const ambMsg = ambiguities
+            .map((a) => `Index ${a.extractedNumber}: ${a.files.join(', ')}`)
+            .join('; ');
+          setZipAmbiguityWarning(`Note: multiple files with identical numeric index detected (${ambMsg}). Alphabetical tie-breaking applied.`);
+        }
+
+        const parsed = PromptParser.parseRawText(bulkPromptsText, 'video');
         setBulkPairs((prev) => {
-          const existing = prev.filter((p) => p.sourceImagePath || p.promptText.trim());
-          const newRows = files.map((f, i) => ({
+          return sorted.map((f, i) => ({
             id: `pair_${Date.now()}_${i}`,
             sourceImagePath: f,
             sourceImageName: f.split(/[/\\]/).pop() || `image_${i + 1}`,
-            promptText: existing[i]?.promptText || '',
+            promptText: parsed[i]?.text || prev[i]?.promptText || '',
           }));
-          return [...existing, ...newRows];
         });
       }
     }
+  };
+
+  const handleImportZip = async () => {
+    if (!window.flowApi?.selectZipFile || !window.flowApi?.extractImageZip) return;
+    try {
+      setZipImportError(null);
+      setZipAmbiguityWarning(null);
+      const zipPath = await window.flowApi.selectZipFile();
+      if (!zipPath) return;
+
+      const result = await window.flowApi.extractImageZip(zipPath);
+      if (result.files.length === 0) {
+        setZipImportError('No supported image files (.jpg, .jpeg, .png, .webp) found in the ZIP archive.');
+        return;
+      }
+
+      const filenames = result.files.map((f) => f.name);
+      const ambiguities = detectAmbiguousNumericOrder(filenames);
+      if (ambiguities.length > 0) {
+        const ambMsg = ambiguities
+          .map((a) => `Index ${a.extractedNumber}: ${a.files.join(', ')}`)
+          .join('; ');
+        setZipAmbiguityWarning(`Note: multiple files with identical numeric index detected (${ambMsg}). Alphabetical tie-breaking applied.`);
+      }
+
+      const parsed = PromptParser.parseRawText(bulkPromptsText, 'video');
+      setBulkPairs((prev) => {
+        return result.files.map((f, i) => ({
+          id: `pair_${Date.now()}_${i}`,
+          sourceImagePath: f.path,
+          sourceImageName: f.name,
+          promptText: parsed[i]?.text || prev[i]?.promptText || '',
+        }));
+      });
+    } catch (err) {
+      setZipImportError((err as Error).message);
+    }
+  };
+
+  const handleBulkI2VPromptsTextChange = (text: string) => {
+    setBulkPromptsText(text);
+    const parsed = PromptParser.parseRawText(text, 'video');
+    setBulkPairs((prev) => {
+      const count = Math.max(prev.length, parsed.length);
+      const next = [];
+      for (let i = 0; i < count; i++) {
+        next.push({
+          id: prev[i]?.id || `pair_${Date.now()}_${i}`,
+          sourceImagePath: prev[i]?.sourceImagePath || '',
+          sourceImageName: prev[i]?.sourceImageName || '',
+          promptText: parsed[i] ? parsed[i].text : '',
+        });
+      }
+      return next;
+    });
+  };
+
+  const handleUpdateSlotPrompt = (index: number, val: string) => {
+    setBulkPairs((prev) => {
+      const updated = prev.map((p, i) => (i === index ? { ...p, promptText: val } : p));
+      setBulkPromptsText(updated.map((p) => p.promptText).join('\n'));
+      return updated;
+    });
+  };
+
+  const handleRemoveSlot = (index: number) => {
+    setBulkPairs((prev) => {
+      const updated = prev.filter((_, i) => i !== index);
+      setBulkPromptsText(updated.map((p) => p.promptText).join('\n'));
+      return updated.length > 0 ? updated : [{ id: `pair_${Date.now()}_0`, sourceImagePath: '', sourceImageName: '', promptText: '' }];
+    });
+  };
+
+  const handleAddSceneSlot = () => {
+    setBulkPairs((prev) => [
+      ...prev,
+      { id: `pair_${Date.now()}_${prev.length}`, sourceImagePath: '', sourceImageName: '', promptText: '' },
+    ]);
+  };
+
+  const handleClearAllPairs = () => {
+    setBulkPairs([{ id: `pair_${Date.now()}_0`, sourceImagePath: '', sourceImageName: '', promptText: '' }]);
+    setBulkPromptsText('');
+    setZipImportError(null);
+    setZipAmbiguityWarning(null);
+  };
+
+  const handleApplySampleBulkI2VPrompts = () => {
+    const count = bulkPairs.filter((p) => p.sourceImagePath).length || 3;
+    const samples = Array.from({ length: count }, (_, i) => {
+      return SAMPLE_IMAGE_TO_VIDEO_PROMPTS[i % SAMPLE_IMAGE_TO_VIDEO_PROMPTS.length];
+    });
+    handleBulkI2VPromptsTextChange(samples.join('\n'));
   };
 
   // Common Settings
@@ -220,6 +329,11 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
       const validPairs = bulkPairs.filter((p) => p.sourceImagePath && p.promptText.trim());
       if (validPairs.length === 0) {
         setErrorMsg('Please configure at least one Image-to-Video pair with both an image and motion prompt.');
+        return;
+      }
+      const imagesCount = bulkPairs.filter((p) => Boolean(p.sourceImagePath)).length;
+      if (validPairs.length < imagesCount) {
+        setErrorMsg(`All selected images must have a motion prompt (${validPairs.length} of ${imagesCount} complete).`);
         return;
       }
     } else {
@@ -650,149 +764,443 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
             </div>
           )}
 
-          {/* BULK IMAGE TO VIDEO PAIRS BUILDER */}
+          {/* BULK IMAGE TO VIDEO WORKSPACE (ONE-BLOCK PROMPTS + ORDERED SCENE TABLE) */}
           {isBulkI2V && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {bulkPairs.map((pair, idx) => (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {/* TOP BULK ACTIONS TOOLBAR */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '12px',
+                  padding: '12px 16px',
+                  backgroundColor: 'var(--bg-surface)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 'var(--radius-md)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={handleImportMultipleImages}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '7px 14px',
+                      backgroundColor: 'var(--primary)',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '12.5px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    📁 Select Multiple Images
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleImportZip}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '7px 14px',
+                      backgroundColor: 'var(--bg-input)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '12.5px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    🗜️ Import ZIP Archive
+                  </button>
+                  {(bulkPairs.some((p) => p.sourceImagePath || p.promptText.trim()) || bulkPromptsText.trim().length > 0) && (
+                    <button
+                      type="button"
+                      onClick={handleClearAllPairs}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--text-muted)',
+                        fontSize: '12px',
+                        cursor: 'pointer',
+                        padding: '4px 8px',
+                      }}
+                    >
+                      Clear All
+                    </button>
+                  )}
+                </div>
+
+                {/* PAIRING STATUS BADGE */}
+                <div>
+                  {(() => {
+                    const imgCount = bulkPairs.filter((p) => Boolean(p.sourceImagePath)).length;
+                    const promptCount = PromptParser.parseRawText(bulkPromptsText, 'video').length;
+                    if (imgCount === 0 && promptCount === 0) {
+                      return (
+                        <span
+                          style={{
+                            fontSize: '12px',
+                            color: 'var(--text-muted)',
+                            padding: '4px 10px',
+                            backgroundColor: 'var(--bg-input)',
+                            borderRadius: '4px',
+                            border: '1px solid var(--border-color)',
+                          }}
+                        >
+                          0 images · 0 prompts
+                        </span>
+                      );
+                    }
+                    if (imgCount === promptCount && imgCount > 0) {
+                      return (
+                        <span
+                          style={{
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            color: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            border: '1px solid rgba(16, 185, 129, 0.3)',
+                            padding: '4px 10px',
+                            borderRadius: '4px',
+                          }}
+                        >
+                          ✓ {imgCount} scenes ready (1-to-1 matched)
+                        </span>
+                      );
+                    }
+                    const diff = Math.abs(imgCount - promptCount);
+                    const isMissingPrompts = imgCount > promptCount;
+                    return (
+                      <span
+                        style={{
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          color: '#f59e0b',
+                          backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                          border: '1px solid rgba(245, 158, 11, 0.3)',
+                          padding: '4px 10px',
+                          borderRadius: '4px',
+                        }}
+                      >
+                        ⚠ {imgCount} images · {promptCount} prompts ({isMissingPrompts ? `${diff} prompts missing` : `${diff} unused prompts`})
+                      </span>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* ZIP IMPORT ERROR / AMBIGUITY WARNING BANNERS */}
+              {zipImportError && (
                 <div
-                  key={pair.id}
                   style={{
-                    display: 'grid',
-                    gridTemplateColumns: '170px 1fr 32px',
-                    gap: '12px',
-                    padding: '12px',
-                    backgroundColor: 'var(--bg-surface)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: 'var(--radius-md)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
                     alignItems: 'center',
+                    padding: '10px 14px',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: '#ef4444',
+                    fontSize: '12.5px',
                   }}
                 >
-                  {/* Source Image Preview / Picker */}
+                  <span>⚠️ {zipImportError}</span>
+                  <button
+                    type="button"
+                    onClick={() => setZipImportError(null)}
+                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '14px' }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+              {zipAmbiguityWarning && (
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '10px 14px',
+                    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                    border: '1px solid rgba(245, 158, 11, 0.3)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: '#f59e0b',
+                    fontSize: '12.5px',
+                  }}
+                >
+                  <span>ℹ️ {zipAmbiguityWarning}</span>
+                  <button
+                    type="button"
+                    onClick={() => setZipAmbiguityWarning(null)}
+                    style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: 'pointer', fontSize: '14px' }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
+              {/* ONE-BLOCK PROMPT INPUT UX */}
+              <div
+                style={{
+                  backgroundColor: 'var(--bg-surface)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '16px',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '10px',
+                  }}
+                >
                   <div>
-                    {pair.sourceImagePath ? (
-                      <div style={{ position: 'relative', borderRadius: '4px', overflow: 'hidden' }}>
-                        <img
-                          src={formatAssetUrl(pair.sourceImagePath)}
-                          alt="Source"
-                          style={{ width: '100%', height: '76px', objectFit: 'cover', display: 'block' }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handlePickBulkImage(idx)}
-                          style={{
-                            position: 'absolute',
-                            top: '4px',
-                            right: '4px',
-                            background: 'rgba(0,0,0,0.75)',
-                            border: 'none',
-                            color: '#fff',
-                            fontSize: '10px',
-                            borderRadius: '3px',
-                            padding: '2px 5px',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Change
-                        </button>
-                        <div
-                          style={{
-                            position: 'absolute',
-                            bottom: 0,
-                            left: 0,
-                            right: 0,
-                            padding: '2px 4px',
-                            backgroundColor: 'rgba(0,0,0,0.75)',
-                            fontSize: '9.5px',
-                            color: '#fff',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {pair.sourceImageName || `#${idx + 1}`}
-                        </div>
-                      </div>
-                    ) : (
+                    <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Motion Prompts (1 line per scene)
+                    </label>
+                    <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      Line 1 pairs with Image 1, Line 2 with Image 2... Line order is strictly preserved 1-to-1.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleApplySampleBulkI2VPrompts}
+                    style={{
+                      background: 'none',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '4px 10px',
+                      fontSize: '11.5px',
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ✨ Sample Prompts
+                  </button>
+                </div>
+
+                <textarea
+                  value={bulkPromptsText}
+                  onChange={(e) => handleBulkI2VPromptsTextChange(e.target.value)}
+                  placeholder={`Enter one motion prompt per line...&#10;Line 1 -> Image #01: Smooth cinematic orbit around the subject...&#10;Line 2 -> Image #02: Gentle push-in with soft volumetric lighting...&#10;Line 3 -> Image #03: Fluid panning motion with subtle atmospheric depth...`}
+                  rows={5}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'var(--bg-input)',
+                    border: '1px solid var(--border-color)',
+                    color: 'var(--text-primary)',
+                    fontSize: '13px',
+                    lineHeight: '1.6',
+                    fontFamily: 'var(--font-mono)',
+                    resize: 'vertical',
+                  }}
+                />
+              </div>
+
+              {/* COMPACT ORDERED PREVIEW TABLE */}
+              <div
+                style={{
+                  backgroundColor: 'var(--bg-surface)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '14px',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '12px',
+                  }}
+                >
+                  <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Ordered Scene Slots ({bulkPairs.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleAddSceneSlot}
+                    style={{
+                      background: 'none',
+                      border: '1px dashed var(--border-color)',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '4px 10px',
+                      fontSize: '11.5px',
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    + Add Scene Slot
+                  </button>
+                </div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                    maxHeight: '420px',
+                    overflowY: 'auto',
+                    paddingRight: '4px',
+                  }}
+                >
+                  {bulkPairs.map((pair, idx) => (
+                    <div
+                      key={pair.id}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '48px 180px 1fr 32px',
+                        gap: '10px',
+                        padding: '8px 10px',
+                        backgroundColor: 'var(--bg-input)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: 'var(--radius-sm)',
+                        alignItems: 'center',
+                      }}
+                    >
+                      {/* Slot Index */}
                       <div
-                        onClick={() => handlePickBulkImage(idx)}
                         style={{
-                          height: '76px',
-                          border: '1px dashed var(--border-color)',
-                          borderRadius: '4px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          cursor: 'pointer',
-                          backgroundColor: 'var(--bg-subtle)',
-                          padding: '6px',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          color: 'var(--primary)',
+                          fontFamily: 'var(--font-mono)',
                           textAlign: 'center',
                         }}
                       >
-                        <span style={{ fontSize: '16px' }}>🖼️</span>
-                        <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginTop: '2px' }}>
-                          Select Image
-                        </span>
+                        #{String(idx + 1).padStart(2, '0')}
                       </div>
-                    )}
-                  </div>
 
-                  {/* Motion Prompt Input */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
-                      <span style={{ fontWeight: 600, color: 'var(--primary)', fontFamily: 'var(--font-mono)' }}>
-                        Scene #{String(idx + 1).padStart(2, '0')}
-                      </span>
-                      <span>{pair.promptText.length} chars</span>
+                      {/* Source Image */}
+                      <div>
+                        {pair.sourceImagePath ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <img
+                              src={formatAssetUrl(pair.sourceImagePath)}
+                              alt={pair.sourceImageName || `Slot ${idx + 1}`}
+                              style={{
+                                width: '44px',
+                                height: '44px',
+                                objectFit: 'cover',
+                                borderRadius: '4px',
+                                border: '1px solid var(--border-subtle)',
+                                flexShrink: 0,
+                              }}
+                            />
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <div
+                                style={{
+                                  fontSize: '11.5px',
+                                  fontWeight: 500,
+                                  color: 'var(--text-primary)',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                                title={pair.sourceImageName}
+                              >
+                                {pair.sourceImageName || `image_${idx + 1}`}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handlePickBulkImage(idx)}
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  padding: 0,
+                                  marginTop: '2px',
+                                  fontSize: '10.5px',
+                                  color: 'var(--primary)',
+                                  cursor: 'pointer',
+                                  textDecoration: 'underline',
+                                }}
+                              >
+                                Change
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handlePickBulkImage(idx)}
+                            style={{
+                              width: '100%',
+                              height: '44px',
+                              border: '1px dashed var(--border-color)',
+                              borderRadius: '4px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '6px',
+                              backgroundColor: 'var(--bg-subtle)',
+                              color: 'var(--text-muted)',
+                              fontSize: '11px',
+                              fontWeight: 500,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <span>🖼️</span> Select Image
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Inline Prompt Input */}
+                      <div>
+                        <input
+                          type="text"
+                          value={pair.promptText}
+                          onChange={(e) => handleUpdateSlotPrompt(idx, e.target.value)}
+                          placeholder={`Motion prompt for Scene #${idx + 1}...`}
+                          style={{
+                            width: '100%',
+                            padding: '6px 10px',
+                            backgroundColor: 'var(--bg-surface)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '4px',
+                            color: 'var(--text-primary)',
+                            fontSize: '12px',
+                            outline: 'none',
+                          }}
+                        />
+                      </div>
+
+                      {/* Remove Button */}
+                      <div style={{ display: 'flex', justifyContent: 'center' }}>
+                        {bulkPairs.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveSlot(idx)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'var(--text-muted)',
+                              cursor: 'pointer',
+                              fontSize: '16px',
+                              padding: '2px 6px',
+                              borderRadius: '3px',
+                            }}
+                            title="Remove Scene Slot"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <textarea
-                      value={pair.promptText}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setBulkPairs((prev) =>
-                          prev.map((p, i) => (i === idx ? { ...p, promptText: val } : p))
-                        );
-                      }}
-                      placeholder={`Motion prompt for Image #${idx + 1}...`}
-                      rows={2}
-                      style={{
-                        width: '100%',
-                        padding: '8px',
-                        borderRadius: 'var(--radius-sm)',
-                        backgroundColor: 'var(--bg-input)',
-                        border: '1px solid var(--border-color)',
-                        color: 'var(--text-primary)',
-                        fontSize: '12.5px',
-                        resize: 'vertical',
-                        fontFamily: 'inherit',
-                      }}
-                    />
-                  </div>
-
-                  {/* Remove Button */}
-                  <div style={{ display: 'flex', justifyContent: 'center' }}>
-                    {bulkPairs.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setBulkPairs((prev) => prev.filter((_, i) => i !== idx));
-                        }}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: 'var(--text-muted)',
-                          cursor: 'pointer',
-                          fontSize: '18px',
-                          padding: '4px',
-                        }}
-                        title="Remove Scene Pair"
-                      >
-                        ×
-                      </button>
-                    )}
-                  </div>
+                  ))}
                 </div>
-              ))}
+              </div>
             </div>
           )}
 

@@ -216,29 +216,14 @@ export class ProjectContext {
     const startWait = Date.now();
 
     while (Date.now() - startWait < 15000) {
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(500);
       const url = page.url();
-      let id = this.extractProjectId(url);
+      const id = this.extractProjectId(url);
       if (id) {
         newProjectId = id;
         newProjectUrl = url;
         break;
       }
-
-      // Check all open pages in case project opened in a new tab
-      try {
-        const pages = page.context().pages();
-        for (const p of pages) {
-          const pUrl = p.url();
-          const pId = this.extractProjectId(pUrl);
-          if (pId) {
-            newProjectId = pId;
-            newProjectUrl = pUrl;
-            break;
-          }
-        }
-      } catch {}
-      if (newProjectId) break;
     }
 
     if (!newProjectId) {

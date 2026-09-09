@@ -16,6 +16,8 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [projectToDelete, setProjectToDelete] = useState<ProjectEntity | null>(null);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+  const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
 
   const loadProjects = async (silent = false) => {
     try {
@@ -43,10 +45,34 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
     if (!projectToDelete || !window.flowApi) return;
     try {
       await window.flowApi.deleteProject(projectToDelete.projectId);
+      setSelectedProjectIds((prev) => {
+        const next = new Set(prev);
+        next.delete(projectToDelete.projectId);
+        return next;
+      });
       setProjectToDelete(null);
       await loadProjects(true);
     } catch (err) {
       console.error('Failed to delete project', err);
+    }
+  };
+
+  const handleBatchDeleteConfirm = async () => {
+    if (selectedProjectIds.size === 0 || !window.flowApi) return;
+    try {
+      const ids = Array.from(selectedProjectIds);
+      if (window.flowApi.deleteProjects) {
+        await window.flowApi.deleteProjects(ids);
+      } else {
+        for (const id of ids) {
+          await window.flowApi.deleteProject(id).catch(() => {});
+        }
+      }
+      setSelectedProjectIds(new Set());
+      setShowBatchDeleteModal(false);
+      await loadProjects(true);
+    } catch (err) {
+      console.error('Failed to batch delete projects', err);
     }
   };
 
@@ -59,6 +85,26 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
     );
   });
 
+  const allFilteredSelected =
+    filteredProjects.length > 0 &&
+    filteredProjects.every((p) => selectedProjectIds.has(p.projectId));
+
+  const toggleSelectAll = () => {
+    if (allFilteredSelected) {
+      setSelectedProjectIds((prev) => {
+        const next = new Set(prev);
+        filteredProjects.forEach((p) => next.delete(p.projectId));
+        return next;
+      });
+    } else {
+      setSelectedProjectIds((prev) => {
+        const next = new Set(prev);
+        filteredProjects.forEach((p) => next.add(p.projectId));
+        return next;
+      });
+    }
+  };
+
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', height: '100%', overflowY: 'auto' }}>
       {/* Header bar */}
@@ -67,14 +113,32 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
           <h1>Projects</h1>
           <p style={{ marginTop: '4px' }}>Manage and monitor batch generation campaigns</p>
         </div>
-        <button className="btn-primary" onClick={onNavigateNewProject}>
-          <PlusIcon size={16} />
-          New Project
-        </button>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          {selectedProjectIds.size > 0 && (
+            <button
+              className="btn-secondary btn-sm"
+              onClick={() => setShowBatchDeleteModal(true)}
+              style={{
+                borderColor: 'var(--danger)',
+                color: 'var(--danger)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              <TrashIcon size={14} />
+              Delete {selectedProjectIds.size} Selected
+            </button>
+          )}
+          <button className="btn-primary" onClick={onNavigateNewProject}>
+            <PlusIcon size={16} />
+            New Project
+          </button>
+        </div>
       </div>
 
       {/* Search and filter toolbar */}
-      <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
         <input
           type="search"
           placeholder="Search projects by name or tag..."
@@ -82,6 +146,15 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
           onChange={(e) => setSearchQuery(e.target.value)}
           style={{ maxWidth: '400px' }}
         />
+        {filteredProjects.length > 0 && (
+          <button
+            className="btn-secondary btn-sm"
+            onClick={toggleSelectAll}
+            style={{ fontSize: '12px' }}
+          >
+            {allFilteredSelected ? 'Deselect All' : `Select All (${filteredProjects.length})`}
+          </button>
+        )}
       </div>
 
       {/* Projects List or Empty State */}
@@ -142,10 +215,26 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
-                  <div>
-                    <h3 style={{ fontSize: '15.5px', fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--text-primary)' }}>
-                      {p.name}
-                    </h3>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedProjectIds.has(p.projectId)}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        setSelectedProjectIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(p.projectId)) next.delete(p.projectId);
+                          else next.add(p.projectId);
+                          return next;
+                        });
+                      }}
+                      style={{ cursor: 'pointer', marginTop: '3px', width: '16px', height: '16px', accentColor: 'var(--primary)' }}
+                      title="Select project for batch actions"
+                    />
+                    <div>
+                      <h3 style={{ fontSize: '15.5px', fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--text-primary)' }}>
+                        {p.name}
+                      </h3>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
                       {p.settings?.generationMode && (
                         <span
@@ -168,6 +257,7 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
                           Tag: {p.campaignTag}
                         </span>
                       )}
+                      </div>
                     </div>
                   </div>
                   <span
@@ -248,6 +338,17 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
         isDanger={true}
         onConfirm={handleDeleteConfirm}
         onCancel={() => setProjectToDelete(null)}
+      />
+
+      {/* Batch Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showBatchDeleteModal}
+        title={`Delete ${selectedProjectIds.size} Projects`}
+        message={`Are you sure you want to delete ${selectedProjectIds.size} selected projects? This will cancel any active jobs for these projects and permanently remove all associated generated media files from disk. Flow accounts and browser profiles will remain untouched.`}
+        confirmLabel={`Delete ${selectedProjectIds.size} Projects`}
+        isDanger={true}
+        onConfirm={handleBatchDeleteConfirm}
+        onCancel={() => setShowBatchDeleteModal(false)}
       />
     </div>
   );

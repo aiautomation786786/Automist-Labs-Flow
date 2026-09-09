@@ -22,13 +22,14 @@ import { ProfileSessionManager } from '../engine/ProfileSessionManager';
 import { generationEventBus } from '../events/GenerationEventBus';
 import { AppLogger } from '../utils/AppLogger';
 import { ConcurrencyConfig } from './ConcurrencyConfig';
-import type { SchedulerCapacityMetrics } from '../../shared/types';
+import type { SchedulerCapacityMetrics, QuarantineRecord } from '../../shared/types';
 
 const logger = new AppLogger({ mirrorToStderr: false });
 
 export class WorkerPool {
   private workers: Map<string, ProfileWorker> = new Map();
   private sessionManager: ProfileSessionManager | null = null;
+  private quarantinedProfiles: Map<string, QuarantineRecord> = new Map();
 
   constructor(sessionManager?: ProfileSessionManager) {
     if (sessionManager) {
@@ -133,20 +134,73 @@ export class WorkerPool {
   }
 
   /**
+   * Quarantines a profile due to credit or quota exhaustion.
+   * Excludes it from new assignments while allowing running jobs to complete.
+   */
+  quarantineProfile(
+    profileId: string,
+    reason: 'credit_exhausted' | 'quota_exhausted',
+    ttlMs = 3600000,
+    detail?: string
+  ): void {
+    const now = Date.now();
+    this.quarantinedProfiles.set(profileId, {
+      profileId,
+      reason,
+      quarantinedAt: now,
+      quarantineUntil: now + ttlMs,
+      detail,
+    });
+    logger.warn('worker_pool', `Quarantined profile ${profileId} for ${ttlMs / 1000}s due to ${reason}: ${detail || 'no details'}`);
+  }
+
+  /**
+   * Checks if a profile is actively quarantined.
+   * When quarantine expires, verifies session health before lifting.
+   */
+  isQuarantined(profileId: string): boolean {
+    const record = this.quarantinedProfiles.get(profileId);
+    if (!record) return false;
+    if (Date.now() > record.quarantineUntil) {
+      const worker = this.workers.get(profileId);
+      if (worker && worker.state !== 'error') {
+        this.quarantinedProfiles.delete(profileId);
+        logger.info('worker_pool', `Quarantine expired for profile ${profileId}; verified healthy and returned to eligibility`);
+        return false;
+      }
+      return true;
+    }
+    return true;
+  }
+
+  /**
+   * Manually lifts quarantine for a profile.
+   */
+  liftQuarantine(profileId: string): void {
+    this.quarantinedProfiles.delete(profileId);
+    logger.info('worker_pool', `Quarantine manually lifted for profile ${profileId}`);
+  }
+
+  /**
+   * Returns all active quarantine records.
+   */
+  getQuarantinedProfiles(): QuarantineRecord[] {
+    for (const id of Array.from(this.quarantinedProfiles.keys())) {
+      this.isQuarantined(id);
+    }
+    return Array.from(this.quarantinedProfiles.values());
+  }
+
+  /**
    * Returns a worker that has remaining capacity, using load-aware randomized selection.
    *
    * SELECTION STRATEGY:
    *  1. Build the set of eligible workers: those where `isAvailable` is true
-   *     (activeJobCount < maxConcurrentJobs, not in error, session ready).
+   *     (activeJobCount < maxConcurrentJobs, not in error, session ready, and NOT quarantined).
    *  2. Among eligible workers, identify the minimum current active job count (least loaded).
    *  3. Restrict candidates to the least-loaded group (spread load before piling up).
    *  4. Apply Fisher-Yates shuffle within the least-loaded group for uniform random selection.
    *  5. Return the first element from the shuffled group.
-   *
-   * This ensures:
-   *  - A profile with 0 active jobs is always preferred over one with 1 active job.
-   *  - Among equally-loaded profiles, selection is uniform random (no sticky preference).
-   *  - The same profile CAN be returned twice in successive calls (if it still has capacity).
    */
   getAvailableWorker(allowedProfileIds?: string[]): ProfileWorker | null {
     this.syncWithSessionManager();
@@ -155,10 +209,11 @@ export class WorkerPool {
     const effectiveAllowed = overrideProfileId ? [overrideProfileId] : allowedProfileIds;
     const allowedSet = effectiveAllowed && effectiveAllowed.length > 0 ? new Set(effectiveAllowed) : null;
 
-    // Step 1: Build eligible list (workers with remaining capacity)
+    // Step 1: Build eligible list (workers with remaining capacity and NOT quarantined)
     const eligible: ProfileWorker[] = [];
     for (const worker of this.workers.values()) {
       if (allowedSet && !allowedSet.has(worker.profileId)) continue;
+      if (this.isQuarantined(worker.profileId)) continue;
       if (worker.isAvailable) eligible.push(worker);
     }
 

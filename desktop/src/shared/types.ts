@@ -584,6 +584,62 @@ export interface ProjectStats {
 }
 
 /**
+ * Structured classification of generation and runtime failures.
+ * Distinguishes genuine credit/quota issues from generic timeouts, safety blocks, or network drops.
+ */
+export type FailureClassification =
+  | 'credit_exhausted'
+  | 'quota_exhausted'
+  | 'auth_required'
+  | 'flow_generation_error'
+  | 'timeout'
+  | 'browser_error'
+  | 'unknown';
+
+/**
+ * Explicit lifecycle states of prompt submission to Google Flow.
+ */
+export type SubmissionState =
+  | 'none'
+  | 'not_submitted'
+  | 'queued'
+  | 'assigned'
+  | 'preparing'
+  | 'ready_to_submit'
+  | 'submitting'
+  | 'submitted'
+  | 'generating'
+  | 'media_detected'
+  | 'completed'
+  | 'failed'
+  | 'submission_unknown';
+
+/**
+ * Record of an individual execution attempt for a job on a specific profile.
+ */
+export interface JobAttemptRecord {
+  profileId: string;
+  attemptNumber: number;
+  startedAt: string;
+  endedAt?: string;
+  submissionState: SubmissionState;
+  outcome: 'completed' | 'failed' | 'retrying' | 'failed_over' | 'timeout' | 'unknown';
+  errorClassification?: FailureClassification;
+  errorMessage?: string;
+}
+
+/**
+ * Record of in-memory profile quarantine due to credit/quota exhaustion.
+ */
+export interface QuarantineRecord {
+  profileId: string;
+  reason: 'credit_exhausted' | 'quota_exhausted';
+  quarantinedAt: number;
+  quarantineUntil: number;
+  detail?: string;
+}
+
+/**
  * Status of an entire project.
  */
 export type ProjectStatus =
@@ -592,7 +648,8 @@ export type ProjectStatus =
   | 'running'
   | 'paused'
   | 'completed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'deleting';
 
 /**
  * Complete persistent entity representing a Google Flow creation project.
@@ -656,7 +713,8 @@ export interface GenerationJobEntity {
   errorMessage?: string;
   retryCount: number;
   maxRetries: number;
-  submissionState?: 'none' | 'submitting' | 'submitted';
+  submissionState?: SubmissionState;
+  attempts?: JobAttemptRecord[];
   metadata: Record<string, unknown>;
 }
 
@@ -743,10 +801,16 @@ export interface FlowApi {
     patch: Partial<Omit<ProjectEntity, 'projectId' | 'createdAt' | 'slots'>>
   ) => Promise<ProjectEntity>;
   deleteProject: (projectId: string) => Promise<void>;
+  deleteProjects?: (projectIds: string[]) => Promise<{ success: boolean; deletedCount: number }>;
   retrySlot?: (projectId: string, slotIndex: number) => Promise<void>;
   revealAsset?: (mediaPath: string) => Promise<boolean>;
   selectImageFile?: () => Promise<string | null>;
   selectMultipleImageFiles?: () => Promise<string[]>;
+  selectZipFile?: () => Promise<string | null>;
+  extractImageZip?: (zipPath: string) => Promise<{ files: Array<{ path: string; name: string }>; tempDir: string }>;
+  exportProjectZip?: (projectId: string, slotIndices?: number[]) => Promise<{ zipPath: string }>;
+  downloadSelected?: (params: { projectId: string; slotIndices: number[]; destinationDir: string }) => Promise<{ count: number; destinationDir: string }>;
+  selectDirectory?: () => Promise<string | null>;
 
   // Generation
   startProjectGeneration: (projectId: string) => Promise<GenerationJobEntity[]>;

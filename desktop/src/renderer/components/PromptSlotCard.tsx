@@ -12,6 +12,9 @@ interface PromptSlotCardProps {
     elapsedSeconds?: number;
     description?: string;
   };
+  isSelected?: boolean;
+  onToggleSelect?: (slotIndex: number) => void;
+  profileMap?: Record<string, string>;
   onViewPrompt: (slot: PromptSlotEntity) => void;
   onPreviewMedia: (slot: PromptSlotEntity) => void;
   onRetry?: (slot: PromptSlotEntity) => void;
@@ -21,15 +24,13 @@ export function formatMediaUrl(mediaPath?: string, projectId?: string): string {
   return formatAssetUrl(mediaPath, projectId);
 }
 
-const KNOWN_PROFILES: Record<string, string> = {
-  profile_71b66ea2: 'AI Automation',
-  profile_b75159bb: 'Heidi Mason',
-};
-
 export const PromptSlotCardComponent: React.FC<PromptSlotCardProps> = ({
   slot,
   aspectRatio,
   progress,
+  isSelected = false,
+  onToggleSelect,
+  profileMap,
   onViewPrompt,
   onPreviewMedia,
   onRetry,
@@ -70,7 +71,7 @@ export const PromptSlotCardComponent: React.FC<PromptSlotCardProps> = ({
   };
 
   const profileName = slot.assignedProfileId
-    ? KNOWN_PROFILES[slot.assignedProfileId] || slot.assignedProfileId.replace(/^profile_/, 'Profile ')
+    ? profileMap?.[slot.assignedProfileId] || slot.assignedProfileId.replace(/^profile_/, 'Profile ')
     : 'Unassigned';
 
   const fileSizeLabel = slot.result?.fileSizeBytes
@@ -89,17 +90,30 @@ export const PromptSlotCardComponent: React.FC<PromptSlotCardProps> = ({
         flexDirection: 'column',
         gap: '10px',
         backgroundColor: 'var(--bg-card)',
-        border: '1px solid var(--border-color)',
+        border: isSelected ? '1px solid var(--primary)' : '1px solid var(--border-color)',
         borderRadius: 'var(--radius-lg)',
         padding: '12px',
-        boxShadow: isHovered ? '0 8px 24px rgba(0, 0, 0, 0.45), 0 0 16px rgba(99, 102, 241, 0.15)' : 'var(--shadow-sm)',
-        borderColor: isHovered ? 'rgba(99, 102, 241, 0.35)' : 'var(--border-color)',
+        boxShadow: isSelected
+          ? '0 0 0 1px var(--primary), 0 8px 24px rgba(0,0,0,0.4)'
+          : isHovered
+          ? '0 8px 24px rgba(0, 0, 0, 0.45), 0 0 16px rgba(99, 102, 241, 0.15)'
+          : 'var(--shadow-sm)',
+        borderColor: isSelected ? 'var(--primary)' : isHovered ? 'rgba(99, 102, 241, 0.35)' : 'var(--border-color)',
         transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
       }}
     >
-      {/* Top row: minimalist slot # + model badge + status */}
+      {/* Top row: checkbox + minimalist slot # + model badge + status */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 2px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {onToggleSelect && (
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => onToggleSelect(slot.slotIndex)}
+              style={{ cursor: 'pointer', accentColor: 'var(--primary)', width: '15px', height: '15px' }}
+              title="Select slot for batch download"
+            />
+          )}
           <span style={{ fontWeight: 700, fontSize: '12.5px', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
             {slotNumber}
           </span>

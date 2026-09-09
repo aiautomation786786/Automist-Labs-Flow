@@ -31,6 +31,7 @@ import { WorkerPool } from './WorkerPool';
 import { ProfileWorker } from './ProfileWorker';
 import { ImageExecutionService, type ExecutionOptions } from '../execution/ImageExecutionService';
 import { VideoExecutionService } from '../execution/VideoExecutionService';
+import { CreditFailureDetector } from '../engine/CreditFailureDetector';
 import { generationEventBus } from '../events/GenerationEventBus';
 import { AppLogger } from '../utils/AppLogger';
 
@@ -171,13 +172,14 @@ export class GenerationScheduler {
    */
   async cancelProject(projectId: string): Promise<void> {
     try {
+      await ProjectRepository.update(projectId, { status: 'deleting' }).catch(() => {});
       const jobs = await JobRepository.getJobsByProject(projectId).catch(() => []);
       for (const job of jobs) {
         if (job.status !== 'completed' && job.status !== 'cancelled' && job.status !== 'failed') {
           await this.cancelJob(projectId, job.jobId).catch(() => {});
         }
       }
-      logger.info('scheduler', `Cancelled all pending/active jobs for project ${projectId}`);
+      logger.info('scheduler', `Cancelled all pending/active jobs and marked deleting for project ${projectId}`);
     } catch (err) {
       logger.warn('scheduler', `Error cancelling project ${projectId}: ${(err as Error).message}`);
     }
@@ -396,14 +398,93 @@ export class GenerationScheduler {
       }
     } catch (err) {
       const errorMsg = (err as Error).message;
-      await this.handleJobFailure(job, errorMsg);
+      await this.handleJobFailure(job, errorMsg, worker);
     }
   }
 
   /**
-   * Evaluates a job failure, applying the retry or manual-action policy.
+   * Evaluates a job failure, applying automatic credit failover, safe submission checks, and retry policies.
    */
-  private async handleJobFailure(job: GenerationJobEntity, errorMessage: string): Promise<void> {
+  private async handleJobFailure(job: GenerationJobEntity, errorMessage: string, worker?: ProfileWorker): Promise<void> {
+    const classification = CreditFailureDetector.classifyErrorMessage(errorMessage);
+    const latestJob = (await JobRepository.getJob(job.projectId, job.jobId)) || job;
+    const submissionState = latestJob.submissionState;
+
+    logger.warn('scheduler', `Job ${job.jobId} failed with classification: ${classification} (submissionState: ${submissionState})`);
+
+    // RULE 1 & 6: Never failover or resubmit if submission state is uncertain/unknown
+    if (submissionState === 'submission_unknown') {
+      logger.warn('scheduler', `Job ${job.jobId} submission state is unknown. Stopping automatic retry to prevent duplicate paid generation.`);
+      await JobRepository.updateJob(job.projectId, job.jobId, {
+        status: 'manual_action_required',
+        errorMessage: `Uncertain submission state: ${errorMessage}. Manual verification required before resubmission.`,
+      });
+      await ProjectRepository.updateSlot(job.projectId, job.slotIndex, {
+        status: 'failed',
+        error: {
+          code: 'SUBMISSION_UNKNOWN',
+          message: `Submission state uncertain. Verify on Flow canvas before resubmitting.`,
+          timestamp: new Date().toISOString(),
+          retryCount: job.retryCount,
+          profileId: worker?.profileId,
+        },
+      });
+      return;
+    }
+
+    // RULE 1 & 4: Credit or Quota Exhaustion Failover
+    if (classification === 'credit_exhausted' || classification === 'quota_exhausted') {
+      if (worker) {
+        this.workerPool.quarantineProfile(worker.profileId, classification, 3600000, errorMessage);
+      }
+
+      // Check if the previous attempt failed BEFORE generation began (safe to resubmit)
+      const isPreSubmissionFailure =
+        submissionState === 'not_submitted' ||
+        submissionState === 'preparing' ||
+        submissionState === 'ready_to_submit' ||
+        submissionState === 'submitting' ||
+        submissionState === 'none' ||
+        !submissionState;
+
+      if (isPreSubmissionFailure) {
+        // Safe to failover: job never consumed credits on Flow backend
+        const nextWorker = this.workerPool.getAvailableWorker();
+        if (nextWorker) {
+          logger.info('scheduler', `Credit failover for job ${job.jobId}: unassigning from ${worker?.profileId ?? 'unknown'} and re-queuing for available profile`);
+          const requeuedJob = await JobRepository.updateJob(job.projectId, job.jobId, {
+            status: 'queued',
+            submissionState: 'not_submitted',
+            profileId: undefined,
+          });
+          await ProjectRepository.updateSlot(job.projectId, job.slotIndex, {
+            status: 'queued',
+            assignedProfileId: undefined,
+          });
+          generationEventBus.emitTyped('job:queued', requeuedJob);
+          this.triggerDispatch();
+          return;
+        } else {
+          // All eligible workers are exhausted or quarantined
+          logger.warn('scheduler', `All worker profiles exhausted or quarantined. Holding job ${job.jobId} in queue.`);
+          await JobRepository.updateJob(job.projectId, job.jobId, {
+            status: 'manual_action_required',
+            errorMessage: 'All available Google Flow accounts have exhausted credits/quota. Please add or recharge an account.',
+          });
+          return;
+        }
+      } else {
+        // Generation was submitted and accepted before quota error occurred; do NOT resubmit blindly
+        logger.warn('scheduler', `Job ${job.jobId} failed after submission: ${errorMessage}. Not resubmitting automatically.`);
+        await JobRepository.updateJob(job.projectId, job.jobId, {
+          status: 'manual_action_required',
+          errorMessage,
+        });
+        return;
+      }
+    }
+
+    // RULE 2 & 7: Generic Timeout or Other Failures
     const isManualAction = MANUAL_ACTION_KEYWORDS.some((kw) =>
       errorMessage.toLowerCase().includes(kw.toLowerCase())
     );
@@ -416,6 +497,7 @@ export class GenerationScheduler {
 
       await JobRepository.updateJob(job.projectId, job.jobId, {
         status: 'retry_waiting',
+        submissionState: 'not_submitted',
         retryCount: newRetryCount,
         errorMessage,
       });
@@ -426,7 +508,10 @@ export class GenerationScheduler {
       setTimeout(async () => {
         if (this.isStopped) return;
         try {
-          const reQueued = await JobRepository.updateJob(job.projectId, job.jobId, { status: 'queued' });
+          const reQueued = await JobRepository.updateJob(job.projectId, job.jobId, {
+            status: 'queued',
+            submissionState: 'not_submitted',
+          });
           generationEventBus.emitTyped('job:queued', reQueued);
           this.triggerDispatch();
         } catch (e) {

@@ -26,6 +26,7 @@ import { AssetManager } from '../storage/AssetManager';
 import { GenerationScheduler } from '../scheduler/GenerationScheduler';
 import { ProfileSessionManager } from '../engine/ProfileSessionManager';
 import { generationEventBus } from '../events/GenerationEventBus';
+import { ZipService, type ExportMediaItem } from '../utils/ZipService';
 import { getAppDataDir, AppLogger } from '../utils/AppLogger';
 
 const logger = new AppLogger({ mirrorToStderr: false });
@@ -118,6 +119,95 @@ export class IpcHandlers {
       }
       await ProjectRepository.delete(projectId);
       return { success: true };
+    });
+
+    ipcMain.handle('projects:deleteMultiple', async (_event, projectIds: unknown) => {
+      if (!Array.isArray(projectIds)) throw new Error('Invalid projectIds array');
+      let deletedCount = 0;
+      for (const id of projectIds) {
+        if (typeof id === 'string') {
+          if (scheduler && typeof (scheduler as any).cancelProject === 'function') {
+            await (scheduler as any).cancelProject(id).catch(() => {});
+          }
+          await ProjectRepository.delete(id).catch(() => {});
+          deletedCount++;
+        }
+      }
+      return { success: true, deletedCount };
+    });
+
+    ipcMain.handle('projects:exportZip', async (_event, params: unknown) => {
+      const p = params as { projectId: string; slotIndices?: number[] };
+      if (!p || !p.projectId) throw new Error('projectId required');
+      const project = await ProjectRepository.get(p.projectId);
+      if (!project) throw new Error(`Project ${p.projectId} not found`);
+
+      const slotsToExport = p.slotIndices && p.slotIndices.length > 0
+        ? project.slots.filter((s) => p.slotIndices!.includes(s.slotIndex) && s.status === 'completed' && s.result?.mediaPath)
+        : project.slots.filter((s) => s.status === 'completed' && s.result?.mediaPath);
+
+      if (slotsToExport.length === 0) {
+        throw new Error('No completed media found to export.');
+      }
+
+      const mediaItems: ExportMediaItem[] = slotsToExport.map((s) => ({
+        slotIndex: s.slotIndex,
+        mediaPath: s.result!.mediaPath,
+        type: s.type,
+      }));
+
+      // Default export location
+      const electron = require('electron');
+      const app = electron?.app;
+      const downloadsDir = app?.getPath ? app.getPath('downloads') : getAppDataDir();
+      const safeProjectName = project.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const defaultZipName = `${safeProjectName}_media.zip`;
+
+      let targetZipPath = path.join(downloadsDir, defaultZipName);
+      if (electron?.dialog?.showSaveDialog) {
+        const saveRes = await electron.dialog.showSaveDialog({
+          title: 'Export Ordered Media ZIP',
+          defaultPath: targetZipPath,
+          filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
+        });
+        if (saveRes.canceled || !saveRes.filePath) {
+          return { canceled: true };
+        }
+        targetZipPath = saveRes.filePath;
+      }
+
+      const res = await ZipService.createOrderedZip(mediaItems, targetZipPath);
+      return { success: true, zipPath: res.zipPath, fileCount: res.fileCount };
+    });
+
+    ipcMain.handle('projects:downloadSelected', async (_event, params: unknown) => {
+      const p = params as { projectId: string; slotIndices: number[]; destinationDir: string };
+      if (!p || !p.projectId || !p.destinationDir || !Array.isArray(p.slotIndices)) {
+        throw new Error('Invalid downloadSelected parameters');
+      }
+
+      const project = await ProjectRepository.get(p.projectId);
+      if (!project) throw new Error(`Project ${p.projectId} not found`);
+
+      const slots = project.slots.filter(
+        (s) => p.slotIndices.includes(s.slotIndex) && s.status === 'completed' && s.result?.mediaPath
+      );
+
+      fs.mkdirSync(p.destinationDir, { recursive: true });
+      let copiedCount = 0;
+
+      for (const slot of slots) {
+        if (fs.existsSync(slot.result!.mediaPath)) {
+          const ext = path.extname(slot.result!.mediaPath) || (slot.type === 'video' ? '.mp4' : '.jpg');
+          const serial = String(slot.slotIndex + 1).padStart(2, '0');
+          const destName = `${serial}_${slot.type}${ext}`;
+          const destPath = path.join(p.destinationDir, destName);
+          fs.copyFileSync(slot.result!.mediaPath, destPath);
+          copiedCount++;
+        }
+      }
+
+      return { success: true, count: copiedCount, destinationDir: p.destinationDir };
     });
 
     // -------------------------------------------------------------------------
@@ -337,6 +427,50 @@ export class IpcHandlers {
         logger.warn('ipc', 'Failed to open multiple images file dialog', { error: (err as Error).message });
       }
       return [];
+    });
+
+    ipcMain.handle('system:selectZipFile', async () => {
+      try {
+        const electron = require('electron');
+        if (electron?.dialog?.showOpenDialog) {
+          const result = await electron.dialog.showOpenDialog({
+            title: 'Select Images ZIP Archive',
+            properties: ['openFile'],
+            filters: [
+              { name: 'ZIP Archive', extensions: ['zip'] },
+            ],
+          });
+          if (!result.canceled && result.filePaths.length > 0) {
+            return result.filePaths[0];
+          }
+        }
+      } catch (err) {
+        logger.warn('ipc', 'Failed to open ZIP dialog', { error: (err as Error).message });
+      }
+      return null;
+    });
+
+    ipcMain.handle('system:extractImageZip', async (_event, zipPath: unknown) => {
+      if (typeof zipPath !== 'string') throw new Error('Invalid zipPath');
+      return await ZipService.extractImageZip(zipPath);
+    });
+
+    ipcMain.handle('system:selectDirectory', async () => {
+      try {
+        const electron = require('electron');
+        if (electron?.dialog?.showOpenDialog) {
+          const result = await electron.dialog.showOpenDialog({
+            title: 'Select Destination Folder',
+            properties: ['openDirectory', 'createDirectory'],
+          });
+          if (!result.canceled && result.filePaths.length > 0) {
+            return result.filePaths[0];
+          }
+        }
+      } catch (err) {
+        logger.warn('ipc', 'Failed to open directory dialog', { error: (err as Error).message });
+      }
+      return null;
     });
 
     // -------------------------------------------------------------------------

@@ -34,6 +34,11 @@ const flowApi: FlowApi = {
   updateProject: (projectId: string, patch: Partial<Omit<ProjectEntity, 'projectId' | 'createdAt' | 'slots'>>) =>
     ipcRenderer.invoke('projects:update', projectId, patch),
   deleteProject: (projectId: string): Promise<void> => ipcRenderer.invoke('projects:delete', projectId),
+  deleteProjects: (projectIds: string[]) => ipcRenderer.invoke('projects:deleteMultiple', projectIds),
+  exportProjectZip: (projectId: string, slotIndices?: number[]) =>
+    ipcRenderer.invoke('projects:exportZip', { projectId, slotIndices }),
+  downloadSelected: (params: { projectId: string; slotIndices: number[]; destinationDir: string }) =>
+    ipcRenderer.invoke('projects:downloadSelected', params),
   retrySlot: (projectId: string, slotIndex: number): Promise<void> =>
     ipcRenderer.invoke('projects:retrySlot', projectId, slotIndex),
   revealAsset: (mediaPath: string): Promise<boolean> =>
@@ -42,6 +47,12 @@ const flowApi: FlowApi = {
     ipcRenderer.invoke('system:selectImageFile'),
   selectMultipleImageFiles: (): Promise<string[]> =>
     ipcRenderer.invoke('system:selectMultipleImageFiles'),
+  selectZipFile: (): Promise<string | null> =>
+    ipcRenderer.invoke('system:selectZipFile'),
+  extractImageZip: (zipPath: string) =>
+    ipcRenderer.invoke('system:extractImageZip', zipPath),
+  selectDirectory: (): Promise<string | null> =>
+    ipcRenderer.invoke('system:selectDirectory'),
 
   // Generation
   startProjectGeneration: (projectId: string): Promise<GenerationJobEntity[]> =>

@@ -14,7 +14,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Response } from 'playwright';
-import type { GenerationJobEntity } from '../../shared/types';
+import type { GenerationJobEntity, JobAttemptRecord } from '../../shared/types';
+import { CreditFailureDetector, type CreditDetectionResult } from '../engine/CreditFailureDetector';
 import { ProfileWorker } from '../scheduler/ProfileWorker';
 import { ProjectRepository } from '../storage/ProjectRepository';
 import { JobRepository } from '../storage/JobRepository';
@@ -69,9 +70,23 @@ export class VideoExecutionService {
     const log = new AppLogger({ profileId: worker.profileId, mirrorToStderr: true });
     log.info('video_exec', `Starting video job ${jobId} (Slot ${slotIndex}) [model=${targetModel}, mock=${isMock}, sourceImage=${sourceImagePath || 'none'}]`);
 
+    const attemptNumber = (job.attempts?.length || 0) + 1;
+    const currentAttempt: JobAttemptRecord = {
+      profileId: worker.profileId,
+      attemptNumber,
+      startedAt: jobStartTime,
+      submissionState: 'preparing',
+      outcome: 'unknown',
+    };
+    const updatedAttempts: JobAttemptRecord[] = [...(job.attempts || []), currentAttempt];
+
     try {
       // Step 1: Transition to starting
-      await JobRepository.updateJob(projectId, jobId, { status: 'starting' });
+      await JobRepository.updateJob(projectId, jobId, {
+        status: 'starting',
+        submissionState: 'preparing',
+        attempts: updatedAttempts,
+      });
       await ProjectRepository.updateSlot(projectId, slotIndex, { status: 'running', activeJobId: jobId });
 
       const destinationPath = AssetManager.getVideoDestinationPath(projectId, slotIndex, promptId, jobId);
@@ -79,9 +94,12 @@ export class VideoExecutionService {
 
       if (isMock) {
         // Mock execution mode
-        await JobRepository.updateJob(projectId, jobId, { status: 'configuring' });
-        await JobRepository.updateJob(projectId, jobId, { status: 'generating' });
-        await JobRepository.updateJob(projectId, jobId, { status: 'waiting_for_result' });
+        currentAttempt.submissionState = 'ready_to_submit';
+        await JobRepository.updateJob(projectId, jobId, { status: 'configuring', submissionState: 'ready_to_submit', attempts: updatedAttempts });
+        currentAttempt.submissionState = 'submitted';
+        await JobRepository.updateJob(projectId, jobId, { status: 'generating', submissionState: 'submitted', attempts: updatedAttempts });
+        currentAttempt.submissionState = 'generating';
+        await JobRepository.updateJob(projectId, jobId, { status: 'waiting_for_result', submissionState: 'generating', attempts: updatedAttempts });
 
         fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
         fs.mkdirSync(path.dirname(thumbnailPath), { recursive: true });
@@ -98,11 +116,17 @@ export class VideoExecutionService {
         const durationSeconds = options.mockDurationSeconds ?? 4.0;
         const durationFormatted = `${durationSeconds.toFixed(1)}s`;
 
+        currentAttempt.endedAt = new Date().toISOString();
+        currentAttempt.submissionState = 'completed';
+        currentAttempt.outcome = 'completed';
+
         const completedJob = await JobRepository.updateJob(projectId, jobId, {
           status: 'completed',
+          submissionState: 'completed',
           outputPath: destinationPath,
           thumbnailPath,
           sourceImagePath: sourceImagePath || undefined,
+          attempts: updatedAttempts,
         });
 
         const completionTime = new Date().toISOString();
@@ -253,10 +277,25 @@ export class VideoExecutionService {
       ]);
 
       let capturedNetworkVideoUrl: string | null = null;
-      const responseHandler = (res: Response) => {
+      let capturedNetworkFailure: CreditDetectionResult | null = null;
+
+      const responseHandler = async (res: Response) => {
         try {
           const url = res.url();
           const contentType = res.headers()['content-type'] || '';
+          const status = res.status();
+
+          if (status >= 400 || url.includes('/fx/api/') || url.includes('trpc')) {
+            try {
+              const body = await res.text().catch(() => '');
+              const netFail = CreditFailureDetector.detectFromNetwork(status, body);
+              if (netFail) {
+                log.warn('video_exec', `Network error classified: [${netFail.classification}] ${netFail.evidence}`);
+                capturedNetworkFailure = netFail;
+              }
+            } catch {}
+          }
+
           const isFlowVideo =
             url.includes('flow-content.google/video') ||
             (url.includes('/video/') && url.includes('.mp4')) ||
@@ -287,10 +326,19 @@ export class VideoExecutionService {
       await JobRepository.updateJob(projectId, jobId, { status: 'generating' });
       estimator.start();
 
-      const isAlreadySubmitted = job.submissionState === 'submitted';
-      if (isAlreadySubmitted) {
-        log.info('video_exec', `Job ${jobId} was already submitted; bypassing duplicate Generate click to protect credits.`);
+      currentAttempt.submissionState = 'ready_to_submit';
+      await JobRepository.updateJob(projectId, jobId, { submissionState: 'ready_to_submit', attempts: updatedAttempts });
+
+      // Inspect whether the page is already running an active generation
+      const pageAlreadyGenerating = await page.evaluate(() => {
+        return document.querySelector('.progress-bar, flow-video-tile .generating, mat-spinner') !== null;
+      }).catch(() => false);
+
+      if (pageAlreadyGenerating) {
+        log.info('video_exec', `Page is already actively generating; bypassing duplicate Generate click to protect credits.`);
         generationClickTime = job.startedAt ?? new Date().toISOString();
+        currentAttempt.submissionState = 'generating';
+        await JobRepository.updateJob(projectId, jobId, { submissionState: 'generating', attempts: updatedAttempts });
       } else if (triggerClick) {
         const generateSelectors = [
           'button[aria-label="Start generation"]',
@@ -305,13 +353,19 @@ export class VideoExecutionService {
 
         const isDisabled = await generateButton.isDisabled().catch(() => false);
         if (isDisabled) {
+          const domSignal = await CreditFailureDetector.detectFromPage(page);
+          if (domSignal) {
+            throw new Error(`FlowFailure [${domSignal.classification}]: ${domSignal.evidence}`);
+          }
           throw new Error('Generate button is disabled. Check prompt validity or credit status.');
         }
 
         log.info('video_exec', 'Clicking Generate button (EXACTLY ONCE)...');
-        await JobRepository.updateJob(projectId, jobId, { submissionState: 'submitting' });
+        currentAttempt.submissionState = 'submitting';
+        await JobRepository.updateJob(projectId, jobId, { submissionState: 'submitting', attempts: updatedAttempts });
         await generateButton.click();
-        await JobRepository.updateJob(projectId, jobId, { submissionState: 'submitted' });
+        currentAttempt.submissionState = 'submitted';
+        await JobRepository.updateJob(projectId, jobId, { submissionState: 'submitted', attempts: updatedAttempts });
         generationClickTime = new Date().toISOString();
         log.info('video_exec', 'Generate button clicked once. Transitioning to waiting_for_result.');
       } else {
@@ -319,15 +373,34 @@ export class VideoExecutionService {
         generationClickTime = new Date().toISOString();
       }
 
-      await JobRepository.updateJob(projectId, jobId, { status: 'waiting_for_result' });
+      currentAttempt.submissionState = 'generating';
+      await JobRepository.updateJob(projectId, jobId, { status: 'waiting_for_result', submissionState: 'generating', attempts: updatedAttempts });
 
       // Wait for newly generated video (optimized detection via network sniffer & DOM tile inspection)
       log.info('video_exec', 'Waiting for new video result from Flow...');
       const pollStart = Date.now();
+      let lastDomCheck = Date.now();
+      let earlyFailure: CreditDetectionResult | null = null;
       let detectedVideoUrl: string | null = null;
       let detectedUuid: string | undefined = undefined;
 
       while (Date.now() - pollStart < pollTimeoutMs) {
+        // 1. Check network sniffed failure
+        if (capturedNetworkFailure) {
+          earlyFailure = capturedNetworkFailure;
+          break;
+        }
+
+        // 2. Periodic targeted DOM check every 2500ms
+        if (Date.now() - lastDomCheck >= 2500) {
+          lastDomCheck = Date.now();
+          const domFail = await CreditFailureDetector.detectFromPage(page);
+          if (domFail) {
+            earlyFailure = domFail;
+            break;
+          }
+        }
+
         let candidateUrl: string | null = null;
 
         if (capturedNetworkVideoUrl) {
@@ -394,8 +467,35 @@ export class VideoExecutionService {
 
       page.off('response', responseHandler);
 
+      if (earlyFailure) {
+        currentAttempt.endedAt = new Date().toISOString();
+        currentAttempt.submissionState = 'failed';
+        currentAttempt.outcome = 'failed';
+        currentAttempt.errorClassification = earlyFailure.classification;
+        currentAttempt.errorMessage = earlyFailure.evidence;
+        await JobRepository.updateJob(projectId, jobId, {
+          submissionState: 'failed',
+          attempts: updatedAttempts,
+        });
+        throw new Error(`FlowFailure [${earlyFailure.classification}]: ${earlyFailure.evidence}`);
+      }
+
       if (!detectedVideoUrl) {
-        throw new Error(`Video generation timed out after ${pollTimeoutMs / 1000}s. No new video media detected.`);
+        const hasUnresolvedProgress = await page.evaluate(() => {
+          return document.querySelector('.progress-bar, flow-video-tile .generating, mat-spinner') !== null;
+        }).catch(() => false);
+
+        currentAttempt.endedAt = new Date().toISOString();
+        currentAttempt.submissionState = hasUnresolvedProgress ? 'generating' : 'submission_unknown';
+        currentAttempt.outcome = 'timeout';
+        currentAttempt.errorClassification = 'timeout';
+        currentAttempt.errorMessage = `Video generation timed out after ${pollTimeoutMs / 1000}s.`;
+        await JobRepository.updateJob(projectId, jobId, {
+          submissionState: currentAttempt.submissionState,
+          attempts: updatedAttempts,
+        });
+
+        throw new Error(`Video generation timed out after ${pollTimeoutMs / 1000}s. No new video media detected. (generationState: ${currentAttempt.submissionState})`);
       }
 
       log.info('video_exec', 'New video detected from Flow', { detectedVideoUrl, detectedUuid });
@@ -441,11 +541,16 @@ export class VideoExecutionService {
       const concurrencyLevel = options.concurrencyLevel ?? 1;
 
       // Complete job
+      currentAttempt.endedAt = new Date().toISOString();
+      currentAttempt.submissionState = 'completed';
+      currentAttempt.outcome = 'completed';
       const completedJob = await JobRepository.updateJob(projectId, jobId, {
         status: 'completed',
+        submissionState: 'completed',
         outputPath: destinationPath,
         thumbnailPath: thumbnailPath,
         sourceImagePath: sourceImagePath || undefined,
+        attempts: updatedAttempts,
       });
 
       // Update Slot in project
@@ -490,9 +595,17 @@ export class VideoExecutionService {
       estimator?.setFailed((err as Error).message);
       log.error('video_exec', `Video job ${jobId} failed`, err as Error);
 
+      const rawError = (err as Error).message;
+      const classification = CreditFailureDetector.classifyErrorMessage(rawError);
+      currentAttempt.endedAt = new Date().toISOString();
+      currentAttempt.outcome = 'failed';
+      currentAttempt.errorClassification = classification;
+      currentAttempt.errorMessage = rawError;
+
       const failedJob = await JobRepository.updateJob(projectId, jobId, {
         status: 'failed',
-        errorMessage: (err as Error).message,
+        errorMessage: rawError,
+        attempts: updatedAttempts,
       }).catch(() => null);
 
       await ProjectRepository.updateSlot(projectId, slotIndex, {

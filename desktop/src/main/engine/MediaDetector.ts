@@ -106,9 +106,13 @@ export class MediaDetector {
             if (s && !videoSources.includes(s)) videoSources.push(s);
           }
           const tileImg = tile.querySelector('img');
-          if (tileImg && tileImg.src && tileImg.src.includes('/asb/')) {
-            const vidUrl = tileImg.src.split('=')[0] + '=mm,22,15';
-            if (!videoSources.includes(vidUrl)) videoSources.push(vidUrl);
+          if (tileImg && tileImg.src) {
+            if (tileImg.src.includes('/asb/')) {
+              const vidUrl = tileImg.src.split('=')[0] + '=mm,22,15';
+              if (!videoSources.includes(vidUrl)) videoSources.push(vidUrl);
+            } else if (tileImg.src.includes('flow-content.google/image/') || tileImg.src.includes('flow-content.google/video/')) {
+              if (!videoSources.includes(tileImg.src)) videoSources.push(tileImg.src);
+            }
           }
         });
 
