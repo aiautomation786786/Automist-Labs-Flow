@@ -13,9 +13,11 @@
  */
 
 import type { Page } from 'playwright';
-import type { FlowProjectContext, FlowProjectInfo } from '../../shared/types';
+import type { FlowProjectContext, FlowProjectInfo, ProjectCreationDiscoveryResult } from '../../shared/types';
 import { AppLogger } from '../utils/AppLogger';
 import { FlowDriver } from './FlowDriver';
+import { FlowUIDiscovery } from './FlowUIDiscovery';
+import { FlowAuthDetector } from './FlowAuthDetector';
 
 const logger = new AppLogger({ mirrorToStderr: false });
 
@@ -155,68 +157,146 @@ export class ProjectContext {
   }
 
   /**
-   * Creates a new project in Flow by clicking the "New Project" control,
-   * waiting for the project URL to be generated, and returning the new project info.
+   * Creates a new project in Flow using adaptive multi-strategy discovery,
+   * overlay dismissal, and post-creation verification.
    */
   static async createNewProject(
     page: Page,
     name?: string,
-    options: { baseFlowUrl?: string } = {},
+    options: { baseFlowUrl?: string; timeoutMs?: number } = {},
   ): Promise<FlowProjectInfo> {
     const baseFlowUrl = options.baseFlowUrl ?? (page.url().includes('flow.google.com') ? 'https://flow.google.com' : 'https://labs.google/fx/en/tools/flow');
-    logger.info('project_context', 'Creating new Flow project...');
+    const timeoutMs = options.timeoutMs ?? 15000;
+    logger.info('project_context', 'Creating new Flow project...', { baseFlowUrl, timeoutMs });
 
-    // Make sure we're on the Flow main page first if currently inside a project
-    const currentUrl = page.url();
-    if (currentUrl.includes('/project/')) {
-      await page.goto(baseFlowUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForTimeout(2000);
-    }
-
-    // Resilient multilingual "New project" candidates
-    const newProjectSelectors = [
-      'button:has-text("New project")',
-      'button:has-text("Nouveau projet")',
-      'a:has-text("New project")',
-      'a:has-text("Nouveau projet")',
-      '[role="button"]:has-text("New project")',
-      'button:has-text("New")',
-      '[role="button"]:has-text("New")',
-      '[aria-label*="New project" i]',
-      '[aria-label*="Nouveau projet" i]',
-      'button:has-text("Create")',
-      'button:has-text("Créer")',
-      '[data-testid="new-project-button"]',
-    ];
-
-    const btnLocator = await FlowDriver.findFirstVisible(page, newProjectSelectors, 2000);
-
-    if (btnLocator) {
-      await btnLocator.click({ force: true }).catch(async () => {
-        await btnLocator.evaluate((b) => (b as HTMLElement).click());
-      });
-    } else {
-      // Fallback: search for any button containing an "add" icon
-      const addIconBtn = page.locator('button:has([class*="add"]), button:has-text("add")').first();
-      const addVisible = await addIconBtn.isVisible({ timeout: 2000 }).catch(() => false);
-      if (addVisible) {
-        await addIconBtn.click({ force: true }).catch(async () => {
-          await addIconBtn.evaluate((b) => (b as HTMLElement).click());
-        });
-      } else {
+    // Step 1: Pre-check authentication if on an active page
+    try {
+      const auth = await FlowAuthDetector.check(page);
+      if (auth.state === 'login_required' || auth.state === 'captcha') {
         throw new Error(
-          'Could not find "New Project" button on the Google Flow page. The UI structure may have changed.'
+          `Cannot create Flow project: authentication challenge encountered (${auth.state}) at ${auth.url}. Manual login required.`
         );
       }
+    } catch (err: any) {
+      if (err?.message?.includes('Cannot create Flow project: authentication challenge encountered')) {
+        throw err;
+      }
+      // Non-fatal auth check exception on unnavigated/mock pages
+      logger.debug('project_context', 'Auth check non-fatal warning', { err: String(err) });
     }
 
-    // Wait for the URL to change into a project URL
+    // Step 2: Make sure we navigate to the Flow main page if currently inside a project or not on Flow
+    const currentUrl = page.url();
+    if (currentUrl.includes('/project/')) {
+      logger.info('project_context', 'Currently inside a project, navigating to base Flow page first...', { baseFlowUrl });
+      await page.goto(baseFlowUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(1000);
+    } else if (!currentUrl.includes('flow.google.com') && !currentUrl.includes('labs.google')) {
+      logger.info('project_context', 'Navigating to base Flow page...', { baseFlowUrl });
+      await page.goto(baseFlowUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(1000);
+    }
+
+    // Step 3: Dismiss non-critical overlays before discovery
+    await FlowDriver.dismissNonCriticalOverlays(page);
+
+    // Step 4: Adaptive discovery loop
+    const startWait = Date.now();
+    let discoveryResult: ProjectCreationDiscoveryResult | null = null;
+
+    while (Date.now() - startWait < timeoutMs) {
+      // Check if page already transitioned to a project URL and composer is mounted
+      const existingProject = this.getCurrentProject(page);
+      if (existingProject) {
+        const composerFound = await FlowDriver.findFirstVisible(page, [
+          '[contenteditable="true"]',
+          'textarea[placeholder]',
+          'textarea',
+        ], 500);
+        if (composerFound) {
+          logger.info('project_context', 'Already in ready project canvas', { projectId: existingProject.id });
+          return existingProject;
+        }
+      }
+
+      // Dismiss any newly appeared non-critical modals/toasts/dialogs
+      await FlowDriver.dismissNonCriticalOverlays(page);
+
+      // Attempt 5-tier project creation discovery
+      discoveryResult = await FlowUIDiscovery.discoverProjectCreationControl(page);
+      if (discoveryResult && discoveryResult.found && discoveryResult.locator) {
+        break;
+      }
+
+      await page.waitForTimeout(350);
+    }
+
+    // Step 5: If discovery failed, gather diagnostic DOM info and fail with detailed error
+    if (!discoveryResult || !discoveryResult.found || !discoveryResult.locator) {
+      const diagnosticInfo = await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+          .map((el) => {
+            const text = (el.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 60);
+            const aria = el.getAttribute('aria-label') || '';
+            const cls = el.className || '';
+            return `tag=${el.tagName.toLowerCase()} text="${text}" aria="${aria}" class="${cls.substring(0, 40)}"`;
+          })
+          .filter((s) => s.length > 0)
+          .slice(0, 20);
+
+        const bodySnippet = (document.body ? document.body.innerText : '')
+          .substring(0, 300)
+          .replace(/\s+/g, ' ');
+
+        return {
+          buttons,
+          bodySnippet,
+          title: document.title,
+        };
+      }).catch(() => ({ buttons: [], bodySnippet: 'unable to inspect body', title: 'unknown' }));
+
+      const authAfter = await FlowAuthDetector.check(page).catch(() => null);
+
+      throw new Error(
+        `Could not find project creation control on Google Flow after ${timeoutMs}ms.\n` +
+        `Current URL: ${page.url()}\n` +
+        `Page Title: ${diagnosticInfo.title}\n` +
+        `Auth State: ${authAfter?.state ?? 'unknown'}\n` +
+        `Visible Interactive Elements (${diagnosticInfo.buttons.length}):\n` +
+        diagnosticInfo.buttons.map((b) => `  - ${b}`).join('\n') + '\n' +
+        `Body Snippet: ${diagnosticInfo.bodySnippet}\n` +
+        `The UI structure may have changed, or an unhandled overlay/login modal may be blocking the dashboard.`
+      );
+    }
+
+    // Step 6: Click the discovered project creation control
+    logger.info('project_context', 'Clicking discovered project creation control', {
+      strategy: discoveryResult.strategy ?? discoveryResult.selectorStrategy,
+      selector: discoveryResult.selector ?? discoveryResult.elementDescription,
+      confidence: discoveryResult.confidence ?? 'high',
+    });
+
+    try {
+      await discoveryResult.locator.click({ timeout: 5000 });
+    } catch (clickErr: any) {
+      logger.warn('project_context', 'Standard click failed, falling back to evaluate click', {
+        error: (clickErr as Error).message,
+      });
+      await discoveryResult.locator.evaluate((el: any) => (el as HTMLElement).click()).catch((evalErr: any) => {
+        throw new Error(
+          `Failed to click project creation control: ${(clickErr as Error).message} / ${(evalErr as Error).message}`
+        );
+      });
+    }
+
+    // Step 7: Wait for URL on the SAME page to change to a project URL
     let newProjectId: string | null = null;
     let newProjectUrl: string = '';
-    const startWait = Date.now();
+    const navStart = Date.now();
+    const navTimeoutMs = 15000;
 
-    while (Date.now() - startWait < 15000) {
-      await page.waitForTimeout(500);
+    while (Date.now() - navStart < navTimeoutMs) {
+      await page.waitForTimeout(300);
       const url = page.url();
       const id = this.extractProjectId(url);
       if (id) {
@@ -227,20 +307,48 @@ export class ProjectContext {
     }
 
     if (!newProjectId) {
-      throw new Error('Created new project, but browser did not transition to a project URL within 15s.');
+      throw new Error(
+        `Clicked project creation button, but browser did not transition to a project URL within ${navTimeoutMs}ms. Current URL: ${page.url()}`
+      );
     }
 
-    // If an optional name was provided, attempt to name the project
+    logger.info('project_context', 'Project URL detected, verifying canvas/composer readiness...', {
+      projectId: newProjectId,
+      url: newProjectUrl,
+    });
+
+    // Step 8: Post-creation verification - ensure composer or canvas is ready
+    const composerCandidates = [
+      '[contenteditable="true"]',
+      'textarea[placeholder]',
+      'textarea',
+      'flow-prompt-box',
+      '.composer',
+      'flow-canvas',
+      'canvas',
+    ];
+    const composerReady = await FlowDriver.waitForFirstVisible(page, composerCandidates, 12000, 300);
+    if (!composerReady) {
+      logger.warn('project_context', 'Composer or canvas not visibly confirmed within 12s, but project URL is active', {
+        projectId: newProjectId,
+      });
+    } else {
+      logger.info('project_context', 'Project canvas/composer is ready', { projectId: newProjectId });
+    }
+
+    // Step 9: If an optional name was provided, attempt to name the project
     if (name) {
       const nameInputSelectors = [
         'input[placeholder*="name" i]',
         'input[placeholder*="nom" i]',
+        'input[aria-label*="project name" i]',
+        'input[aria-label*="title" i]',
         '[contenteditable="true"][aria-label*="title" i]',
       ];
-      const nameInput = await FlowDriver.findFirstVisible(page, nameInputSelectors, 1000);
+      const nameInput = await FlowDriver.findFirstVisible(page, nameInputSelectors, 1500);
       if (nameInput) {
         await FlowDriver.safeFill(page, nameInput, name);
-        await page.keyboard.press('Enter');
+        await page.keyboard.press('Enter').catch(() => {});
       }
     }
 

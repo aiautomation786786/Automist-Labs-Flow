@@ -376,6 +376,23 @@ export interface FlowUIDiscoveryResult {
 }
 
 /**
+ * Structured result of project creation control discovery.
+ */
+export interface ProjectCreationDiscoveryResult {
+  found: boolean;
+  locator?: any;
+  strategy?: string;
+  selectorStrategy?: string;
+  selector?: string;
+  confidence?: 'high' | 'medium' | 'low';
+  elementDescription?: string;
+  accessibleName?: string;
+  text?: string;
+  tagName?: string;
+  reason?: string;
+}
+
+/**
  * Structured result of active model selection (e.g. Nano Banana 2).
  */
 export interface ModelSelectionResult {

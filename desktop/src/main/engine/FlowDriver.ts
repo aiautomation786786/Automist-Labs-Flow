@@ -451,5 +451,119 @@ export class FlowDriver {
     logger.info('flow_driver', 'Successfully attached source image to Flow prompt box', { imagePath });
     return true;
   }
+
+  /**
+   * Detects and safely dismisses non-critical blocking overlays, dialogs, announcements,
+   * changelogs, cookie prompts, or tour banners.
+   *
+   * NEVER dismisses authentication challenges (e.g. Google Sign-In or reCAPTCHA dialogs)
+   * or destructive confirmation modals.
+   */
+  static async dismissNonCriticalOverlays(page: Page): Promise<boolean> {
+    try {
+      if (typeof page.evaluate !== 'function') return false;
+
+      const dismissed = await page.evaluate(() => {
+        // 1. Safety check: do not dismiss authentication dialogs or captchas
+        const isAuthOverlay = document.querySelector(
+          'input[type="password"], iframe[src*="recaptcha" i], iframe[src*="accounts.google" i]'
+        ) !== null;
+        if (isAuthOverlay) return false;
+
+        // 2. Identify candidate dialogs or overlay panes
+        const overlayContainers = Array.from(
+          document.querySelectorAll(
+            '.cdk-overlay-pane, mat-dialog-container, [role="dialog"], [role="alertdialog"], [class*="modal" i], [class*="announcement" i], [class*="banner" i]'
+          )
+        );
+
+        if (overlayContainers.length === 0) return false;
+
+        // 3. Search for safe dismissive buttons within or across overlays
+        const dismissKeywords = [
+          'got it', 'dismiss', 'close', 'ok', 'not now', 'later',
+          'accept all', 'i understand', 'continue', 'skip', 'done',
+          'd\'accord', 'fermer', 'annuler', 'verstanden', 'schließen'
+        ];
+
+        for (const container of overlayContainers) {
+          const buttons = Array.from(container.querySelectorAll('button, [role="button"], a'));
+          for (const btn of buttons) {
+            const text = (btn.textContent || '').trim().toLowerCase().replace(/\s+/g, ' ');
+            const aria = (btn.getAttribute('aria-label') || '').trim().toLowerCase();
+            const title = (btn.getAttribute('title') || '').trim().toLowerCase();
+
+            const isDismiss = dismissKeywords.some(
+              (kw) => text === kw || aria === kw || title === kw || aria.includes('close') || title.includes('close')
+            );
+
+            // Close icon button check
+            const hasCloseIcon = btn.querySelector('mat-icon, .material-icons, svg') && (
+              text.includes('close') || text.includes('clear') || text.includes('x') || aria.includes('close')
+            );
+
+            if (isDismiss || hasCloseIcon) {
+              (btn as HTMLElement).click();
+              return true;
+            }
+          }
+        }
+
+        return false;
+      });
+
+      if (dismissed) {
+        logger.info('flow_driver', 'Dismissed non-critical overlay on Flow page');
+        await delay(300);
+        return true;
+      }
+
+      // Fallback: if a generic cdk-overlay-backdrop exists without auth form, send Escape key
+      const hasBackdrop = await page.locator('.cdk-overlay-backdrop').first().isVisible().catch(() => false);
+      if (hasBackdrop) {
+        await page.keyboard.press('Escape').catch(() => {});
+        await delay(200);
+      }
+
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Adaptively waits for the first visible element among candidate selectors.
+   * Unlike findFirstVisible (which checks only the instantaneous DOM state),
+   * waitForFirstVisible polls over candidate selectors until one becomes visible
+   * or the timeout expires. This accommodates SPA hydration delays gracefully.
+   */
+  static async waitForFirstVisible(
+    page: Page,
+    candidateSelectors: string[],
+    timeoutMs = 12000,
+    pollIntervalMs = 350,
+  ): Promise<Locator | null> {
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeoutMs) {
+      for (const selector of candidateSelectors) {
+        try {
+          const loc = page.locator(selector).first();
+          const isVis = await loc.isVisible().catch(() => false);
+          if (isVis) {
+            return loc;
+          }
+        } catch {
+          // Ignore selector error and continue
+        }
+      }
+
+      const remaining = timeoutMs - (Date.now() - startTime);
+      if (remaining <= 0) break;
+      await delay(Math.min(pollIntervalMs, remaining));
+    }
+
+    return null;
+  }
 }
 
