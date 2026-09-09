@@ -260,23 +260,6 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       return;
     }
 
-    // Ensure port is allocated
-    const existingPort = this.portAllocator.getPort(profileId);
-    if (!existingPort) {
-      // Allocate the port stored in the profile config
-      const available = await this.portAllocator.allocate(profileId);
-      if (available !== config.cdpPort) {
-        // Port stored in profile config is taken; update config with new port
-        const updatedConfig = ProfileConfigManager.update(profileId, { cdpPort: available });
-        appLogger.warn('session_manager', 'CDP port conflict — assigned new port', {
-          profileId,
-          oldPort: config.cdpPort,
-          newPort: available,
-        });
-        Object.assign(config, updatedConfig);
-      }
-    }
-
     // Check if Chrome is already active on the configured CDP port
     let isPortActive = false;
     try {
@@ -284,6 +267,25 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       isPortActive = true;
     } catch {
       isPortActive = false;
+    }
+
+    if (!isPortActive) {
+      // Ensure port is allocated for new launch
+      const existingPort = this.portAllocator.getPort(profileId);
+      if (!existingPort) {
+        // Allocate the port stored in the profile config
+        const available = await this.portAllocator.allocate(profileId);
+        if (available !== config.cdpPort) {
+          // Port stored in profile config is taken; update config with new port
+          const updatedConfig = ProfileConfigManager.update(profileId, { cdpPort: available });
+          appLogger.warn('session_manager', 'CDP port conflict — assigned new port', {
+            profileId,
+            oldPort: config.cdpPort,
+            newPort: available,
+          });
+          Object.assign(config, updatedConfig);
+        }
+      }
     }
 
     session = new ProfileSession(config);

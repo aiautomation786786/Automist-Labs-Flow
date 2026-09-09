@@ -454,6 +454,7 @@ export type FlowAutomationStatus =
   | 'discovering'
   | 'selecting_model'
   | 'selecting_ratio'
+  | 'attaching_image'
   | 'downloading'
   | 'error';
 
@@ -484,6 +485,7 @@ export interface SlotMediaResult {
   assetId: string;
   mediaPath: string;           // Absolute path to local image / video
   thumbnailPath?: string;      // Local thumbnail path
+  sourceImagePath?: string;    // Optional path to source image used for Image-to-Video
   width?: number;
   height?: number;
   durationSeconds?: number;
@@ -533,6 +535,8 @@ export interface PromptSlotEntity {
   type: 'image' | 'video';
   /** The prompt text to be entered into Google Flow */
   promptText: string;
+  /** Optional source image path for Image-to-Video generation */
+  sourceImagePath?: string;
   /** Current slot lifecycle status */
   status: PromptSlotStatus;
   /** Currently executing job ID if running */
@@ -560,7 +564,7 @@ export interface ProjectSettings {
   maxRetries: number;
   imageDownloadQuality?: 'original' | '2k';
   videoDownloadQuality?: 'original' | '1080p';
-  generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'custom';
+  generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'image_to_video' | 'bulk_image_to_video' | 'custom';
   imageModel?: string;
   videoModel?: string;
   videoResolution?: string;
@@ -647,6 +651,7 @@ export interface GenerationJobEntity {
   failedAt?: string;
   outputPath?: string;
   thumbnailPath?: string;
+  sourceImagePath?: string;
   errorCode?: string;
   errorMessage?: string;
   retryCount: number;
@@ -708,13 +713,13 @@ export interface CreateProjectParams {
   maxRetries?: number;
   imageDownloadQuality?: 'original' | '2k';
   videoDownloadQuality?: 'original' | '1080p';
-  generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'custom';
+  generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'image_to_video' | 'bulk_image_to_video' | 'custom';
   imageModel?: string;
   videoModel?: string;
   videoResolution?: string;
   videoDuration?: string;
   selectedProfileIds?: string[];
-  prompts: Array<{ text: string; type: 'image' | 'video' }>;
+  prompts: Array<{ text: string; type: 'image' | 'video'; sourceImagePath?: string }>;
 }
 
 export interface SchedulerCapacityMetrics {
@@ -740,6 +745,8 @@ export interface FlowApi {
   deleteProject: (projectId: string) => Promise<void>;
   retrySlot?: (projectId: string, slotIndex: number) => Promise<void>;
   revealAsset?: (mediaPath: string) => Promise<boolean>;
+  selectImageFile?: () => Promise<string | null>;
+  selectMultipleImageFiles?: () => Promise<string[]>;
 
   // Generation
   startProjectGeneration: (projectId: string) => Promise<GenerationJobEntity[]>;

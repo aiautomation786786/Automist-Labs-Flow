@@ -38,6 +38,10 @@ const flowApi: FlowApi = {
     ipcRenderer.invoke('projects:retrySlot', projectId, slotIndex),
   revealAsset: (mediaPath: string): Promise<boolean> =>
     ipcRenderer.invoke('system:revealAsset', mediaPath),
+  selectImageFile: (): Promise<string | null> =>
+    ipcRenderer.invoke('system:selectImageFile'),
+  selectMultipleImageFiles: (): Promise<string[]> =>
+    ipcRenderer.invoke('system:selectMultipleImageFiles'),
 
   // Generation
   startProjectGeneration: (projectId: string): Promise<GenerationJobEntity[]> =>

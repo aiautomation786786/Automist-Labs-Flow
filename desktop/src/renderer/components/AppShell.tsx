@@ -22,6 +22,8 @@ type View =
   | { type: 'single_video' }
   | { type: 'bulk_image' }
   | { type: 'bulk_video' }
+  | { type: 'image_to_video' }
+  | { type: 'bulk_image_to_video' }
   | { type: 'new_generation'; initialMode?: GenerationMode }
   | { type: 'new_project' }
   | { type: 'workspace'; projectId: string }
@@ -124,6 +126,26 @@ export const AppShell: React.FC = () => {
           badgeBg: 'rgba(16, 185, 129, 0.15)',
           isActive: currentView.type === 'bulk_video' || (currentView.type === 'new_generation' && currentView.initialMode === 'bulk_video'),
           onClick: () => setCurrentView({ type: 'bulk_video' }),
+        },
+        {
+          id: 'image_to_video',
+          label: 'Image to Video',
+          icon: <VideoIcon size={16} />,
+          badge: 'Omni Flash',
+          badgeColor: '#06b6d4',
+          badgeBg: 'rgba(6, 182, 212, 0.15)',
+          isActive: currentView.type === 'image_to_video' || (currentView.type === 'new_generation' && currentView.initialMode === 'image_to_video'),
+          onClick: () => setCurrentView({ type: 'image_to_video' }),
+        },
+        {
+          id: 'bulk_image_to_video',
+          label: 'Bulk Image to Video',
+          icon: <ClapperboardIcon size={16} />,
+          badge: 'Parallel',
+          badgeColor: '#8b5cf6',
+          badgeBg: 'rgba(139, 92, 246, 0.15)',
+          isActive: currentView.type === 'bulk_image_to_video' || (currentView.type === 'new_generation' && currentView.initialMode === 'bulk_image_to_video'),
+          onClick: () => setCurrentView({ type: 'bulk_image_to_video' }),
         },
       ],
     },
@@ -340,6 +362,8 @@ export const AppShell: React.FC = () => {
           currentView.type === 'single_video' ||
           currentView.type === 'bulk_image' ||
           currentView.type === 'bulk_video' ||
+          currentView.type === 'image_to_video' ||
+          currentView.type === 'bulk_image_to_video' ||
           currentView.type === 'new_generation') && (
           <GenerationStudioScreen
             key={
@@ -356,6 +380,10 @@ export const AppShell: React.FC = () => {
                 ? 'bulk_image'
                 : currentView.type === 'bulk_video'
                 ? 'bulk_video'
+                : currentView.type === 'image_to_video'
+                ? 'image_to_video'
+                : currentView.type === 'bulk_image_to_video'
+                ? 'bulk_image_to_video'
                 : currentView.initialMode || 'single_image'
             }
             onProjectCreated={(projectId) => setCurrentView({ type: 'workspace', projectId })}

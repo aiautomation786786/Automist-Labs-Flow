@@ -26,6 +26,7 @@ export interface CreateJobParams {
   promptId: string;
   promptType: 'image' | 'video';
   slotIndex: number;
+  sourceImagePath?: string;
   maxRetries?: number;
   metadata?: Record<string, unknown>;
 }
@@ -54,11 +55,15 @@ export class JobRepository {
         promptId: params.promptId,
         promptType: params.promptType,
         slotIndex: params.slotIndex,
+        sourceImagePath: params.sourceImagePath,
         status: 'pending',
         createdAt: now,
         retryCount: 0,
         maxRetries: params.maxRetries ?? 2,
-        metadata: params.metadata ?? {},
+        metadata: {
+          ...(params.metadata ?? {}),
+          ...(params.sourceImagePath ? { sourceImagePath: params.sourceImagePath } : {}),
+        },
       };
 
       jobs.push(newJob);

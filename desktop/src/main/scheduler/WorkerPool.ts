@@ -151,7 +151,9 @@ export class WorkerPool {
   getAvailableWorker(allowedProfileIds?: string[]): ProfileWorker | null {
     this.syncWithSessionManager();
 
-    const allowedSet = allowedProfileIds && allowedProfileIds.length > 0 ? new Set(allowedProfileIds) : null;
+    const overrideProfileId = process.env.FLOW_TEST_PROFILE_OVERRIDE;
+    const effectiveAllowed = overrideProfileId ? [overrideProfileId] : allowedProfileIds;
+    const allowedSet = effectiveAllowed && effectiveAllowed.length > 0 ? new Set(effectiveAllowed) : null;
 
     // Step 1: Build eligible list (workers with remaining capacity)
     const eligible: ProfileWorker[] = [];

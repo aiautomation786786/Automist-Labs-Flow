@@ -297,6 +297,48 @@ export class IpcHandlers {
       return false;
     });
 
+    ipcMain.handle('system:selectImageFile', async () => {
+      try {
+        const electron = require('electron');
+        if (electron?.dialog?.showOpenDialog) {
+          const result = await electron.dialog.showOpenDialog({
+            title: 'Select Source Image for Video',
+            properties: ['openFile'],
+            filters: [
+              { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] },
+            ],
+          });
+          if (!result.canceled && result.filePaths.length > 0) {
+            return result.filePaths[0];
+          }
+        }
+      } catch (err) {
+        logger.warn('ipc', 'Failed to open image file dialog', { error: (err as Error).message });
+      }
+      return null;
+    });
+
+    ipcMain.handle('system:selectMultipleImageFiles', async () => {
+      try {
+        const electron = require('electron');
+        if (electron?.dialog?.showOpenDialog) {
+          const result = await electron.dialog.showOpenDialog({
+            title: 'Select Source Images for Bulk Video',
+            properties: ['openFile', 'multiSelections'],
+            filters: [
+              { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] },
+            ],
+          });
+          if (!result.canceled && result.filePaths.length > 0) {
+            return result.filePaths;
+          }
+        }
+      } catch (err) {
+        logger.warn('ipc', 'Failed to open multiple images file dialog', { error: (err as Error).message });
+      }
+      return [];
+    });
+
     // -------------------------------------------------------------------------
     // Event Forwarding to Renderer
     // -------------------------------------------------------------------------

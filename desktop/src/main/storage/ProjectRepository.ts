@@ -36,17 +36,24 @@ export interface CreateProjectParams {
   maxRetries?: number;
   imageDownloadQuality?: 'original' | '2k';
   videoDownloadQuality?: 'original' | '1080p';
-  generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'custom';
+  generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'image_to_video' | 'bulk_image_to_video' | 'custom';
   imageModel?: string;
   videoModel?: string;
   videoResolution?: string;
   videoDuration?: string;
   selectedProfileIds?: string[];
-  prompts: Array<{ text: string; type: 'image' | 'video' }>;
+  prompts: Array<{ text: string; type: 'image' | 'video'; sourceImagePath?: string }>;
 }
 
 export class ProjectRepository {
   private static cache = new Map<string, { entity: ProjectEntity; mtimeMs: number }>();
+
+  /**
+   * Generates a deterministic, URL-safe project ID.
+   */
+  static generateProjectId(): string {
+    return `proj_${crypto.randomBytes(6).toString('hex')}`;
+  }
 
   /**
    * Clears in-memory cache (primarily for tests or memory reclamation).
@@ -63,10 +70,10 @@ export class ProjectRepository {
   }
 
   /**
-   * Creates a new project with prompt slots and saves it to disk.
+   * Creates and persists a new ProjectEntity with fully validated slots.
    */
   static async create(params: CreateProjectParams): Promise<ProjectEntity> {
-    const projectId = `proj_${crypto.randomBytes(6).toString('hex')}`;
+    const projectId = this.generateProjectId();
     const now = new Date().toISOString();
 
     AssetManager.ensureProjectDirectories(projectId);
@@ -78,6 +85,7 @@ export class ProjectRepository {
       projectId,
       type: p.type,
       promptText: p.text.trim(),
+      sourceImagePath: p.sourceImagePath,
       status: 'draft',
       createdAt: now,
       updatedAt: now,

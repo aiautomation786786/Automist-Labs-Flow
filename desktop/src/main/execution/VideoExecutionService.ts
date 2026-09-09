@@ -51,7 +51,7 @@ export class VideoExecutionService {
     const { projectId, slotIndex, promptId, jobId } = job;
     const isMock = options.mockMode ?? false;
     const triggerClick = options.triggerGenerationClick ?? true;
-    const pollTimeoutMs = options.pollTimeoutMs ?? 180000;
+    const pollTimeoutMs = options.pollTimeoutMs ?? 360000;
     const jobStartTime = new Date().toISOString();
     const startMs = Date.now();
     let generationClickTime = jobStartTime;
@@ -59,13 +59,15 @@ export class VideoExecutionService {
     let jobPage: import('playwright').Page | null = null;
 
     const project = await ProjectRepository.get(projectId);
+    const slot = project?.slots.find((s) => s.slotIndex === slotIndex);
+    const sourceImagePath = job.sourceImagePath || slot?.sourceImagePath || (job.metadata as any)?.sourceImagePath;
     const targetModel = project?.settings?.videoModel || 'Omni 1.1 Flash';
     const targetRatio = (project?.settings?.videoRatio as any) || '16:9';
     const targetRes = project?.settings?.videoResolution || (targetModel.includes('Omni') ? '720p' : 'Default');
     const targetDuration = project?.settings?.videoDuration || (targetModel.includes('Quality') ? '8s' : targetModel.includes('Omni') ? '4s' : '8s');
 
-    const log = new AppLogger({ profileId: worker.profileId, mirrorToStderr: false });
-    log.info('video_exec', `Starting video job ${jobId} (Slot ${slotIndex}) [model=${targetModel}, mock=${isMock}]`);
+    const log = new AppLogger({ profileId: worker.profileId, mirrorToStderr: true });
+    log.info('video_exec', `Starting video job ${jobId} (Slot ${slotIndex}) [model=${targetModel}, mock=${isMock}, sourceImage=${sourceImagePath || 'none'}]`);
 
     try {
       // Step 1: Transition to starting
@@ -100,6 +102,7 @@ export class VideoExecutionService {
           status: 'completed',
           outputPath: destinationPath,
           thumbnailPath,
+          sourceImagePath: sourceImagePath || undefined,
         });
 
         const completionTime = new Date().toISOString();
@@ -112,6 +115,7 @@ export class VideoExecutionService {
             assetId: `video_${promptId}_${jobId}`,
             mediaPath: destinationPath,
             thumbnailPath,
+            sourceImagePath: sourceImagePath || undefined,
             modelUsed: targetModel,
             ratioUsed: targetRatio,
             resolution: targetRes,
@@ -167,10 +171,25 @@ export class VideoExecutionService {
       // Transition to configuring
       await JobRepository.updateJob(projectId, jobId, { status: 'configuring' });
 
-      const slot = project?.slots.find((s) => s.slotIndex === slotIndex);
+      // Ensure Flow project canvas
+      const flowProjectId = (project?.settings as any)?.flowProjectId;
+      if (typeof automation.ensureProject === 'function') {
+        await automation.ensureProject(flowProjectId ? { projectId: flowProjectId } : {});
+        await page.waitForTimeout(2000);
+      }
+
       const promptText = slot?.promptText || '';
       if (!promptText.trim()) {
         throw new Error(`Slot ${slotIndex} has empty prompt text.`);
+      }
+
+      // If Image-to-Video, attach source image
+      if (sourceImagePath) {
+        if (!fs.existsSync(sourceImagePath)) {
+          throw new Error(`Source image file not found on disk: ${sourceImagePath}`);
+        }
+        log.info('video_exec', `Attaching source image for Image-to-Video: ${sourceImagePath}`);
+        await FlowDriver.attachSourceImage(page, sourceImagePath);
       }
 
       // Configure video model in Flow UI
@@ -220,16 +239,7 @@ export class VideoExecutionService {
         throw new Error('Prompt input field not found on Google Flow page.');
       }
 
-      await promptInput.click();
-      await page.keyboard.press('Control+A');
-      await page.keyboard.press('Backspace');
-      await promptInput.evaluate((el: HTMLElement) => {
-        el.innerText = '';
-      }).catch(() => {});
-      await promptInput.fill(promptText).catch(async () => {
-        await promptInput.type(promptText, { delay: 15 });
-      });
-      await page.waitForTimeout(400);
+      await FlowDriver.safeFill(page, promptInput, promptText);
 
       // Verify prompt was entered into DOM
       const domPrompt = await promptInput.evaluate((el: HTMLElement) => el.innerText || el.textContent || (el as HTMLInputElement).value || '');
@@ -318,56 +328,68 @@ export class VideoExecutionService {
       let detectedUuid: string | undefined = undefined;
 
       while (Date.now() - pollStart < pollTimeoutMs) {
+        let candidateUrl: string | null = null;
+
         if (capturedNetworkVideoUrl) {
-          detectedVideoUrl = capturedNetworkVideoUrl;
-          detectedUuid = MediaDetector.parseMediaUuids([capturedNetworkVideoUrl]).uuids[0];
-          break;
+          candidateUrl = capturedNetworkVideoUrl;
         }
 
-        const postGenMedia = await MediaDetector.detectMedia(page);
-        for (const src of postGenMedia.videoSources) {
-          if (!beforeVideoSources.has(src) && src.trim().length > 0) {
-            detectedVideoUrl = src;
-            detectedUuid = MediaDetector.parseMediaUuids([src]).uuids[0];
-            break;
-          }
-        }
-        if (detectedVideoUrl) break;
-
-        for (const url of postGenMedia.mediaUrls) {
-          if (!beforeVideoSources.has(url) && (url.includes('/video/') || url.includes('.mp4') || url.includes('/asb/'))) {
-            detectedVideoUrl = url;
-            detectedUuid = MediaDetector.parseMediaUuids([url]).uuids[0];
-            break;
-          }
-        }
-        if (detectedVideoUrl) break;
-
-        // Immediate tile inspection to avoid waiting for slow thumbnails
-        const tileMedia = await page.evaluate((beforeUrls) => {
-          const tiles = Array.from(document.querySelectorAll('flow-video-tile'));
-          for (const t of tiles) {
-            const spinner = t.querySelector('mat-progress-spinner, mat-spinner, .mat-mdc-progress-spinner');
-            if (spinner) continue;
-            const vid = t.querySelector('video');
-            if (vid && vid.src && !beforeUrls.includes(vid.src)) return vid.src;
-            const img = t.querySelector('img');
-            if (img && img.src && !beforeUrls.includes(img.src)) {
-              if (img.src.includes('/asb/')) return img.src.split('=')[0] + '=mm,22,15';
-              return img.src;
+        if (!candidateUrl) {
+          const postGenMedia = await MediaDetector.detectMedia(page);
+          for (const src of postGenMedia.videoSources) {
+            if (!beforeVideoSources.has(src) && src.trim().length > 0 && (src.includes('=mm,22,15') || src.includes('.mp4') || src.includes('flow-content.google/video'))) {
+              candidateUrl = src;
+              break;
             }
           }
-          return null;
-        }, Array.from(beforeVideoSources)).catch(() => null);
-
-        if (tileMedia) {
-          detectedVideoUrl = tileMedia;
-          detectedUuid = MediaDetector.parseMediaUuids([tileMedia]).uuids[0];
-          break;
         }
 
-        // Adaptive polling: 400ms for fast detection
-        await page.waitForTimeout(400);
+        if (!candidateUrl) {
+          // Inspect tiles: check for <video> or /asb/ stream
+          const tileVideoCandidate = await page.evaluate((beforeUrls) => {
+            const tiles = Array.from(document.querySelectorAll('flow-video-tile, [class*="video-tile"]'));
+            for (const t of tiles) {
+              const vid = t.querySelector('video');
+              const vidSrc = vid?.src || (vid as HTMLMediaElement)?.currentSrc;
+              if (vidSrc && !beforeUrls.includes(vidSrc)) return vidSrc;
+
+              const img = t.querySelector('img.thumbnail, img[src*="/asb/"]') as HTMLImageElement | null;
+              if (img && img.src && img.src.includes('/asb/')) {
+                const streamUrl = img.src.split('=')[0] + '=mm,22,15';
+                if (!beforeUrls.includes(streamUrl)) return streamUrl;
+              }
+            }
+            return null;
+          }, Array.from(beforeVideoSources)).catch(() => null);
+
+          if (tileVideoCandidate) {
+            candidateUrl = tileVideoCandidate;
+          }
+        }
+
+        // Probe candidate URL to confirm video encoding is complete (Content-Type: video/...)
+        if (candidateUrl) {
+          try {
+            const probe = await page.request.get(candidateUrl, {
+              headers: { Range: 'bytes=0-100' },
+              timeout: 5000,
+            });
+            const cType = probe.headers()['content-type'] || '';
+            if (cType.includes('video') || cType.includes('mp4')) {
+              detectedVideoUrl = candidateUrl;
+              detectedUuid = MediaDetector.parseMediaUuids([candidateUrl]).uuids[0];
+              log.info('video_exec', `Verified ready video stream: ${candidateUrl} (${cType})`);
+              break;
+            } else {
+              log.debug('video_exec', `Candidate URL probed but not yet video stream (content-type: ${cType}); continuing poll...`);
+            }
+          } catch (probeErr) {
+            log.debug('video_exec', `Candidate probe error: ${(probeErr as Error).message}; continuing poll...`);
+          }
+        }
+
+        // Adaptive polling: 1500ms
+        await page.waitForTimeout(1500);
       }
 
       page.off('response', responseHandler);
@@ -423,6 +445,7 @@ export class VideoExecutionService {
         status: 'completed',
         outputPath: destinationPath,
         thumbnailPath: thumbnailPath,
+        sourceImagePath: sourceImagePath || undefined,
       });
 
       // Update Slot in project
@@ -432,6 +455,7 @@ export class VideoExecutionService {
           assetId: detectedUuid || `video_${promptId}_${jobId}`,
           mediaPath: destinationPath,
           thumbnailPath: thumbnailPath,
+          sourceImagePath: sourceImagePath || undefined,
           modelUsed: targetModel,
           ratioUsed: targetRatio,
           resolution: targetRes,

@@ -36,6 +36,7 @@ import { ModelSelector, NANO_BANANA_2 } from './ModelSelector';
 import { RatioSelector } from './RatioSelector';
 import { MediaDetector } from './MediaDetector';
 import { SafeDownloader } from './SafeDownloader';
+import { FlowDriver } from './FlowDriver';
 
 export class FlowAutomationSession {
   readonly profileId: string;
@@ -296,6 +297,22 @@ export class FlowAutomationSession {
 
     try {
       const result = await SafeDownloader.download(page, uuidOrUrl, destinationPath);
+      this.setStatus('idle');
+      return result;
+    } catch (err) {
+      this.setStatus('error');
+      throw err;
+    }
+  }
+
+  /**
+   * Attaches a local source image to the composer for Image-to-Video generation.
+   */
+  async attachSourceImage(imagePath: string): Promise<boolean> {
+    this.setStatus('attaching_image');
+    const page = this.getPage();
+    try {
+      const result = await FlowDriver.attachSourceImage(page, imagePath);
       this.setStatus('idle');
       return result;
     } catch (err) {

@@ -116,6 +116,22 @@ export const PromptSlotCardComponent: React.FC<PromptSlotCardProps> = ({
           >
             {isVideo ? 'Video' : 'Image'}
           </span>
+          {(slot.sourceImagePath || slot.result?.sourceImagePath) && (
+            <span
+              style={{
+                fontSize: '10.5px',
+                padding: '1px 6px',
+                borderRadius: '4px',
+                backgroundColor: 'rgba(6, 182, 212, 0.12)',
+                color: '#06b6d4',
+                border: '1px solid rgba(6, 182, 212, 0.25)',
+                fontWeight: 600,
+              }}
+              title="Image to Video"
+            >
+              I2V
+            </span>
+          )}
           {slot.result?.modelUsed && (
             <span
               style={{
@@ -174,6 +190,47 @@ export const PromptSlotCardComponent: React.FC<PromptSlotCardProps> = ({
               }}
               onError={() => setImgError(true)}
             />
+
+            {/* Source Image Corner Chip for Image-to-Video */}
+            {(slot.sourceImagePath || slot.result?.sourceImagePath) && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '8px',
+                  left: '8px',
+                  zIndex: 3,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '3px 8px',
+                  borderRadius: '6px',
+                  backgroundColor: 'rgba(0, 0, 0, 0.75)',
+                  backdropFilter: 'blur(8px)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  fontSize: '10.5px',
+                  color: '#ffffff',
+                  fontWeight: 500,
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                }}
+                title="Input Source Image"
+              >
+                <img
+                  src={formatMediaUrl(slot.sourceImagePath || slot.result?.sourceImagePath, slot.projectId)}
+                  alt="Source"
+                  style={{
+                    width: '18px',
+                    height: '18px',
+                    borderRadius: '3px',
+                    objectFit: 'cover',
+                    border: '1px solid rgba(255,255,255,0.4)',
+                  }}
+                  onError={(e) => {
+                    (e.target as HTMLElement).style.display = 'none';
+                  }}
+                />
+                <span>Source Image</span>
+              </div>
+            )}
 
             {/* Video Play Overlay */}
             {isVideo && (

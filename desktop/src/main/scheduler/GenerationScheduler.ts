@@ -92,6 +92,7 @@ export class GenerationScheduler {
           promptId: slot.promptId,
           promptType: slot.type,
           slotIndex: slot.slotIndex,
+          sourceImagePath: slot.sourceImagePath,
           maxRetries: project.settings.maxRetries,
         });
 
@@ -210,6 +211,7 @@ export class GenerationScheduler {
       promptId: slot.promptId,
       promptType: slot.type,
       slotIndex: slot.slotIndex,
+      sourceImagePath: slot.sourceImagePath,
       maxRetries: project.settings.maxRetries,
     });
 

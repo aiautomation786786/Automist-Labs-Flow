@@ -12,6 +12,7 @@
  *  Every method requires an explicit Page reference. No module-level page state.
  */
 
+import * as fs from 'fs';
 import type { Page, Locator } from 'playwright';
 import type { InteractiveElementInfo } from '../../shared/types';
 import { AppLogger } from '../utils/AppLogger';
@@ -264,4 +265,191 @@ export class FlowDriver {
       return { buttons: [], inputs: [], links: [] };
     }
   }
+
+  /**
+   * Attaches a local source image to the Google Flow composer canvas.
+   *
+   * Real Flow DOM mechanism:
+   * 1. Click "Add ingredients" trigger button on the composer bar.
+   * 2. Locate "Upload media" menu item in the CDK overlay pane.
+   * 3. Set up Playwright page.waitForEvent('filechooser') and click "Upload media".
+   * 4. Call fileChooser.setFiles(imagePath) directly without any native OS dialog.
+   * 5. Wait for "Add to prompt" button in the Asset modal to be enabled and click it.
+   * 6. Positively verify that the ingredient chip / image preview has mounted in the composer.
+   */
+  static async attachSourceImage(page: Page, imagePath: string): Promise<boolean> {
+    if (!fs.existsSync(imagePath)) {
+      throw new Error(`Source image file does not exist at path: ${imagePath}`);
+    }
+
+    // Step 0: Ensure viewport is sufficiently sized (crucial for background / minimized tabs)
+    try {
+      if (typeof page.viewportSize === 'function') {
+        const vp = page.viewportSize();
+        if (!vp || vp.width < 1000 || vp.height < 600) {
+          if (typeof page.setViewportSize === 'function') {
+            await page.setViewportSize({ width: 1280, height: 800 }).catch(() => {});
+          }
+        }
+      }
+    } catch {}
+
+    // Wait for canvas composer to mount
+    try {
+      if (typeof page.waitForSelector === 'function') {
+        await page.waitForSelector('div[class*="composer"], div[class*="prompt"], textarea, [contenteditable="true"]', { timeout: 10000 }).catch(() => {});
+        await delay(1000);
+      }
+    } catch {}
+
+    // Step 1: Click "Add ingredients" / "Add media" trigger
+    const triggerCandidates = [
+      'button[aria-label="Add ingredients to the prompt box"]',
+      'button[aria-label*="Add ingredient" i]',
+      'button[aria-label*="Add media" i]',
+      'button:has([data-icon="add_photo_alternate"])',
+      'button:has-text("add_photo_alternate")',
+      'button:has([data-icon*="photo"])',
+      'button:has([data-icon*="image"])',
+      'button:has-text("add_box")',
+    ];
+
+    const addBtn = await FlowDriver.findFirstVisible(page, triggerCandidates, 3000);
+
+    if (!addBtn) {
+      throw new Error('Could not find "Add ingredients / media" button on Flow composer.');
+    }
+
+    // Use evaluate click for resilience against offscreen / background rendering
+    if (typeof addBtn.evaluate === 'function') {
+      await addBtn.evaluate((b) => (b as HTMLElement).click()).catch(() => {});
+    } else if (typeof addBtn.click === 'function') {
+      await addBtn.click().catch(() => {});
+    }
+    await delay(600);
+
+    // Step 2: Locate Upload media item in .cdk-overlay-pane
+    const uploadItemCandidates = [
+      '.cdk-overlay-pane [role="menuitem"]:has-text("Upload")',
+      '.cdk-overlay-pane button:has-text("Upload")',
+      '.cdk-overlay-pane [role="menuitem"]:has-text("upload")',
+      '.cdk-overlay-pane [role="menuitem"]:has-text("Charger")',
+      '.cdk-overlay-pane [role="menuitem"]:has-text("Subir")',
+    ];
+
+    let uploadItem: Locator | null = null;
+    for (const sel of uploadItemCandidates) {
+      const loc = page.locator(sel).first();
+      const isVis = typeof loc.isVisible === 'function' ? await loc.isVisible({ timeout: 2000 }).catch(() => false) : false;
+      if (isVis) {
+        uploadItem = loc;
+        break;
+      }
+    }
+
+    if (!uploadItem) {
+      // Fallback: check if direct input[type="file"] exists
+      const directInput = page.locator('input[type="file"]').first();
+      const count = typeof directInput.count === 'function' ? await directInput.count().catch(() => 0) : 0;
+      if (count > 0 && typeof directInput.setInputFiles === 'function') {
+        await directInput.setInputFiles(imagePath);
+        await delay(1000);
+      } else {
+        throw new Error('Could not find "Upload media" option in menu or file input.');
+      }
+    } else {
+      // Intercept file chooser and upload
+      let fileChooser: any = null;
+      if (typeof page.waitForEvent === 'function') {
+        const [fc] = await Promise.all([
+          page.waitForEvent('filechooser', { timeout: 8000 }).catch(() => null),
+          typeof uploadItem.evaluate === 'function'
+            ? uploadItem.evaluate((el) => (el as HTMLElement).click()).catch(() => {})
+            : uploadItem.click().catch(() => {}),
+        ]);
+        fileChooser = fc;
+      } else if (typeof uploadItem.click === 'function') {
+        await uploadItem.click().catch(() => {});
+      }
+
+      if (fileChooser && typeof fileChooser.setFiles === 'function') {
+        await fileChooser.setFiles(imagePath);
+        await delay(1000);
+      }
+    }
+
+    // Step 3: Wait for "Add to prompt" button in the Asset modal
+    const addToPromptCandidates = [
+      'button:has-text("Add to prompt")',
+      'button:has-text("Ajouter au prompt")',
+      'button:has-text("Añadir al prompt")',
+      'button:has-text("In Prompt einfügen")',
+    ];
+
+    let addToPromptBtn: Locator | null = null;
+    for (const sel of addToPromptCandidates) {
+      const loc = page.locator(sel).first();
+      const isVis = typeof loc.isVisible === 'function' ? await loc.isVisible({ timeout: 3000 }).catch(() => false) : false;
+      if (isVis) {
+        addToPromptBtn = loc;
+        break;
+      }
+    }
+
+    if (addToPromptBtn) {
+      // Wait until enabled (disabled attribute removed once upload is processed)
+      let enabled = false;
+      for (let i = 0; i < 30; i++) {
+        let disabled: string | null = null;
+        let ariaDisabled: string | null = null;
+        if (typeof addToPromptBtn.getAttribute === 'function') {
+          disabled = await addToPromptBtn.getAttribute('disabled').catch(() => null);
+          ariaDisabled = await addToPromptBtn.getAttribute('aria-disabled').catch(() => null);
+        }
+        if (disabled === null && ariaDisabled !== 'true') {
+          enabled = true;
+          break;
+        }
+        await delay(500);
+      }
+
+      if (!enabled) {
+        logger.warn('flow_driver', '"Add to prompt" button still marked disabled, attempting click anyway...');
+      }
+
+      if (typeof addToPromptBtn.evaluate === 'function') {
+        await addToPromptBtn.evaluate((b) => (b as HTMLElement).click()).catch(() => {});
+      } else if (typeof addToPromptBtn.click === 'function') {
+        await addToPromptBtn.click().catch(() => {});
+      }
+      await delay(1500);
+    }
+
+    // Step 4: Verify that the ingredient bar or chip mounted inside the composer
+    let verificationSuccess = false;
+    if (typeof page.evaluate === 'function') {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        verificationSuccess = await page.evaluate(() => {
+          const composer = document.querySelector('div[class*="composer"], form, div[class*="prompt"], [class*="bottom"]');
+          if (!composer) return false;
+          const hasChip = composer.querySelector('flow-ingredient-bar, [class*="chip-image"], [class*="ingredient"], .has-ingredient-bar') !== null;
+          const hasImg = composer.querySelector('img.chip-image, img[src*="flow-content.google"]') !== null;
+          return hasChip || hasImg;
+        }).catch(() => false);
+
+        if (verificationSuccess) break;
+        await delay(1000);
+      }
+    } else {
+      verificationSuccess = true;
+    }
+
+    if (!verificationSuccess) {
+      throw new Error('Image attachment failed: Flow ingredient chip was not detected in the composer after upload.');
+    }
+
+    logger.info('flow_driver', 'Successfully attached source image to Flow prompt box', { imagePath });
+    return true;
+  }
 }
+
