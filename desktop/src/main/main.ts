@@ -44,13 +44,17 @@ let scheduler: GenerationScheduler | null = null;
 
 function getAppIconPath(): string | undefined {
   const candidates = [
+    path.join(__dirname, '../assets/infinity-flow.ico'),
+    path.join(__dirname, '../../assets/infinity-flow.ico'),
+    path.join(__dirname, '../assets/infinity-flow-mark.png'),
+    path.join(__dirname, '../../assets/infinity-flow-mark.png'),
     path.join(__dirname, '../assets/icon.png'),
     path.join(__dirname, '../../assets/icon.png'),
     path.join(__dirname, '../assets/icon.ico'),
     path.join(__dirname, '../../assets/icon.ico'),
-    path.join(process.resourcesPath, 'assets', 'icon.png'),
+    path.join(process.resourcesPath, 'assets', 'infinity-flow.ico'),
     path.join(process.resourcesPath, 'assets', 'icon.ico'),
-    path.join(process.resourcesPath, 'icon.png'),
+    path.join(process.resourcesPath, 'infinity-flow.ico'),
     path.join(process.resourcesPath, 'icon.ico'),
   ];
   for (const c of candidates) {
@@ -68,7 +72,7 @@ async function createWindow(): Promise<void> {
     height: 920,
     minWidth: 1100,
     minHeight: 700,
-    title: 'Google Flow Desktop',
+    title: 'Infinity Flow',
     backgroundColor: '#f8fafc', // Clean neutral professional background
     ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
@@ -223,7 +227,7 @@ function registerAssetProtocol(): void {
 }
 
 async function initializeApp(): Promise<void> {
-  logger.info('main', 'Starting Google Flow Desktop Application...');
+  logger.info('main', 'Starting Infinity Flow Application...');
 
   // Step 1: Run crash recovery on stored projects
   try {

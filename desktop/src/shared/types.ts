@@ -1,5 +1,5 @@
 /**
- * Shared TypeScript type definitions for Google Flow Desktop Application – Phase 1.
+ * Shared TypeScript type definitions for Infinity Flow Desktop Application.
  *
  * These types define the contract between the session engine, profile storage,
  * process supervisor, and (eventually) the Electron IPC layer.

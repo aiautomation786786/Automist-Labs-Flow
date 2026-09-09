@@ -1,5 +1,5 @@
 /**
- * AppLogger – Structured file + console logger for Google Flow Desktop.
+ * AppLogger – Structured file + console logger for Infinity Flow.
  *
  * Design constraints:
  *  - MUST NOT write to process.stdout, which is reserved for MCP JSON-RPC

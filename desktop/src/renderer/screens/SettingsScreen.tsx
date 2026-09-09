@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { AppSettings, SupportedAspectRatio, ProcessingOrder } from '../../shared/types';
 import { CheckIcon } from '../components/Icons';
+import { InfinityFlowLogo } from '../components/InfinityFlowLogo';
 
 export const SettingsScreen: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -224,21 +225,22 @@ export const SettingsScreen: React.FC = () => {
             backgroundColor: 'var(--bg-surface)',
             border: '1px solid var(--border-color)',
             borderRadius: 'var(--radius-lg)',
-            padding: '18px 20px',
+            padding: '20px 22px',
             display: 'flex',
             flexDirection: 'column',
-            gap: '6px',
+            gap: '10px',
             fontSize: '12px',
             color: 'var(--text-secondary)',
           }}
         >
-          <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '13px' }}>
-            About Google Flow Desktop
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: '8px', borderBottom: '1px solid var(--border-color)' }}>
+            <InfinityFlowLogo height={24} showSubtitle={false} />
           </div>
           <div>Version: {appInfo?.version ?? '1.0.0'}</div>
           <div>Platform: {appInfo?.platform === 'win32' ? 'Windows 10 / 11 (x64)' : appInfo?.platform ?? 'Windows'}</div>
-          <div style={{ color: 'var(--text-muted)', marginTop: '4px', fontSize: '11px' }}>
-            Built for professional creative automation with dedicated isolated browser sessions.
+          <div>Application Identifier: com.automistlabs.googleflow</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '11px', lineHeight: 1.4 }}>
+            Infinity Flow is a high-throughput AI Video Generation Automation Platform orchestrating parallel multi-profile generation pipelines across Google Flow and Gemini.
           </div>
         </div>
       </div>

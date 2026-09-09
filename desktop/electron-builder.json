@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   "appId": "com.automistlabs.googleflow",
-  "productName": "Google Flow Desktop",
-  "executableName": "GoogleFlowDesktop",
+  "productName": "Infinity Flow",
+  "executableName": "InfinityFlow",
   "copyright": "Copyright © 2026 Automist Labs",
   "directories": {
     "output": "release",
@@ -28,7 +28,7 @@
         "arch": ["x64"]
       }
     ],
-    "icon": "assets/icon.ico"
+    "icon": "assets/infinity-flow.ico"
   },
   "nsis": {
     "oneClick": false,
@@ -36,8 +36,8 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "Google Flow Desktop",
-    "uninstallDisplayName": "Google Flow Desktop",
+    "shortcutName": "Infinity Flow",
+    "uninstallDisplayName": "Infinity Flow",
     "deleteAppDataOnUninstall": false
   }
 }

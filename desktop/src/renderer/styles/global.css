@@ -1,9 +1,20 @@
 /* ==========================================================================
-   Google Flow Desktop – Premium Dark Studio Design System
+   Infinity Flow – AI Video Generation Automation Platform
    Cinematic, dark, high-contrast, responsive desktop productivity theme.
    ========================================================================== */
 
 :root {
+  /* Infinity Flow Centralized Brand Tokens */
+  --infinity-blue: #3b82f6;
+  --infinity-indigo: #6366f1;
+  --infinity-violet: #8b5cf6;
+  --infinity-cyan: #06b6d4;
+  --infinity-deep-space: #07090e;
+  --infinity-surface: #0f172a;
+  --infinity-gradient: linear-gradient(135deg, #06b6d4 0%, #6366f1 50%, #8b5cf6 100%);
+  --infinity-gradient-hover: linear-gradient(135deg, #0891b2 0%, #4f46e5 50%, #7c3aed 100%);
+  --infinity-glow: 0 0 20px rgba(99, 102, 241, 0.4);
+
   /* Canvas & Surfaces */
   --bg-app: #080a0f;
   --bg-sidebar: #0d111a;
@@ -32,8 +43,8 @@
   --primary-hover: #4f46e5;
   --primary-subtle: rgba(99, 102, 241, 0.15);
   --primary-border: rgba(99, 102, 241, 0.35);
-  --primary-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-  --primary-gradient-hover: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+  --primary-gradient: linear-gradient(135deg, #06b6d4 0%, #6366f1 50%, #8b5cf6 100%);
+  --primary-gradient-hover: linear-gradient(135deg, #0891b2 0%, #4f46e5 50%, #7c3aed 100%);
 
   /* Status Colors */
   --success: #10b981;

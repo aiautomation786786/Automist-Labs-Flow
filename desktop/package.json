@@ -1,12 +1,12 @@
 {
-  "name": "google-flow-desktop",
+  "name": "infinity-flow",
   "version": "1.0.0",
-  "description": "Google Flow Desktop — Professional Multi-Profile & Multi-Slot AI Studio",
+  "description": "Infinity Flow — AI Video Generation Automation Platform",
   "author": "Automist Labs",
   "type": "commonjs",
   "main": "dist/main/main.js",
   "scripts": {
-    "build:assets": "node scripts/generate-app-icons.mjs",
+    "build:assets": "node scripts/generate-infinity-flow-assets.mjs",
     "build:main": "tsc -p tsconfig.json",
     "build:ui": "vite build",
     "build": "npm run build:assets && npm run build:main && npm run build:ui",

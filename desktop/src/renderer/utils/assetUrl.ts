@@ -1,5 +1,5 @@
 /**
- * Centralized asset URL formatter for Google Flow desktop application.
+ * Centralized asset URL formatter for Infinity Flow desktop application.
  *
  * Enforces the secure custom protocol (`flow-asset://`) for both card thumbnails
  * and lightbox/player modal previews, eliminating broken image placeholders.

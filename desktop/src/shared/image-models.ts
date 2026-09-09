@@ -1,5 +1,5 @@
 /**
- * Extensible Image Generation Model Definitions for Google Flow Desktop.
+ * Extensible Image Generation Model Definitions for Infinity Flow.
  *
  * Separates internal model configuration from UI representation.
  * Allows easy future additions of image models without breaking changes.

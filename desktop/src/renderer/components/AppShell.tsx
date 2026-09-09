@@ -16,6 +16,7 @@ import {
   UsersIcon,
   SettingsIcon,
 } from './Icons';
+import { InfinityFlowMark } from './InfinityFlowLogo';
 import type { ProfileSessionSnapshot } from '../../shared/types';
 
 type View =
@@ -88,7 +89,7 @@ export const AppShell: React.FC = () => {
       ],
     },
     {
-      title: 'GENERATION',
+      title: 'GOOGLE FLOW',
       items: [
         {
           id: 'single_image',
@@ -153,7 +154,7 @@ export const AppShell: React.FC = () => {
       ],
     },
     {
-      title: 'GEMINI VIDEO',
+      title: 'GEMINI',
       items: [
         {
           id: 'gemini_video',
@@ -204,37 +205,45 @@ export const AppShell: React.FC = () => {
         {/* Brand Header */}
         <div
           style={{
-            padding: '20px 18px',
+            padding: '18px 16px',
             borderBottom: '1px solid var(--border-color)',
             display: 'flex',
             alignItems: 'center',
-            gap: '12px',
+            gap: '11px',
+            userSelect: 'none',
           }}
         >
           <div
             style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '8px',
-              background: 'var(--primary-gradient)',
+              width: '34px',
+              height: '34px',
+              borderRadius: '9px',
+              background: 'linear-gradient(135deg, rgba(6, 182, 212, 0.15) 0%, rgba(99, 102, 241, 0.15) 100%)',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#ffffff',
-              fontWeight: 800,
-              fontSize: '15px',
-              boxShadow: '0 2px 10px rgba(99, 102, 241, 0.4)',
+              boxShadow: 'var(--infinity-glow, 0 0 15px rgba(99, 102, 241, 0.35))',
               flexShrink: 0,
             }}
           >
-            F
+            <InfinityFlowMark size={24} />
           </div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: '14.5px', color: 'var(--text-primary)', lineHeight: 1.2 }}>
-              Google Flow
+          <div style={{ overflow: 'hidden' }}>
+            <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text-primary)', lineHeight: 1.15, letterSpacing: '0.03em' }}>
+              INFINITY{' '}
+              <span
+                style={{
+                  background: 'var(--infinity-gradient, linear-gradient(135deg, #06b6d4 0%, #6366f1 50%, #8b5cf6 100%))',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                }}
+              >
+                FLOW
+              </span>
             </div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px', letterSpacing: '0.02em' }}>
-              Production Studio
+            <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-muted)', marginTop: '2px', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+              AI Video Automation
             </div>
           </div>
         </div>
@@ -361,7 +370,7 @@ export const AppShell: React.FC = () => {
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', color: 'var(--text-muted)' }}>
-            <span>Automist Labs</span>
+            <span>Infinity Flow</span>
             <span>v1.0.0 · x64</span>
           </div>
         </div>

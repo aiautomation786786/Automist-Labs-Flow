@@ -179,7 +179,7 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
           <p style={{ maxWidth: '380px' }}>
             {searchQuery
               ? 'Try changing your search terms.'
-              : 'Create your first project to begin batch generation across multiple Google Flow profiles.'}
+              : 'Create your first project to begin batch video and image generation across Google Flow and Gemini.'}
           </p>
           {!searchQuery && (
             <button className="btn-primary" onClick={onNavigateNewProject} style={{ marginTop: '8px' }}>

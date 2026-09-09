@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" fill="none">
+  <defs>
+    <linearGradient id="if-light-fore" x1="20%" y1="80%" x2="80%" y2="20%">
+      <stop offset="0%" stop-color="#0891b2" />
+      <stop offset="50%" stop-color="#4f46e5" />
+      <stop offset="100%" stop-color="#7c3aed" />
+    </linearGradient>
+    <linearGradient id="if-light-back" x1="20%" y1="20%" x2="80%" y2="80%">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="50%" stop-color="#4338ca" />
+      <stop offset="100%" stop-color="#6d28d9" />
+    </linearGradient>
+  </defs>
+  <g stroke-width="10" stroke-linecap="round">
+    <path d="M 26 31 C 36 31 43 40 45 44" stroke="url(#if-light-back)" opacity="0.9" />
+    <path d="M 55 56 C 57 60 64 69 74 69 C 85 69 92 61 92 50 C 92 39 85 31 74 31" stroke="url(#if-light-back)" opacity="0.9" />
+    <path d="M 26 31 C 15 31 8 39 8 50 C 8 61 15 69 26 69" stroke="url(#if-light-back)" opacity="0.9" />
+    <path d="M 26 69 C 37 69 44 59 50 50 C 56 41 63 31 74 31" stroke="url(#if-light-fore)" />
+  </g>
+</svg>
