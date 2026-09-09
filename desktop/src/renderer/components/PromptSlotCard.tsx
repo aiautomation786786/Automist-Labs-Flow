@@ -26,7 +26,7 @@ const KNOWN_PROFILES: Record<string, string> = {
   profile_b75159bb: 'Heidi Mason',
 };
 
-export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
+export const PromptSlotCardComponent: React.FC<PromptSlotCardProps> = ({
   slot,
   aspectRatio,
   progress,
@@ -162,6 +162,8 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
             <img
               src={thumbUrl}
               alt={`Slot ${slotNumber}: ${slot.promptText}`}
+              loading="lazy"
+              decoding="async"
               style={{
                 width: '100%',
                 height: '100%',
@@ -455,3 +457,19 @@ export const PromptSlotCard: React.FC<PromptSlotCardProps> = ({
     </div>
   );
 };
+
+export const PromptSlotCard = React.memo<PromptSlotCardProps>(
+  PromptSlotCardComponent,
+  (prev, next) => {
+    if (prev.slot !== next.slot) return false;
+    if (prev.aspectRatio !== next.aspectRatio) return false;
+    if (prev.progress?.percent !== next.progress?.percent) return false;
+    if (prev.progress?.stage !== next.progress?.stage) return false;
+    if (prev.progress?.elapsedSeconds !== next.progress?.elapsedSeconds) return false;
+    if (prev.progress?.description !== next.progress?.description) return false;
+    if (prev.onViewPrompt !== next.onViewPrompt) return false;
+    if (prev.onPreviewMedia !== next.onPreviewMedia) return false;
+    if (prev.onRetry !== next.onRetry) return false;
+    return true;
+  }
+);

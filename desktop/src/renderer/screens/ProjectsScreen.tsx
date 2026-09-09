@@ -17,9 +17,11 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
   const [loading, setLoading] = useState(true);
   const [projectToDelete, setProjectToDelete] = useState<ProjectEntity | null>(null);
 
-  const loadProjects = async () => {
+  const loadProjects = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
       if (window.flowApi) {
         const list = await window.flowApi.listProjects();
         setProjects(list);
@@ -27,12 +29,14 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
     } catch (err) {
       console.error('Failed to load projects', err);
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    loadProjects();
+    loadProjects(false);
   }, []);
 
   const handleDeleteConfirm = async () => {
@@ -40,7 +44,7 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
     try {
       await window.flowApi.deleteProject(projectToDelete.projectId);
       setProjectToDelete(null);
-      await loadProjects();
+      await loadProjects(true);
     } catch (err) {
       console.error('Failed to delete project', err);
     }

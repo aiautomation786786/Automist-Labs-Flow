@@ -88,7 +88,7 @@ async function createWindow(): Promise<void> {
 function registerAssetProtocol(): void {
   // Protocol: flow-asset://project/{projectId}/{subPath} or flow-asset://{projectId}/{subPath}
   // Maps to: %LOCALAPPDATA%\GoogleFlowApp\projects\{projectId}\{subPath}
-  protocol.handle('flow-asset', (request) => {
+  protocol.handle('flow-asset', async (request) => {
     try {
       const url = new URL(request.url);
       const projectsRoot = path.resolve(AssetManager.getProjectsRootDir());
@@ -111,9 +111,30 @@ function registerAssetProtocol(): void {
       }
 
       // Security check: strictly enforce path containment
-      if (!targetFilePath.startsWith(projectsRoot) || !fs.existsSync(targetFilePath)) {
-        logger.warn('main', `flow-asset 404: ${targetFilePath} not found or outside ${projectsRoot}`);
+      if (!targetFilePath.startsWith(projectsRoot)) {
+        logger.warn('main', `flow-asset 403: access denied outside ${projectsRoot}`);
         return new Response('Not Found or Access Denied', { status: 404 });
+      }
+
+      let stat: fs.Stats;
+      try {
+        stat = await fs.promises.stat(targetFilePath);
+      } catch {
+        return new Response('Not Found', { status: 404 });
+      }
+
+      const fileSize = stat.size;
+      const etag = `"${Math.round(stat.mtimeMs)}-${fileSize}"`;
+      const ifNoneMatch = request.headers.get('if-none-match');
+
+      if (ifNoneMatch === etag) {
+        return new Response(null, {
+          status: 304,
+          headers: {
+            'ETag': etag,
+            'Cache-Control': 'public, max-age=31536000, immutable',
+          },
+        });
       }
 
       const ext = path.extname(targetFilePath).toLowerCase();
@@ -128,9 +149,6 @@ function registerAssetProtocol(): void {
         '.gif': 'image/gif',
       };
       const mimeType = mimeTypes[ext] || 'application/octet-stream';
-
-      const stat = fs.statSync(targetFilePath);
-      const fileSize = stat.size;
       const rangeHeader = request.headers.get('range');
 
       if (rangeHeader) {
@@ -157,6 +175,8 @@ function registerAssetProtocol(): void {
             'Accept-Ranges': 'bytes',
             'Content-Length': String(chunkSize),
             'Content-Type': mimeType,
+            'ETag': etag,
+            'Cache-Control': 'public, max-age=31536000, immutable',
           },
         });
       }
@@ -170,6 +190,8 @@ function registerAssetProtocol(): void {
           'Accept-Ranges': 'bytes',
           'Content-Length': String(fileSize),
           'Content-Type': mimeType,
+          'ETag': etag,
+          'Cache-Control': 'public, max-age=31536000, immutable',
         },
       });
     } catch (err) {

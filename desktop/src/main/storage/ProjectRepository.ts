@@ -46,6 +46,15 @@ export interface CreateProjectParams {
 }
 
 export class ProjectRepository {
+  private static cache = new Map<string, { entity: ProjectEntity; mtimeMs: number }>();
+
+  /**
+   * Clears in-memory cache (primarily for tests or memory reclamation).
+   */
+  static clearCache(): void {
+    this.cache.clear();
+  }
+
   /**
    * Returns path to the project.json file for a given projectId.
    */
@@ -114,20 +123,33 @@ export class ProjectRepository {
   }
 
   /**
-   * Retrieves a project by ID.
+   * Retrieves a project by ID with mtime-verified cache lookup.
    */
   static async get(projectId: string): Promise<ProjectEntity | null> {
     const filePath = this.getProjectJsonPath(projectId);
     if (!fs.existsSync(filePath)) {
+      this.cache.delete(projectId);
       return null;
     }
 
     return await fileMutex.runExclusive(projectId, async () => {
       try {
+        const stat = fs.statSync(filePath);
+        const cached = this.cache.get(projectId);
+        if (cached && cached.mtimeMs === stat.mtimeMs) {
+          return JSON.parse(JSON.stringify(cached.entity));
+        }
+
         const content = fs.readFileSync(filePath, 'utf-8');
         const project = JSON.parse(content) as ProjectEntity;
         // Strict invariant check: ensure slots remain sorted by slotIndex
         project.slots.sort((a, b) => a.slotIndex - b.slotIndex);
+
+        this.cache.set(projectId, {
+          entity: JSON.parse(JSON.stringify(project)),
+          mtimeMs: stat.mtimeMs,
+        });
+
         return project;
       } catch (err) {
         logger.error('project_repo', `Failed to read project ${projectId}`, err as Error);
@@ -137,7 +159,7 @@ export class ProjectRepository {
   }
 
   /**
-   * Returns all existing projects on disk.
+   * Returns all existing projects on disk using bounded chunk concurrency.
    */
   static async getAll(): Promise<ProjectEntity[]> {
     const rootDir = AssetManager.getProjectsRootDir();
@@ -146,11 +168,14 @@ export class ProjectRepository {
     }
 
     const entries = fs.readdirSync(rootDir, { withFileTypes: true });
+    const projectDirs = entries.filter((e) => e.isDirectory() && e.name.startsWith('proj_'));
     const projects: ProjectEntity[] = [];
+    const chunkSize = 8;
 
-    for (const entry of entries) {
-      if (entry.isDirectory() && entry.name.startsWith('proj_')) {
-        const proj = await this.get(entry.name);
+    for (let i = 0; i < projectDirs.length; i += chunkSize) {
+      const chunk = projectDirs.slice(i, i + chunkSize);
+      const chunkResults = await Promise.all(chunk.map((e) => this.get(e.name)));
+      for (const proj of chunkResults) {
         if (proj) {
           projects.push(proj);
         }
@@ -239,6 +264,7 @@ export class ProjectRepository {
    * Deletes a project and its files from disk.
    */
   static async delete(projectId: string): Promise<void> {
+    this.cache.delete(projectId);
     await fileMutex.runExclusive(projectId, async () => {
       const dir = AssetManager.getProjectDir(projectId);
       if (fs.existsSync(dir)) {
@@ -252,10 +278,22 @@ export class ProjectRepository {
 
   private static async readProjectDirect(projectId: string): Promise<ProjectEntity | null> {
     const filePath = this.getProjectJsonPath(projectId);
-    if (!fs.existsSync(filePath)) return null;
+    if (!fs.existsSync(filePath)) {
+      this.cache.delete(projectId);
+      return null;
+    }
+    const stat = fs.statSync(filePath);
+    const cached = this.cache.get(projectId);
+    if (cached && cached.mtimeMs === stat.mtimeMs) {
+      return JSON.parse(JSON.stringify(cached.entity));
+    }
     const content = fs.readFileSync(filePath, 'utf-8');
     const project = JSON.parse(content) as ProjectEntity;
     project.slots.sort((a, b) => a.slotIndex - b.slotIndex);
+    this.cache.set(projectId, {
+      entity: JSON.parse(JSON.stringify(project)),
+      mtimeMs: stat.mtimeMs,
+    });
     return project;
   }
 
@@ -274,5 +312,15 @@ export class ProjectRepository {
 
     // Atomic replace
     fs.renameSync(tmpPath, filePath);
+
+    try {
+      const stat = fs.statSync(filePath);
+      this.cache.set(project.projectId, {
+        entity: JSON.parse(JSON.stringify(project)),
+        mtimeMs: stat.mtimeMs,
+      });
+    } catch {
+      // Ignore cache populate error
+    }
   }
 }

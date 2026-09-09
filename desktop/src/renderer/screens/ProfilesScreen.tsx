@@ -80,23 +80,23 @@ export const ProfilesScreen: React.FC = () => {
   const [connectExistingMsg, setConnectExistingMsg] = useState<{ text: string; isError?: boolean } | null>(null);
 
   // ---- Data loading ----
-  const loadProfiles = async () => {
+  const loadProfiles = async (silent = false) => {
     if (!window.flowApi) return;
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const list = await window.flowApi.listProfiles();
       setProfiles(list);
     } catch (err) {
       console.error('Failed to load profiles', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadProfiles();
+    loadProfiles(false);
     if (window.flowApi) {
-      const unsub = window.flowApi.onWorkerStatus(() => { loadProfiles(); });
+      const unsub = window.flowApi.onWorkerStatus(() => { loadProfiles(true); });
       return () => unsub();
     }
   }, []);
@@ -388,7 +388,7 @@ export const ProfilesScreen: React.FC = () => {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-          <button className="btn-secondary" onClick={loadProfiles} title="Refresh">
+          <button className="btn-secondary" onClick={() => { loadProfiles(true); }} title="Refresh">
             <RefreshIcon size={14} />
           </button>
           <button

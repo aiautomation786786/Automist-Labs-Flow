@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import type {
   ProjectEntity,
   PromptSlotEntity,
@@ -31,6 +31,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
 
   // Filter: 'all' | 'images' | 'videos'
   const [typeFilter, setTypeFilter] = useState<'all' | 'images' | 'videos'>('all');
+
+  // Progressive loading counts for large batches
+  const [visibleImageCount, setVisibleImageCount] = useState<number>(60);
+  const [visibleVideoCount, setVisibleVideoCount] = useState<number>(60);
+  const imageSentinelRef = useRef<HTMLDivElement>(null);
+  const videoSentinelRef = useRef<HTMLDivElement>(null);
 
   // Live progress tracking per slot index
   const [slotProgress, setSlotProgress] = useState<Record<number, {
@@ -104,40 +110,40 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
       });
     });
 
+    let animFrameId: number | null = null;
+    let progressBuffer: Record<number, { percent: number; stage: string; elapsedSeconds?: number; description?: string }> = {};
+
     const unsubProgress = window.flowApi.onJobProgress((event: JobProgressEvent) => {
       if (event.projectId !== projectId) return;
 
       if (event.slotIndex !== undefined) {
-        setSlotProgress((prev) => ({
-          ...prev,
-          [event.slotIndex]: {
-            percent: event.progressPercent ?? 15,
-            stage: event.stage ?? (event.status === 'downloading' ? 'downloading' : 'generating'),
-            elapsedSeconds: event.elapsedSeconds,
-            description: event.stepDescription,
-          },
-        }));
-      }
+        progressBuffer[event.slotIndex] = {
+          percent: event.progressPercent ?? 15,
+          stage: event.stage ?? (event.status === 'downloading' ? 'downloading' : 'generating'),
+          elapsedSeconds: event.elapsedSeconds,
+          description: event.stepDescription,
+        };
 
-      setProject((prev) => {
-        if (!prev) return prev;
-        const newSlots = prev.slots.map((s) => {
-          if (s.slotIndex === event.slotIndex) {
-            return {
-              ...s,
-              status: event.status === 'downloading' || event.status === 'generating' || event.status === 'starting' || event.status === 'configuring' ? 'running' : s.status,
-              assignedProfileId: (event as any).profileId ?? s.assignedProfileId,
-            };
-          }
-          return s;
-        });
-        return { ...prev, slots: newSlots };
-      });
+        if (!animFrameId) {
+          animFrameId = requestAnimationFrame(() => {
+            animFrameId = null;
+            const batch = { ...progressBuffer };
+            progressBuffer = {};
+            setSlotProgress((prev) => ({
+              ...prev,
+              ...batch,
+            }));
+          });
+        }
+      }
     });
 
     return () => {
       unsubSlot();
       unsubProgress();
+      if (animFrameId) {
+        cancelAnimationFrame(animFrameId);
+      }
     };
   }, [projectId]);
 
@@ -151,7 +157,39 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
     };
   }, [project]);
 
-  const handleStartOrResume = async () => {
+  // Windowed slots for smooth DOM scaling
+  const displayedImageSlots = useMemo(() => {
+    return imageSlots.slice(0, visibleImageCount);
+  }, [imageSlots, visibleImageCount]);
+
+  const displayedVideoSlots = useMemo(() => {
+    return videoSlots.slice(0, visibleVideoCount);
+  }, [videoSlots, visibleVideoCount]);
+
+  // Auto-expand visible slots when user scrolls near sentinel
+  useEffect(() => {
+    if (visibleImageCount >= imageSlots.length) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) {
+        setVisibleImageCount((prev) => Math.min(prev + 40, imageSlots.length));
+      }
+    }, { rootMargin: '300px' });
+    if (imageSentinelRef.current) observer.observe(imageSentinelRef.current);
+    return () => observer.disconnect();
+  }, [visibleImageCount, imageSlots.length]);
+
+  useEffect(() => {
+    if (visibleVideoCount >= videoSlots.length) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) {
+        setVisibleVideoCount((prev) => Math.min(prev + 40, videoSlots.length));
+      }
+    }, { rootMargin: '300px' });
+    if (videoSentinelRef.current) observer.observe(videoSentinelRef.current);
+    return () => observer.disconnect();
+  }, [visibleVideoCount, videoSlots.length]);
+
+  const handleStartOrResume = useCallback(async () => {
     if (!window.flowApi || !project) return;
     try {
       await window.flowApi.startProjectGeneration(project.projectId);
@@ -159,9 +197,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
     } catch (err) {
       setErrorMsg((err as Error).message);
     }
-  };
+  }, [project, loadProject]);
 
-  const handleRetrySlot = async (slot: PromptSlotEntity) => {
+  const handleRetrySlot = useCallback(async (slot: PromptSlotEntity) => {
     if (!window.flowApi || !project) return;
     try {
       if (window.flowApi.retrySlot) {
@@ -173,7 +211,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
     } catch (err) {
       console.error('Failed to retry slot', err);
     }
-  };
+  }, [project, loadProject]);
+
+  const handleViewPrompt = useCallback((slot: PromptSlotEntity) => {
+    setSelectedSlotForPrompt(slot);
+  }, []);
+
+  const handlePreviewMedia = useCallback((slot: PromptSlotEntity) => {
+    setSelectedSlotForMedia(slot);
+  }, []);
 
   if (loading) {
     return (
@@ -303,18 +349,37 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
             </span>
           </div>
           <div className="workspace-grid">
-            {imageSlots.map((slot) => (
+            {displayedImageSlots.map((slot) => (
               <PromptSlotCard
                 key={slot.promptId}
                 slot={slot}
                 progress={slotProgress[slot.slotIndex]}
                 aspectRatio={project.settings.imageRatio}
-                onViewPrompt={(s) => setSelectedSlotForPrompt(s)}
-                onPreviewMedia={(s) => setSelectedSlotForMedia(s)}
-                onRetry={(s) => handleRetrySlot(s)}
+                onViewPrompt={handleViewPrompt}
+                onPreviewMedia={handlePreviewMedia}
+                onRetry={handleRetrySlot}
               />
             ))}
           </div>
+          {imageSlots.length > visibleImageCount && (
+            <div
+              ref={imageSentinelRef}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '12px 0',
+              }}
+            >
+              <button
+                className="btn-secondary btn-sm"
+                onClick={() => setVisibleImageCount(imageSlots.length)}
+                style={{ fontSize: '12px', color: 'var(--text-secondary)' }}
+              >
+                Showing {displayedImageSlots.length} of {imageSlots.length} image prompts &bull; Show all
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -330,18 +395,37 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
             </span>
           </div>
           <div className="workspace-grid">
-            {videoSlots.map((slot) => (
+            {displayedVideoSlots.map((slot) => (
               <PromptSlotCard
                 key={slot.promptId}
                 slot={slot}
                 progress={slotProgress[slot.slotIndex]}
                 aspectRatio={project.settings.videoRatio || project.settings.imageRatio}
-                onViewPrompt={(s) => setSelectedSlotForPrompt(s)}
-                onPreviewMedia={(s) => setSelectedSlotForMedia(s)}
-                onRetry={(s) => handleRetrySlot(s)}
+                onViewPrompt={handleViewPrompt}
+                onPreviewMedia={handlePreviewMedia}
+                onRetry={handleRetrySlot}
               />
             ))}
           </div>
+          {videoSlots.length > visibleVideoCount && (
+            <div
+              ref={videoSentinelRef}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '12px 0',
+              }}
+            >
+              <button
+                className="btn-secondary btn-sm"
+                onClick={() => setVisibleVideoCount(videoSlots.length)}
+                style={{ fontSize: '12px', color: 'var(--text-secondary)' }}
+              >
+                Showing {displayedVideoSlots.length} of {videoSlots.length} video prompts &bull; Show all
+              </button>
+            </div>
+          )}
         </div>
       )}
 

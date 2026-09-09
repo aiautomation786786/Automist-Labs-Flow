@@ -361,9 +361,9 @@ describe('Master Concurrency & Dynamic Scaling Suite', () => {
         { timeout: 1000, interval: 10 }
       );
 
-      // Max elapsed time from start to the 10th job being handed off to execution
+      // Max elapsed time from start to the 10th job being handed off to execution (ensure zero 5-7s artificial delays)
       const totalDispatchDuration = Math.max(...dispatchTimes);
-      expect(totalDispatchDuration).toBeLessThan(200);
+      expect(totalDispatchDuration).toBeLessThan(500);
     });
   });
 

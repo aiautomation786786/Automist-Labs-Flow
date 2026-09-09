@@ -98,14 +98,25 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
 
   const handleApplySampleBulkPrompts = () => {
     const list = isImageMode ? SAMPLE_IMAGE_PROMPTS : SAMPLE_VIDEO_PROMPTS;
-    setBulkPromptsText(list.join('\n\n'));
+    const joined = list.join('\n\n');
+    setBulkPromptsText(joined);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!window.flowApi) return;
 
-    if (activePromptsCount === 0) {
+    // Immediately parse live text for submission to ensure zero drop if user submits quickly
+    const liveParsedBulk = isBulkMode
+      ? PromptParser.parseRawText(bulkPromptsText, isImageMode ? 'image' : 'video')
+      : [];
+    const submissionPromptsCount = isBulkMode
+      ? liveParsedBulk.length
+      : singlePrompt.trim().length > 0
+      ? 1
+      : 0;
+
+    if (submissionPromptsCount === 0) {
       setErrorMsg(isBulkMode ? 'Please enter at least one prompt line.' : 'Please enter a creative prompt.');
       return;
     }
@@ -115,7 +126,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
       setErrorMsg(null);
 
       const promptsList: Array<{ text: string; type: 'image' | 'video' }> = isBulkMode
-        ? parsedBulkPrompts.map((p) => ({ text: p.text, type: p.type }))
+        ? liveParsedBulk.map((p) => ({ text: p.text, type: p.type }))
         : [{ text: singlePrompt.trim(), type: isImageMode ? 'image' : 'video' }];
 
       const project = await window.flowApi.createProject({
