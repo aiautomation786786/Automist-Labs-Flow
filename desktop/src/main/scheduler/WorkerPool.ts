@@ -205,7 +205,9 @@ export class WorkerPool {
   getAvailableWorker(allowedProfileIds?: string[]): ProfileWorker | null {
     this.syncWithSessionManager();
 
-    const overrideProfileId = process.env.FLOW_TEST_PROFILE_OVERRIDE;
+    // In production, scheduling strictly balances across all eligible profiles.
+    // FLOW_TEST_PROFILE_OVERRIDE is strictly limited to automated unit test environments.
+    const overrideProfileId = process.env.NODE_ENV === 'test' ? process.env.FLOW_TEST_PROFILE_OVERRIDE : undefined;
     const effectiveAllowed = overrideProfileId ? [overrideProfileId] : allowedProfileIds;
     const allowedSet = effectiveAllowed && effectiveAllowed.length > 0 ? new Set(effectiveAllowed) : null;
 

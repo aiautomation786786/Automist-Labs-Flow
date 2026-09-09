@@ -22,6 +22,8 @@ desktop/release/
 *.jpeg
 *.webp
 *.crdownload
+!desktop/assets/**
+!**/assets/**
 scratch/
 .tempmediaStorage/
 projects/

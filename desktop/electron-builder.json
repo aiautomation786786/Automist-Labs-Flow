@@ -1,0 +1,43 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.automistlabs.googleflow",
+  "productName": "Google Flow Desktop",
+  "executableName": "GoogleFlowDesktop",
+  "copyright": "Copyright © 2026 Automist Labs",
+  "directories": {
+    "output": "release",
+    "buildResources": "assets"
+  },
+  "files": [
+    "dist/**/*",
+    "!dist/tests/**/*",
+    "assets/**/*",
+    "package.json",
+    "!scripts/**/*",
+    "!**/*.map"
+  ],
+  "asar": true,
+  "asarUnpack": [
+    "**/node_modules/playwright/**/*",
+    "**/node_modules/playwright-core/**/*"
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "assets/icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Google Flow Desktop",
+    "uninstallDisplayName": "Google Flow Desktop",
+    "deleteAppDataOnUninstall": false
+  }
+}

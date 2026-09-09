@@ -42,7 +42,27 @@ let sessionManager: ProfileSessionManager | null = null;
 let workerPool: WorkerPool | null = null;
 let scheduler: GenerationScheduler | null = null;
 
+function getAppIconPath(): string | undefined {
+  const candidates = [
+    path.join(__dirname, '../assets/icon.png'),
+    path.join(__dirname, '../../assets/icon.png'),
+    path.join(__dirname, '../assets/icon.ico'),
+    path.join(__dirname, '../../assets/icon.ico'),
+    path.join(process.resourcesPath, 'assets', 'icon.png'),
+    path.join(process.resourcesPath, 'assets', 'icon.ico'),
+    path.join(process.resourcesPath, 'icon.png'),
+    path.join(process.resourcesPath, 'icon.ico'),
+  ];
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c)) return c;
+    } catch {}
+  }
+  return undefined;
+}
+
 async function createWindow(): Promise<void> {
+  const iconPath = getAppIconPath();
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -50,6 +70,7 @@ async function createWindow(): Promise<void> {
     minHeight: 700,
     title: 'Google Flow Desktop',
     backgroundColor: '#f8fafc', // Clean neutral professional background
+    ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

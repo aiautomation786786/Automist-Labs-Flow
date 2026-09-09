@@ -365,10 +365,20 @@ export class IpcHandlers {
     // Settings & System API
     // -------------------------------------------------------------------------
     ipcMain.handle('system:getAppInfo', async () => {
+      let appVersion = '1.0.0';
+      try {
+        const electron = require('electron');
+        if (electron?.app?.getVersion) {
+          appVersion = electron.app.getVersion();
+        }
+      } catch {
+        /* fallback to 1.0.0 */
+      }
+
       return {
         appDataDir: getAppDataDir(),
         projectsRootDir: AssetManager.getProjectsRootDir(),
-        version: '1.0.0',
+        version: appVersion,
         platform: process.platform,
       };
     });
