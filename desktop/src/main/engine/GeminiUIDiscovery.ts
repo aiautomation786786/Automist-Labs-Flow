@@ -313,8 +313,9 @@ export class GeminiUIDiscovery {
 
       const safetyPatterns = [
         /violates? (our|the) safety (guidelines|policies)/i,
-        /can't (create|generate) that video/i,
-        /unable to generate (a|this) video/i,
+        /can'?t (create|generate|render) (that|this|an?)? (video|image)/i,
+        /cannot (directly )?(render|generate|create) image/i,
+        /unable to (generate|create|render) (a|this|an?)? (video|image)/i,
         /against our content policy/i,
         /explicit content/i,
       ];

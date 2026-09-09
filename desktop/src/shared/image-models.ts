@@ -5,12 +5,14 @@
  * Allows easy future additions of image models without breaking changes.
  */
 
+import type { GenerationProvider } from './types';
+
 export interface ImageModelDefinition {
   /** Canonical ID used in configuration and project entities */
   id: string;
   /** UI display name */
   displayName: string;
-  /** Exact or matching name string shown inside Google Flow model selector */
+  /** Exact or matching name string shown inside model selector */
   flowModelName: string;
   /** Short summary of engine characteristics */
   description: string;
@@ -20,6 +22,8 @@ export interface ImageModelDefinition {
   supports2k: boolean;
   /** Configurable baseline expected generation duration in seconds */
   baselineDurationSeconds: number;
+  /** Provider: 'flow' | 'gemini' (defaults to 'flow') */
+  provider?: GenerationProvider;
 }
 
 export const SUPPORTED_IMAGE_MODELS: readonly ImageModelDefinition[] = [
@@ -31,6 +35,7 @@ export const SUPPORTED_IMAGE_MODELS: readonly ImageModelDefinition[] = [
     badge: 'Cinema Quality',
     supports2k: true,
     baselineDurationSeconds: 18,
+    provider: 'flow',
   },
   {
     id: 'nano-banana-2',
@@ -40,6 +45,7 @@ export const SUPPORTED_IMAGE_MODELS: readonly ImageModelDefinition[] = [
     badge: 'Verified Default',
     supports2k: true,
     baselineDurationSeconds: 14,
+    provider: 'flow',
   },
   {
     id: 'nano-banana-2-lite',
@@ -49,6 +55,17 @@ export const SUPPORTED_IMAGE_MODELS: readonly ImageModelDefinition[] = [
     badge: 'Fast & Light',
     supports2k: false,
     baselineDurationSeconds: 10,
+    provider: 'flow',
+  },
+  {
+    id: 'gemini-without-watermark',
+    displayName: 'Gemini Without Watermark',
+    flowModelName: 'Gemini Without Watermark',
+    description: 'Direct Google Gemini generation with automated local lossless watermark removal',
+    badge: 'Gemini Web · Clean',
+    supports2k: true,
+    baselineDurationSeconds: 12,
+    provider: 'gemini',
   },
 ] as const;
 

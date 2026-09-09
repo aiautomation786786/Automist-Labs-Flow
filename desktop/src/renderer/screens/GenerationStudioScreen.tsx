@@ -417,9 +417,12 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
         promptsList = [{ text: singlePrompt.trim(), type: isImageMode ? 'image' : 'video' }];
       }
 
+      const isGeminiImage = isImageMode && (imageModel === 'Gemini Without Watermark' || getImageModelConfig(imageModel).provider === 'gemini');
       const effectiveVideoModel = isImageToVideo ? 'Omni 1.1 Flash' : videoModel;
       const isOmni = effectiveVideoModel.includes('Omni');
-      const effectiveProvider: GenerationProvider = (!isImageMode && isOmni) ? videoProvider : 'flow';
+      const effectiveProvider: GenerationProvider = isImageMode
+        ? (isGeminiImage ? 'gemini' : 'flow')
+        : (isOmni ? videoProvider : 'flow');
 
       const effectiveDuration = isImageToVideo
         ? (effectiveProvider === 'gemini' ? '10s' : omniDuration)
@@ -431,7 +434,12 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
 
       let promptsWithProvider: Array<{ text: string; type: 'image' | 'video'; sourceImagePath?: string; provider?: GenerationProvider }>;
 
-      if (!isImageMode && effectiveProvider === 'auto') {
+      if (isImageMode && isGeminiImage) {
+        promptsWithProvider = promptsList.map((p) => ({
+          ...p,
+          provider: 'gemini' as const,
+        }));
+      } else if (!isImageMode && effectiveProvider === 'auto') {
         promptsWithProvider = ProviderRouter.routeBulkSlots(promptsList, {
           requestedProvider: 'auto',
           model: effectiveVideoModel,
@@ -449,8 +457,10 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
         promptsWithProvider = promptsList;
       }
 
-      const allGemini = !isImageMode && promptsWithProvider.length > 0 && promptsWithProvider.every((p) => p.provider === 'gemini');
-      const resolvedGenMode = allGemini
+      const allGemini = promptsWithProvider.length > 0 && promptsWithProvider.every((p) => p.provider === 'gemini');
+      const resolvedGenMode = isImageMode
+        ? (isGeminiImage ? (isBulkMode ? 'gemini_bulk_image' : 'gemini_single_image') : mode)
+        : allGemini
         ? (isBulkI2V
             ? 'gemini_bulk_image_to_video'
             : isSingleI2V

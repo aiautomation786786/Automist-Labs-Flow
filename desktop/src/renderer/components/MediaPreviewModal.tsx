@@ -17,6 +17,8 @@ interface MediaPreviewModalProps {
     duration?: string;
     fileSize?: number;
     profile?: string;
+    watermarkCleaned?: boolean;
+    originalMediaPath?: string;
   };
   onClose: () => void;
 }
@@ -108,6 +110,22 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
             {metadata?.ratio && (
               <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                 · {metadata.ratio}
+              </span>
+            )}
+            {metadata?.watermarkCleaned && (
+              <span
+                style={{
+                  fontSize: '11px',
+                  padding: '2px 8px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                  color: '#34d399',
+                  border: '1px solid rgba(16, 185, 129, 0.28)',
+                  fontWeight: 600,
+                }}
+                title="Gemini watermark was cleanly reconstructed locally"
+              >
+                Watermark Cleaned
               </span>
             )}
           </div>

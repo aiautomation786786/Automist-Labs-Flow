@@ -507,7 +507,9 @@ export type GeminiGenerationMode =
   | 'gemini_text_to_video'
   | 'gemini_image_to_video'
   | 'gemini_bulk_text_to_video'
-  | 'gemini_bulk_image_to_video';
+  | 'gemini_bulk_image_to_video'
+  | 'gemini_single_image'
+  | 'gemini_bulk_image';
 
 /**
  * Represents the immutable result of a completed generation.

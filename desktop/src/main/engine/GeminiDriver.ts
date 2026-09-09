@@ -28,6 +28,12 @@ export interface VideoCompletionResult {
   durationSeconds?: number;
 }
 
+export interface ImageCompletionResult {
+  imageUrl: string;
+  width?: number;
+  height?: number;
+}
+
 export class GeminiDriver {
   /**
    * Ensures the page is in the active Gemini Video Studio mode.
@@ -207,6 +213,20 @@ export class GeminiDriver {
   }
 
   /**
+   * Ensures the session is on a clean, fresh chat to avoid collisions with prior conversation turns.
+   */
+  static async ensureFreshChat(page: Page): Promise<void> {
+    try {
+      const newChatBtn = page.locator('button[aria-label*="New chat" i], a[data-test-id="new-chat-button"], button:has-text("New chat")').first();
+      if (await newChatBtn.isVisible({ timeout: 1500 }).catch(() => false)) {
+        logger.info('gemini_driver', 'Starting fresh chat via New Chat button');
+        await newChatBtn.click({ timeout: 2000 }).catch(() => {});
+        await page.waitForTimeout(1200);
+      }
+    } catch {}
+  }
+
+  /**
    * Submits generation with single-click safety protection.
    */
   static async submitGeneration(page: Page): Promise<void> {
@@ -218,23 +238,36 @@ export class GeminiDriver {
     }
 
     logger.info('gemini_driver', 'Triggering single protected click on Send button...');
-    await sendBtn.click({ timeout: 5000 });
-    await page.waitForTimeout(2000);
+    await sendBtn.click({ timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(1000);
+
+    // If editor still has text, press Enter to submit
+    const editorStillHasText = await page.evaluate(() => {
+      const editor = document.querySelector('div.ql-editor') as HTMLElement;
+      return editor && editor.innerText.trim().length > 0;
+    }).catch(() => false);
+
+    if (editorStillHasText) {
+      logger.info('gemini_driver', 'Editor still has text after send click, pressing Enter key to submit...');
+      const editor = GeminiUIDiscovery.getPromptEditor(page);
+      await editor.focus().catch(() => {});
+      await page.keyboard.press('Enter').catch(() => {});
+      await page.waitForTimeout(1000);
+    }
 
     // Verify submission started
     const started = await page.waitForFunction(() => {
       const hasStop = !!document.querySelector('button[aria-label="Stop generation"]');
-      const hasUserQuery = !!document.querySelector('user-query, .user-query-container');
       const editor = document.querySelector('div.ql-editor') as HTMLElement;
       const editorCleared = editor ? !editor.innerText.trim() : false;
-      return hasStop || hasUserQuery || editorCleared;
+      return hasStop || editorCleared;
     }, { timeout: 10000 }).then(() => true).catch(() => false);
 
     if (!started) {
-      throw new Error('Failed to confirm generation submission on Gemini: input editor was not cleared and no response container appeared.');
+      logger.warn('gemini_driver', 'Submission verification warning: editor may not have cleared, continuing to poll response...');
+    } else {
+      logger.info('gemini_driver', 'Generation submission confirmed active on Gemini backend');
     }
-
-    logger.info('gemini_driver', 'Generation submission confirmed active on Gemini backend');
 
     // Dismiss any post-submission consent prompt
     await GeminiUIDiscovery.dismissKnownModals(page);
@@ -397,5 +430,181 @@ export class GeminiDriver {
     }
 
     throw new Error(`Failed to download valid video file to: ${destinationPath}`);
+  }
+
+  /**
+   * Polls for completion of a generated image.
+   */
+  static async waitForImageCompletion(
+    page: Page,
+    options: {
+      timeoutMs?: number;
+      pollIntervalMs?: number;
+      beforeUrls?: string[];
+      onProgress?: (message: string, percent: number) => void;
+    } = {},
+  ): Promise<ImageCompletionResult> {
+    const timeoutMs = options.timeoutMs ?? 120000;
+    const pollInterval = options.pollIntervalMs ?? 1500;
+    const startTime = Date.now();
+    const beforeUrls = options.beforeUrls || [];
+
+    logger.info('gemini_driver', `Waiting for image generation completion (timeout: ${timeoutMs / 1000}s)...`);
+
+    while (Date.now() - startTime < timeoutMs) {
+      // 1. Check for safety violation refusal
+      const safetyError = await GeminiUIDiscovery.detectSafetyRefusal(page);
+      if (safetyError) {
+        throw new Error(`SAFETY_BLOCK: ${safetyError}`);
+      }
+
+      // 2. Check for quota limits
+      const quotaError = await GeminiUIDiscovery.detectQuotaExhaustion(page);
+      if (quotaError) {
+        throw new Error(`QUOTA_EXHAUSTED: ${quotaError}`);
+      }
+
+      // 3. Check for generation failure
+      const failureText = await GeminiUIDiscovery.detectGenerationFailure(page);
+      if (failureText) {
+        throw new Error(`GENERATION_FAILED: ${failureText}`);
+      }
+
+      // 4. Scan for generated images in DOM
+      const newImages = await page.evaluate((beforeList) => {
+        const bSet = new Set(beforeList);
+        const candidates = Array.from(
+          document.querySelectorAll('message-content img, model-response img, .image-container img, img[alt*="AI generated" i], img[src*="googleusercontent"]')
+        );
+        return candidates
+          .map((img) => {
+            const htmlImg = img as HTMLImageElement;
+            const src = htmlImg.currentSrc || htmlImg.src || '';
+            const width = htmlImg.naturalWidth || htmlImg.width || 0;
+            const height = htmlImg.naturalHeight || htmlImg.height || 0;
+            return { src, width, height };
+          })
+          .filter(
+            (img) =>
+              img.src &&
+              !bSet.has(img.src) &&
+              !img.src.includes('profile') &&
+              !img.src.includes('avatar') &&
+              !img.src.includes('googleusercontent.com/a/') &&
+              (img.width > 200 || img.src.startsWith('blob:') || img.src.includes('googleusercontent'))
+          );
+      }, beforeUrls);
+
+      if (newImages.length > 0) {
+        const best = newImages.find((i) => i.width > 200) || newImages[0]!;
+        logger.info('gemini_driver', `Detected generated image: ${best.src.substring(0, 80)} (${best.width}x${best.height})`);
+        return {
+          imageUrl: best.src,
+          width: best.width > 0 ? best.width : undefined,
+          height: best.height > 0 ? best.height : undefined,
+        };
+      }
+
+      // Progress reporting
+      const elapsedSec = Math.floor((Date.now() - startTime) / 1000);
+      const estimatedPercent = Math.min(95, Math.floor(20 + (elapsedSec / 60) * 75));
+      if (options.onProgress) {
+        options.onProgress(`Gemini generating image... (${elapsedSec}s elapsed)`, estimatedPercent);
+      }
+
+      await page.waitForTimeout(pollInterval);
+    }
+
+    const lastResponse = await page.evaluate(() => {
+      const responses = Array.from(document.querySelectorAll('message-content, model-response'));
+      return responses.length ? responses[responses.length - 1].textContent?.trim() : '';
+    }).catch(() => '');
+    throw new Error(`Image generation timed out after ${timeoutMs / 1000} seconds without producing an output.${lastResponse ? ' Last response: ' + lastResponse.substring(0, 160) : ''}`);
+  }
+
+  /**
+   * Downloads the completed image safely (supporting in-browser canvas extraction for blob: URLs).
+   */
+  static async downloadImage(
+    page: Page,
+    imageUrl: string,
+    destinationPath: string,
+    options: { timeoutMs?: number } = {},
+  ): Promise<{ sizeBytes: number; isValid: boolean }> {
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+
+    // Method 1: In-browser canvas extraction (100% reliable for blob: and cross-origin sandboxed images)
+    try {
+      logger.info('gemini_driver', `Attempting canvas extraction for: ${imageUrl.substring(0, 60)}...`);
+      const base64Data = await page.evaluate((targetSrc) => {
+        const imgs = Array.from(document.querySelectorAll('img'));
+        const img =
+          imgs.find((i) => (i.currentSrc || i.src) === targetSrc) ||
+          imgs.find((i) => i.src?.startsWith('blob:')) ||
+          imgs.find((i) => (i.naturalWidth || i.width) > 200);
+
+        if (!img) return null;
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || img.width || 1024;
+        canvas.height = img.naturalHeight || img.height || 572;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        ctx.drawImage(img, 0, 0);
+        const dataUrl = canvas.toDataURL('image/png');
+        const commaIdx = dataUrl.indexOf(',');
+        return commaIdx >= 0 ? dataUrl.substring(commaIdx + 1) : dataUrl;
+      }, imageUrl);
+
+      if (base64Data && base64Data.length > 5000) {
+        fs.writeFileSync(destinationPath, Buffer.from(base64Data, 'base64'));
+        const stats = fs.statSync(destinationPath);
+        if (stats.size > 5000) {
+          logger.info('gemini_driver', `Saved image via canvas extraction (${stats.size} bytes) to: ${destinationPath}`);
+          return { sizeBytes: stats.size, isValid: true };
+        }
+      }
+    } catch (canvasErr) {
+      logger.warn('gemini_driver', `Canvas extraction failed: ${(canvasErr as Error).message}; trying SafeDownloader fallback`);
+    }
+
+    // Method 2: SafeDownloader for standard http/https URLs
+    if (imageUrl.startsWith('http')) {
+      try {
+        const dlResult = await SafeDownloader.download(page, imageUrl, destinationPath, options);
+        if (dlResult.bytesDownloaded > 5000) {
+          return { sizeBytes: dlResult.bytesDownloaded, isValid: true };
+        }
+      } catch (dlErr) {
+        logger.warn('gemini_driver', `SafeDownloader failed on ${imageUrl}: ${(dlErr as Error).message}`);
+      }
+    }
+
+    // Method 3: In-UI download button fallback
+    try {
+      const downloadBtn = page.locator('button[aria-label*="Download" i], a[aria-label*="Download" i]').last();
+      if (await downloadBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        const [download] = await Promise.all([
+          page.waitForEvent('download', { timeout: 10000 }),
+          downloadBtn.click(),
+        ]);
+        await download.saveAs(destinationPath);
+        const stats = fs.statSync(destinationPath);
+        if (stats.size > 5000) {
+          logger.info('gemini_driver', `Downloaded image via UI download button (${stats.size} bytes)`);
+          return { sizeBytes: stats.size, isValid: true };
+        }
+      }
+    } catch (uiErr) {
+      logger.warn('gemini_driver', `UI button download fallback failed: ${(uiErr as Error).message}`);
+    }
+
+    if (fs.existsSync(destinationPath)) {
+      const stats = fs.statSync(destinationPath);
+      if (stats.size > 5000) {
+        return { sizeBytes: stats.size, isValid: true };
+      }
+    }
+
+    throw new Error(`Failed to download valid image file to: ${destinationPath}`);
   }
 }

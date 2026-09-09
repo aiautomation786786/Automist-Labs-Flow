@@ -32,6 +32,7 @@ import { ProfileWorker } from './ProfileWorker';
 import { ImageExecutionService, type ExecutionOptions } from '../execution/ImageExecutionService';
 import { VideoExecutionService } from '../execution/VideoExecutionService';
 import { GeminiVideoExecutionService } from '../execution/GeminiVideoExecutionService';
+import { GeminiImageExecutionService } from '../execution/GeminiImageExecutionService';
 import { ProviderRouter } from '../../shared/ProviderRouter';
 import { CreditFailureDetector } from '../engine/CreditFailureDetector';
 import { generationEventBus } from '../events/GenerationEventBus';
@@ -424,6 +425,7 @@ export class GenerationScheduler {
       let isGemini =
         job.provider === 'gemini' ||
         project?.settings.provider === 'gemini' ||
+        project?.settings.imageModel === 'Gemini Without Watermark' ||
         (project?.settings.generationMode as string)?.startsWith('gemini');
 
       // If provider is 'auto' or unspecified for a video job, dynamically evaluate eligible providers
@@ -441,10 +443,17 @@ export class GenerationScheduler {
       }
 
       if (isGemini) {
-        await GeminiVideoExecutionService.execute(worker, job, {
-          ...this.executionOptions,
-          concurrencyLevel: Math.max(1, this.workerPool.busyCount),
-        });
+        if (job.promptType === 'image') {
+          await GeminiImageExecutionService.execute(worker, job, {
+            ...this.executionOptions,
+            concurrencyLevel: Math.max(1, this.workerPool.busyCount),
+          });
+        } else {
+          await GeminiVideoExecutionService.execute(worker, job, {
+            ...this.executionOptions,
+            concurrencyLevel: Math.max(1, this.workerPool.busyCount),
+          });
+        }
       } else if (job.promptType === 'image') {
         await ImageExecutionService.execute(worker, job, {
           ...this.executionOptions,

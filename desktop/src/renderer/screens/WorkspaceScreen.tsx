@@ -639,6 +639,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
             profile: selectedSlotForMedia.assignedProfileId,
             duration: selectedSlotForMedia.result?.durationFormatted,
             resolution: selectedSlotForMedia.result?.resolution,
+            watermarkCleaned: selectedSlotForMedia.result?.watermarkCleaned,
+            originalMediaPath: selectedSlotForMedia.result?.originalMediaPath,
           }}
           title={`Slot #${String(selectedSlotForMedia.slotIndex + 1).padStart(2, '0')}`}
           onClose={() => setSelectedSlotForMedia(null)}
