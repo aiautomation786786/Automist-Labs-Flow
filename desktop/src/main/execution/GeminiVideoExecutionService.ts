@@ -291,8 +291,8 @@ export class GeminiVideoExecutionService {
           if (cleanResult.success) {
             cleanVideoPath = cleanResult.cleanVideoPath;
             originalVideoPath = cleanResult.originalVideoPath;
-            watermarkCleaned = true;
-            log.info('gemini_video_exec', `Watermark successfully cleaned in ${cleanResult.durationMs}ms`);
+            watermarkCleaned = cleanResult.watermarkCleaned ?? false;
+            log.info('gemini_video_exec', `Watermark post-processing completed: cleaned=${watermarkCleaned} in ${cleanResult.durationMs}ms`);
           }
         } catch (cleanErr) {
           log.warn('gemini_video_exec', `Watermark post-processing fallback: ${(cleanErr as Error).message}`);
