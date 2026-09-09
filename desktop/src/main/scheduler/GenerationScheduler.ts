@@ -57,12 +57,14 @@ export class GenerationScheduler {
   private hasPendingDispatch = false;
   private isStopped = false;
   private inFlightJobIds: Set<string> = new Set();
+  private activeProjectIds: Set<string> = new Set();
 
   constructor(workerPool: WorkerPool, executionOptions: ExecutionOptions = {}) {
     this.workerPool = workerPool;
     this.executionOptions = executionOptions;
 
     this.setupEventListeners();
+    this.reconcileActiveProjects().catch(() => {});
     this.startReconciliationLoop();
 
     logger.info('scheduler', 'GenerationScheduler initialized');
@@ -112,6 +114,8 @@ export class GenerationScheduler {
 
     logger.info('scheduler', `Enqueued ${createdJobs.length} jobs for project ${projectId}`);
 
+    this.activeProjectIds.add(projectId);
+
     // Trigger immediate event-driven dispatch
     this.triggerDispatch();
 
@@ -136,6 +140,7 @@ export class GenerationScheduler {
 
     generationEventBus.emitTyped('job:cancelled', cancelledJob);
     logger.info('scheduler', `Cancelled job ${jobId}`);
+    this.checkProjectCompletion(projectId).catch(() => {});
   }
 
   /**
@@ -151,14 +156,19 @@ export class GenerationScheduler {
    */
   async getPendingJobsCount(): Promise<number> {
     try {
-      const projects = await ProjectRepository.getAll();
+      if (this.activeProjectIds.size === 0) {
+        return 0;
+      }
       let pending = 0;
-      for (const project of projects) {
-        if (project.status === 'queued' || project.status === 'running') {
+      for (const projectId of Array.from(this.activeProjectIds)) {
+        const project = await ProjectRepository.get(projectId);
+        if (project && (project.status === 'queued' || project.status === 'running')) {
           const allJobs = await JobRepository.getJobsByProject(project.projectId);
           pending += allJobs.filter(
             (j) => j.status === 'queued' && !this.inFlightJobIds.has(j.jobId)
           ).length;
+        } else {
+          this.activeProjectIds.delete(projectId);
         }
       }
       return pending;
@@ -171,6 +181,7 @@ export class GenerationScheduler {
    * Safely cancels all queued or in-flight jobs for a project before deletion.
    */
   async cancelProject(projectId: string): Promise<void> {
+    this.activeProjectIds.delete(projectId);
     try {
       await ProjectRepository.update(projectId, { status: 'deleting' }).catch(() => {});
       const jobs = await JobRepository.getJobsByProject(projectId).catch(() => []);
@@ -226,6 +237,8 @@ export class GenerationScheduler {
     });
 
     await ProjectRepository.update(projectId, { status: 'running' });
+
+    this.activeProjectIds.add(projectId);
 
     generationEventBus.emitTyped('job:queued', queuedJob);
     generationEventBus.emitTyped('slot:updated', {
@@ -319,6 +332,7 @@ export class GenerationScheduler {
                 })
                 .finally(() => {
                   this.inFlightJobIds.delete(job.jobId);
+                  this.checkProjectCompletion(job.projectId).catch(() => {});
                 });
             } catch (err) {
               logger.error('scheduler', `Error persisting assigned job ${job.jobId}`, err as Error);
@@ -343,11 +357,16 @@ export class GenerationScheduler {
   private async collectAndAssignEligibleJobs(): Promise<
     Array<{ job: GenerationJobEntity; project: ProjectEntity; worker: ProfileWorker }>
   > {
-    const projects = await ProjectRepository.getAll();
+    if (this.activeProjectIds.size === 0) {
+      return [];
+    }
+
     const assignments: Array<{ job: GenerationJobEntity; project: ProjectEntity; worker: ProfileWorker }> = [];
 
-    for (const project of projects) {
-      if (project.status !== 'queued' && project.status !== 'running') {
+    for (const projectId of Array.from(this.activeProjectIds)) {
+      const project = await ProjectRepository.get(projectId);
+      if (!project || (project.status !== 'queued' && project.status !== 'running')) {
+        this.activeProjectIds.delete(projectId);
         continue;
       }
 
@@ -356,7 +375,16 @@ export class GenerationScheduler {
         (j) => j.status === 'queued' && !this.inFlightJobIds.has(j.jobId)
       );
 
-      if (queuedJobs.length === 0) continue;
+      const hasActiveJobs = allJobs.some(
+        (j) => j.status === 'assigned' || j.status === 'starting' || j.status === 'generating' || j.status === 'downloading'
+      );
+
+      if (queuedJobs.length === 0) {
+        if (!hasActiveJobs && project.status !== 'queued') {
+          this.activeProjectIds.delete(projectId);
+        }
+        continue;
+      }
 
       const sortedJobs = this.sortAllJobsByProcessingOrder(queuedJobs, project.settings.processingOrder);
 
@@ -580,10 +608,59 @@ export class GenerationScheduler {
    * Periodic safety net (runs every 5s) to reconcile queue state without high CPU usage.
    */
   private startReconciliationLoop(): void {
-    this.reconciliationTimer = setInterval(() => {
-      if (!this.isStopped && !this.isDispatching) {
-        this.triggerDispatch();
+    this.reconciliationTimer = setInterval(async () => {
+      if (!this.isStopped) {
+        await this.reconcileActiveProjects().catch(() => {});
+        if (!this.isDispatching && this.activeProjectIds.size > 0) {
+          this.triggerDispatch();
+        }
       }
     }, 5000);
+  }
+
+  /**
+   * Reconciles in-memory activeProjectIds with disk/repository state.
+   * Fallback and recovery path ensuring activeProjectIds is never an unsynced source of truth.
+   */
+  async reconcileActiveProjects(): Promise<void> {
+    try {
+      const projects = await ProjectRepository.getAll();
+      const diskActiveIds = new Set<string>();
+      for (const p of projects) {
+        if (p.status === 'queued' || p.status === 'running') {
+          diskActiveIds.add(p.projectId);
+        }
+      }
+      for (const id of diskActiveIds) {
+        this.activeProjectIds.add(id);
+      }
+      for (const id of Array.from(this.activeProjectIds)) {
+        const matching = projects.find((p) => p.projectId === id);
+        if (!matching || (matching.status !== 'queued' && matching.status !== 'running')) {
+          this.activeProjectIds.delete(id);
+        }
+      }
+    } catch (err) {
+      logger.warn('scheduler', `Failed to reconcile active projects: ${(err as Error).message}`);
+    }
+  }
+
+  private async checkProjectCompletion(projectId: string): Promise<void> {
+    try {
+      const project = await ProjectRepository.get(projectId);
+      if (!project || project.status === 'completed' || project.status === 'cancelled' || project.status === 'draft') {
+        this.activeProjectIds.delete(projectId);
+        return;
+      }
+      const allJobs = await JobRepository.getJobsByProject(projectId);
+      const hasRunnableOrActive = allJobs.some(
+        (j) => j.status === 'queued' || j.status === 'assigned' || j.status === 'starting' || j.status === 'generating' || j.status === 'downloading'
+      );
+      if (!hasRunnableOrActive) {
+        this.activeProjectIds.delete(projectId);
+      }
+    } catch {
+      // Ignore
+    }
   }
 }

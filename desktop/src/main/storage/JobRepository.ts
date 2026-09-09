@@ -196,7 +196,7 @@ export class JobRepository {
         break;
       } catch (err: any) {
         if ((err.code === 'EPERM' || err.code === 'EBUSY' || err.code === 'EACCES') && attempt < 5) {
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, attempt * 15);
+          await new Promise((resolve) => setTimeout(resolve, attempt * 15));
         } else {
           try {
             fs.copyFileSync(tmpPath, filePath);

@@ -193,8 +193,10 @@ export class IpcHandlers {
         (s) => p.slotIndices.includes(s.slotIndex) && s.status === 'completed' && s.result?.mediaPath
       );
 
-      fs.mkdirSync(p.destinationDir, { recursive: true });
+      await fs.promises.mkdir(p.destinationDir, { recursive: true });
       let copiedCount = 0;
+      const copyConcurrency = 8;
+      const copyTasks: Array<() => Promise<void>> = [];
 
       for (const slot of slots) {
         if (fs.existsSync(slot.result!.mediaPath)) {
@@ -202,9 +204,15 @@ export class IpcHandlers {
           const serial = String(slot.slotIndex + 1).padStart(2, '0');
           const destName = `${serial}_${slot.type}${ext}`;
           const destPath = path.join(p.destinationDir, destName);
-          fs.copyFileSync(slot.result!.mediaPath, destPath);
-          copiedCount++;
+          copyTasks.push(async () => {
+            await fs.promises.copyFile(slot.result!.mediaPath, destPath);
+            copiedCount++;
+          });
         }
+      }
+
+      for (let i = 0; i < copyTasks.length; i += copyConcurrency) {
+        await Promise.all(copyTasks.slice(i, i + copyConcurrency).map((task) => task()));
       }
 
       return { success: true, count: copiedCount, destinationDir: p.destinationDir };
@@ -474,21 +482,50 @@ export class IpcHandlers {
     });
 
     // -------------------------------------------------------------------------
-    // Event Forwarding to Renderer
+    // Event Forwarding to Renderer with Per-Job Progress Coalescing
     // -------------------------------------------------------------------------
+    const progressBuffer = new Map<string, any>();
+    let flushTimer: NodeJS.Timeout | null = null;
+
+    const flushProgress = () => {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      if (progressBuffer.size === 0) return;
+      const webContents = getWebContents?.();
+      if (!webContents) return;
+
+      const events = Array.from(progressBuffer.values());
+      progressBuffer.clear();
+      for (const ev of events) {
+        webContents.send('flow:job:progress', ev);
+      }
+    };
+
     generationEventBus.onTyped('job:progress', (event) => {
-      getWebContents?.()?.send('flow:job:progress', event);
+      progressBuffer.set(event.jobId, event);
+      if (process.env.NODE_ENV === 'test') {
+        flushProgress();
+      } else if (!flushTimer) {
+        flushTimer = setTimeout(flushProgress, 60);
+      }
     });
 
     generationEventBus.onTyped('slot:updated', (event) => {
+      flushProgress();
       getWebContents?.()?.send('flow:slot:updated', event);
     });
 
     generationEventBus.onTyped('job:completed', (job) => {
+      progressBuffer.delete(job.jobId);
+      flushProgress();
       getWebContents?.()?.send('flow:job:completed', job);
     });
 
     generationEventBus.onTyped('job:failed', (job) => {
+      progressBuffer.delete(job.jobId);
+      flushProgress();
       getWebContents?.()?.send('flow:job:failed', job);
     });
 

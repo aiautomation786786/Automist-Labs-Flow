@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import type {
   SupportedAspectRatio,
 } from '../../shared/types';
@@ -78,6 +78,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
   const isImageToVideo = mode === 'image_to_video' || mode === 'bulk_image_to_video';
   const isSingleI2V = mode === 'image_to_video';
   const isBulkI2V = mode === 'bulk_image_to_video';
+  const bulkPairDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [sourceImagePath, setSourceImagePath] = useState<string>('');
   const [sourceImageName, setSourceImageName] = useState<string>('');
@@ -85,6 +86,14 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
     { id: 'pair_1', sourceImagePath: '', sourceImageName: '', promptText: '' },
     { id: 'pair_2', sourceImagePath: '', sourceImageName: '', promptText: '' },
   ]);
+
+  useEffect(() => {
+    return () => {
+      if (bulkPairDebounceTimerRef.current) {
+        clearTimeout(bulkPairDebounceTimerRef.current);
+      }
+    };
+  }, []);
 
   const [libraryImages, setLibraryImages] = useState<Array<{ path: string; name: string; projectId: string }>>([]);
   const [showLibraryModal, setShowLibraryModal] = useState<boolean>(false);
@@ -207,20 +216,25 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
 
   const handleBulkI2VPromptsTextChange = (text: string) => {
     setBulkPromptsText(text);
-    const parsed = PromptParser.parseRawText(text, 'video');
-    setBulkPairs((prev) => {
-      const count = Math.max(prev.length, parsed.length);
-      const next = [];
-      for (let i = 0; i < count; i++) {
-        next.push({
-          id: prev[i]?.id || `pair_${Date.now()}_${i}`,
-          sourceImagePath: prev[i]?.sourceImagePath || '',
-          sourceImageName: prev[i]?.sourceImageName || '',
-          promptText: parsed[i] ? parsed[i].text : '',
-        });
-      }
-      return next;
-    });
+    if (bulkPairDebounceTimerRef.current) {
+      clearTimeout(bulkPairDebounceTimerRef.current);
+    }
+    bulkPairDebounceTimerRef.current = setTimeout(() => {
+      const parsed = PromptParser.parseRawText(text, 'video');
+      setBulkPairs((prev) => {
+        const count = Math.max(prev.length, parsed.length);
+        const next = [];
+        for (let i = 0; i < count; i++) {
+          next.push({
+            id: prev[i]?.id || `pair_${Date.now()}_${i}`,
+            sourceImagePath: prev[i]?.sourceImagePath || '',
+            sourceImageName: prev[i]?.sourceImageName || '',
+            promptText: parsed[i] ? parsed[i].text : '',
+          });
+        }
+        return next;
+      });
+    }, 80);
   };
 
   const handleUpdateSlotPrompt = (index: number, val: string) => {
@@ -316,6 +330,25 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
     e.preventDefault();
     if (!window.flowApi) return;
 
+    let currentPairs = bulkPairs;
+    if (isBulkI2V && bulkPairDebounceTimerRef.current) {
+      clearTimeout(bulkPairDebounceTimerRef.current);
+      bulkPairDebounceTimerRef.current = null;
+      const parsed = PromptParser.parseRawText(bulkPromptsText, 'video');
+      const count = Math.max(bulkPairs.length, parsed.length);
+      const next = [];
+      for (let i = 0; i < count; i++) {
+        next.push({
+          id: bulkPairs[i]?.id || `pair_${Date.now()}_${i}`,
+          sourceImagePath: bulkPairs[i]?.sourceImagePath || '',
+          sourceImageName: bulkPairs[i]?.sourceImageName || '',
+          promptText: parsed[i] ? parsed[i].text : '',
+        });
+      }
+      currentPairs = next;
+      setBulkPairs(next);
+    }
+
     if (isSingleI2V) {
       if (!sourceImagePath) {
         setErrorMsg('Please select a source image for Image to Video generation.');
@@ -326,12 +359,12 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
         return;
       }
     } else if (isBulkI2V) {
-      const validPairs = bulkPairs.filter((p) => p.sourceImagePath && p.promptText.trim());
+      const validPairs = currentPairs.filter((p) => p.sourceImagePath && p.promptText.trim());
       if (validPairs.length === 0) {
         setErrorMsg('Please configure at least one Image-to-Video pair with both an image and motion prompt.');
         return;
       }
-      const imagesCount = bulkPairs.filter((p) => Boolean(p.sourceImagePath)).length;
+      const imagesCount = currentPairs.filter((p) => Boolean(p.sourceImagePath)).length;
       if (validPairs.length < imagesCount) {
         setErrorMsg(`All selected images must have a motion prompt (${validPairs.length} of ${imagesCount} complete).`);
         return;
@@ -367,7 +400,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
           },
         ];
       } else if (isBulkI2V) {
-        const validPairs = bulkPairs.filter((p) => p.sourceImagePath && p.promptText.trim());
+        const validPairs = currentPairs.filter((p) => p.sourceImagePath && p.promptText.trim());
         promptsList = validPairs.map((p) => ({
           text: p.promptText.trim(),
           type: 'video',

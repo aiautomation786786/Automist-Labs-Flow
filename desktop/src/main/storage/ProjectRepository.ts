@@ -47,6 +47,19 @@ export interface CreateProjectParams {
 
 export class ProjectRepository {
   private static cache = new Map<string, { entity: ProjectEntity; mtimeMs: number }>();
+  private static readonly MAX_CACHE_ENTRIES = 50;
+
+  private static setCache(projectId: string, entity: ProjectEntity, mtimeMs: number): void {
+    this.cache.delete(projectId);
+    if (this.cache.size >= this.MAX_CACHE_ENTRIES) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey) this.cache.delete(oldestKey);
+    }
+    this.cache.set(projectId, {
+      entity: JSON.parse(JSON.stringify(entity)),
+      mtimeMs,
+    });
+  }
 
   /**
    * Generates a deterministic, URL-safe project ID.
@@ -145,6 +158,7 @@ export class ProjectRepository {
         const stat = fs.statSync(filePath);
         const cached = this.cache.get(projectId);
         if (cached && cached.mtimeMs === stat.mtimeMs) {
+          this.setCache(projectId, cached.entity, cached.mtimeMs);
           return JSON.parse(JSON.stringify(cached.entity));
         }
 
@@ -153,10 +167,7 @@ export class ProjectRepository {
         // Strict invariant check: ensure slots remain sorted by slotIndex
         project.slots.sort((a, b) => a.slotIndex - b.slotIndex);
 
-        this.cache.set(projectId, {
-          entity: JSON.parse(JSON.stringify(project)),
-          mtimeMs: stat.mtimeMs,
-        });
+        this.setCache(projectId, project, stat.mtimeMs);
 
         return project;
       } catch (err) {
@@ -293,15 +304,13 @@ export class ProjectRepository {
     const stat = fs.statSync(filePath);
     const cached = this.cache.get(projectId);
     if (cached && cached.mtimeMs === stat.mtimeMs) {
+      this.setCache(projectId, cached.entity, cached.mtimeMs);
       return JSON.parse(JSON.stringify(cached.entity));
     }
     const content = fs.readFileSync(filePath, 'utf-8');
     const project = JSON.parse(content) as ProjectEntity;
     project.slots.sort((a, b) => a.slotIndex - b.slotIndex);
-    this.cache.set(projectId, {
-      entity: JSON.parse(JSON.stringify(project)),
-      mtimeMs: stat.mtimeMs,
-    });
+    this.setCache(projectId, project, stat.mtimeMs);
     return project;
   }
 
@@ -325,7 +334,7 @@ export class ProjectRepository {
         break;
       } catch (err: any) {
         if ((err.code === 'EPERM' || err.code === 'EBUSY' || err.code === 'EACCES') && attempt < 5) {
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, attempt * 15);
+          await new Promise((resolve) => setTimeout(resolve, attempt * 15));
         } else {
           try {
             fs.copyFileSync(tmpPath, filePath);
@@ -340,10 +349,7 @@ export class ProjectRepository {
 
     try {
       const stat = fs.statSync(filePath);
-      this.cache.set(project.projectId, {
-        entity: JSON.parse(JSON.stringify(project)),
-        mtimeMs: stat.mtimeMs,
-      });
+      this.setCache(project.projectId, project, stat.mtimeMs);
     } catch {
       // Ignore cache populate error
     }

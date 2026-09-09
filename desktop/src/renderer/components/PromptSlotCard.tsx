@@ -534,13 +534,16 @@ export const PromptSlotCard = React.memo<PromptSlotCardProps>(
   (prev, next) => {
     if (prev.slot !== next.slot) return false;
     if (prev.aspectRatio !== next.aspectRatio) return false;
+    if (prev.isSelected !== next.isSelected) return false;
     if (prev.progress?.percent !== next.progress?.percent) return false;
     if (prev.progress?.stage !== next.progress?.stage) return false;
     if (prev.progress?.elapsedSeconds !== next.progress?.elapsedSeconds) return false;
     if (prev.progress?.description !== next.progress?.description) return false;
+    if (prev.onToggleSelect !== next.onToggleSelect) return false;
     if (prev.onViewPrompt !== next.onViewPrompt) return false;
     if (prev.onPreviewMedia !== next.onPreviewMedia) return false;
     if (prev.onRetry !== next.onRetry) return false;
+    if (prev.profileMap !== next.profileMap) return false;
     return true;
   }
 );

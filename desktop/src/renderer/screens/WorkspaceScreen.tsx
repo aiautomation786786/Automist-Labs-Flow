@@ -63,12 +63,21 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
     }
   }, []);
 
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   // Load project initially
   const loadProject = useCallback(async () => {
     if (!window.flowApi) return;
     try {
       setLoading(true);
       const data = await window.flowApi.getProject(projectId);
+      if (!mountedRef.current) return;
       if (data) {
         // Strict invariant: slots are ordered by slotIndex
         data.slots.sort((a, b) => a.slotIndex - b.slotIndex);
@@ -77,15 +86,28 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
         setErrorMsg(`Project ${projectId} not found.`);
       }
     } catch (err) {
-      setErrorMsg((err as Error).message);
+      if (mountedRef.current) {
+        setErrorMsg((err as Error).message);
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
   }, [projectId]);
 
   useEffect(() => {
     loadProject();
   }, [loadProject]);
+
+  const handleToggleSelect = useCallback((idx: number) => {
+    setSelectedSlotIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }, []);
 
   // Connect to IPC live event stream without re-fetching entire project
   useEffect(() => {
@@ -495,14 +517,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
                 progress={slotProgress[slot.slotIndex]}
                 aspectRatio={project.settings.imageRatio}
                 isSelected={selectedSlotIndices.has(slot.slotIndex)}
-                onToggleSelect={(idx) =>
-                  setSelectedSlotIndices((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(idx)) next.delete(idx);
-                    else next.add(idx);
-                    return next;
-                  })
-                }
+                onToggleSelect={handleToggleSelect}
                 profileMap={profileMap}
                 onViewPrompt={handleViewPrompt}
                 onPreviewMedia={handlePreviewMedia}
@@ -551,14 +566,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
                 progress={slotProgress[slot.slotIndex]}
                 aspectRatio={project.settings.videoRatio || project.settings.imageRatio}
                 isSelected={selectedSlotIndices.has(slot.slotIndex)}
-                onToggleSelect={(idx) =>
-                  setSelectedSlotIndices((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(idx)) next.delete(idx);
-                    else next.add(idx);
-                    return next;
-                  })
-                }
+                onToggleSelect={handleToggleSelect}
                 profileMap={profileMap}
                 onViewPrompt={handleViewPrompt}
                 onPreviewMedia={handlePreviewMedia}

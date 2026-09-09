@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ProjectsScreen } from '../screens/ProjectsScreen';
 import { NewProjectScreen } from '../screens/NewProjectScreen';
 import { GenerationStudioScreen, type GenerationMode } from '../screens/GenerationStudioScreen';
@@ -71,7 +71,7 @@ export const AppShell: React.FC = () => {
     }
   }, []);
 
-  const navSections: NavSection[] = [
+  const navSections: NavSection[] = useMemo(() => [
     {
       title: 'PROJECTS',
       items: [
@@ -168,7 +168,7 @@ export const AppShell: React.FC = () => {
         },
       ],
     },
-  ];
+  ], [currentView]);
 
   return (
     <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: 'var(--bg-app)' }}>

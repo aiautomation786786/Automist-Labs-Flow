@@ -21,7 +21,7 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
 
   const loadProjects = async (silent = false) => {
     try {
-      if (!silent) {
+      if (!silent && projects.length === 0) {
         setLoading(true);
       }
       if (window.flowApi) {
@@ -31,9 +31,7 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
     } catch (err) {
       console.error('Failed to load projects', err);
     } finally {
-      if (!silent) {
-        setLoading(false);
-      }
+      setLoading(false);
     }
   };
 
@@ -158,7 +156,7 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
       </div>
 
       {/* Projects List or Empty State */}
-      {loading ? (
+      {loading && projects.length === 0 ? (
         <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
           Loading projects...
         </div>
