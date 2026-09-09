@@ -4,10 +4,10 @@
  * Responsibilities:
  *  - Automatically detects image orientation and queries GeminiImageWatermarkDetector.
  *  - If watermark is detected, non-destructively preserves the untouched original image as `<path>_original.<ext>`.
- *  - Executes localized reconstruction (tight delogo / reverse alpha blending) asynchronously via FFmpeg.
- *  - Preserves visual fidelity (-update 1, lossless or high-quality image muxing).
+ *  - Executes localized reverse-alpha reconstruction on raw pixel buffers.
+ *  - Preserves original pixels outside the watermark footprint byte-for-byte.
  *  - If watermark is NOT detected, skips processing entirely to preserve pristine source without modification.
- *  - Resilient fallback: returns original image without failing the generation job if FFmpeg is unavailable.
+ *  - Strict quality rule: Does NOT use delogo/blur fallback; if reverse-alpha fails, preserves original.
  */
 
 import * as fs from 'fs';
@@ -37,7 +37,7 @@ export interface ImageWatermarkCleanResult {
   durationMs: number;
   watermarkCleaned: boolean;
   detectionMethod?: string;
-  reconstructionMethod?: 'reverse_alpha_blending' | 'delogo_fallback';
+  reconstructionMethod?: 'reverse_alpha_blending' | 'reverse_alpha_alternate_variant';
   confidence?: number;
   boundingBox?: ImageWatermarkBoundingBox;
   error?: string;
@@ -141,10 +141,11 @@ export class GeminiImagePostProcessingService {
       const alphaGain = detection.alphaGain ?? 0.60;
       const timeoutMs = options.timeoutMs || 15000;
 
-      let reconMethod: 'reverse_alpha_blending' | 'delogo_fallback' = 'reverse_alpha_blending';
+      let reconMethod: 'reverse_alpha_blending' | 'reverse_alpha_alternate_variant' = 'reverse_alpha_blending';
       let reverseAlphaSuccess = false;
 
-      try {
+      // Helper to attempt in-memory reverse alpha reconstruction with a specified variant
+      const attemptReconstruction = async (varToTry: '48' | '96'): Promise<boolean> => {
         const { stdout: rawBuffer } = await execFileAsync(
           ffmpegPath,
           [
@@ -157,61 +158,68 @@ export class GeminiImagePostProcessingService {
           { encoding: 'buffer' as any, maxBuffer: 150 * 1024 * 1024, timeout: timeoutMs }
         );
 
-        if (rawBuffer && rawBuffer.length >= width * height * 3) {
-          const { modifiedPixels } = WatermarkMasks.applyReverseAlphaBlend(
-            rawBuffer,
-            width,
-            height,
-            x0,
-            y0,
-            variant,
-            { alphaGain, channels: 3 }
-          );
-          log.info('gemini_image_post_process', `Reverse-alpha reconstructed ${modifiedPixels} pixels under watermark at (${x0}, ${y0}) with gain ${alphaGain}`);
+        if (!rawBuffer || rawBuffer.length < width * height * 3) {
+          return false;
+        }
 
-          const tempRawPath = path.join(dir, `${base}_temp_recon_${Date.now()}.raw`);
-          fs.writeFileSync(tempRawPath, rawBuffer);
-          try {
-            await execFileAsync(
-              ffmpegPath,
-              [
-                '-y',
-                '-f', 'rawvideo',
-                '-pix_fmt', 'rgb24',
-                '-s', `${width}x${height}`,
-                '-i', tempRawPath,
-                '-update', '1',
-                tempCleanPath,
-              ],
-              { timeout: timeoutMs }
-            );
-            reverseAlphaSuccess = fs.existsSync(tempCleanPath) && fs.statSync(tempCleanPath).size >= 1000;
-          } finally {
-            if (fs.existsSync(tempRawPath)) {
-              try { fs.unlinkSync(tempRawPath); } catch {}
-            }
+        const { modifiedPixels } = WatermarkMasks.applyReverseAlphaBlend(
+          rawBuffer,
+          width,
+          height,
+          x0,
+          y0,
+          varToTry,
+          { alphaGain, channels: 3 }
+        );
+        log.info('gemini_image_post_process', `Reverse-alpha reconstructed ${modifiedPixels} pixels under watermark at (${x0}, ${y0}) with variant ${varToTry}`);
+
+        const tempRawPath = path.join(dir, `${base}_temp_recon_${Date.now()}.raw`);
+        fs.writeFileSync(tempRawPath, rawBuffer);
+        try {
+          await execFileAsync(
+            ffmpegPath,
+            [
+              '-y',
+              '-f', 'rawvideo',
+              '-pix_fmt', 'rgb24',
+              '-s', `${width}x${height}`,
+              '-i', tempRawPath,
+              '-update', '1',
+              tempCleanPath,
+            ],
+            { timeout: timeoutMs }
+          );
+          return fs.existsSync(tempCleanPath) && fs.statSync(tempCleanPath).size >= 1000;
+        } finally {
+          if (fs.existsSync(tempRawPath)) {
+            try { fs.unlinkSync(tempRawPath); } catch {}
           }
         }
+      };
+
+      try {
+        reverseAlphaSuccess = await attemptReconstruction(variant);
       } catch (revErr) {
-        log.warn('gemini_image_post_process', `Reverse-alpha blending failed, falling back to delogo: ${(revErr as Error).message}`);
+        log.warn('gemini_image_post_process', `Primary reverse-alpha variant (${variant}) failed: ${(revErr as Error).message}`);
       }
 
-      // Safety fallback to delogo if reverse alpha blending did not succeed
+      // If primary variant failed, attempt alternate mask variant
       if (!reverseAlphaSuccess) {
-        reconMethod = 'delogo_fallback';
-        log.warn('gemini_image_post_process', `Applying fallback delogo reconstruction for [x=${bbox.x}, y=${bbox.y}, w=${bbox.w}, h=${bbox.h}]`);
-        const delogoFilter = `delogo=x=${bbox.x}:y=${bbox.y}:w=${bbox.w}:h=${bbox.h}:show=0`;
-        await execFileAsync(
-          ffmpegPath,
-          [
-            '-y',
-            '-i', originalBackupPath,
-            '-vf', delogoFilter,
-            '-update', '1',
-            tempCleanPath,
-          ],
-          { timeout: timeoutMs }
-        );
+        const altVariant: '48' | '96' = variant === '48' ? '96' : '48';
+        log.info('gemini_image_post_process', `Attempting alternate reverse-alpha variant (${altVariant})`);
+        try {
+          reverseAlphaSuccess = await attemptReconstruction(altVariant);
+          if (reverseAlphaSuccess) {
+            reconMethod = 'reverse_alpha_alternate_variant';
+          }
+        } catch (altErr) {
+          log.warn('gemini_image_post_process', `Alternate reverse-alpha variant (${altVariant}) also failed: ${(altErr as Error).message}`);
+        }
+      }
+
+      // Strict Quality Rule: NEVER fall back to delogo/blur. If reverse-alpha fails, surface failure and preserve original.
+      if (!reverseAlphaSuccess) {
+        throw new Error('Reverse-alpha reconstruction failed across all calibrated variants; preserving original to prevent blur/smear artifacts');
       }
 
       // 3. Verify reconstructed file exists and is valid

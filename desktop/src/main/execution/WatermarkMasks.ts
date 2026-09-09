@@ -1,11 +1,11 @@
 /**
- * WatermarkMasks – Calibrated Gemini sparkle watermark masks and reverse alpha blending engine.
+ * WatermarkMasks – Calibrated Gemini sparkle watermark masks and localized reverse-alpha reconstruction engine.
  *
  * Provides:
  *  - High-precision per-pixel alpha intensity maps for 48x48 and 96x96 variants.
  *  - Embedded PNG masks for FFmpeg filter pipelines.
- *  - Mathematically exact in-place reverse-alpha blending on raw RGB/RGBA buffers.
- *  - Strict locality: ONLY touches pixels inside the watermark footprint (alpha >= 0.002).
+ *  - Localized reverse-alpha reconstruction on raw RGB/RGBA buffers.
+ *  - Strict locality: Modifies ONLY pixels covered by the watermark (alpha >= 0.002); surrounding pixels outside remain untouched.
  */
 
 import * as fs from 'fs';

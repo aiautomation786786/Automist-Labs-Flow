@@ -53,6 +53,24 @@ describe('Gemini Watermark Quality & Detection Hardening Suite', () => {
       expect(bbox.x).toBeGreaterThan(0);
       expect(bbox.y).toBeGreaterThan(0);
     });
+
+    it('selects variant 48 for 720p and 96 for 1080p across 16:9 and 9:16', async () => {
+      vi.spyOn(GeminiWatermarkDetector, 'probeVideo').mockResolvedValue({ width: 1280, height: 720, duration: 10 });
+      const res169_720 = await GeminiWatermarkDetector.detect('v1.mp4', { ratio: '16:9', width: 1280, height: 720 });
+      expect(res169_720.variant).toBe('48');
+
+      vi.spyOn(GeminiWatermarkDetector, 'probeVideo').mockResolvedValue({ width: 1920, height: 1080, duration: 10 });
+      const res169_1080 = await GeminiWatermarkDetector.detect('v2.mp4', { ratio: '16:9', width: 1920, height: 1080 });
+      expect(res169_1080.variant).toBe('96');
+
+      vi.spyOn(GeminiWatermarkDetector, 'probeVideo').mockResolvedValue({ width: 720, height: 1280, duration: 10 });
+      const res916_720 = await GeminiWatermarkDetector.detect('v3.mp4', { ratio: '9:16', width: 720, height: 1280 });
+      expect(res916_720.variant).toBe('48');
+
+      vi.spyOn(GeminiWatermarkDetector, 'probeVideo').mockResolvedValue({ width: 1080, height: 1920, duration: 10 });
+      const res916_1080 = await GeminiWatermarkDetector.detect('v4.mp4', { ratio: '9:16', width: 1080, height: 1920 });
+      expect(res916_1080.variant).toBe('96');
+    });
   });
 
   // 2. Multi-Tier Detection Order & Fallbacks
@@ -111,7 +129,7 @@ describe('Gemini Watermark Quality & Detection Hardening Suite', () => {
       }
     });
 
-    it('executes reverse_alpha_blending on valid video with watermark', async () => {
+    it('executes reverse_alpha_blending on valid video with watermark and preserves audio stream', async () => {
       const realVideo = 'C:\\Users\\mrand\\AppData\\Local\\GoogleFlowApp\\projects\\proj_49a40c43157d\\videos\\slot_00_slot_533c716d2dcb_job_ecc74aa915e1.mp4';
       if (!fs.existsSync(realVideo)) return;
 
@@ -122,10 +140,50 @@ describe('Gemini Watermark Quality & Detection Hardening Suite', () => {
         expect(res.watermarkCleaned).toBe(true);
         expect(res.reconstructionMethod).toBe('reverse_alpha_blending');
         expect(fs.existsSync(outputClean)).toBe(true);
+
+        // Verify audio stream is preserved via ffprobe
+        const ffprobePath = FfmpegResolver.findFfprobe();
+        if (ffprobePath) {
+          const { execFileSync } = require('child_process');
+          const streams = execFileSync(ffprobePath, [
+            '-v', 'error',
+            '-show_entries', 'stream=codec_type',
+            '-of', 'csv=p=0',
+            outputClean,
+          ]).toString();
+          expect(streams).toContain('audio');
+        }
       } finally {
         if (fs.existsSync(outputClean)) fs.unlinkSync(outputClean);
       }
     }, 25000);
+
+    it('reverse-alpha failure preserves original without delogo fallback', async () => {
+      const dummyPath = path.join(__dirname, 'test_fail_video.mp4');
+      fs.writeFileSync(dummyPath, 'not-a-valid-video-stream');
+
+      try {
+        vi.spyOn(FfmpegResolver, 'findFfmpeg').mockReturnValue('C:\\ffmpeg\\bin\\ffmpeg.exe');
+        vi.spyOn(GeminiWatermarkDetector, 'detect').mockResolvedValue({
+          detected: true,
+          method: 'geometry_derived',
+          confidence: 0.85,
+          boundingBox: { x: 1130, y: 570, w: 60, h: 60 },
+          videoDimensions: { width: 1280, height: 720 },
+          variant: '48',
+        });
+
+        const res = await GeminiPostProcessingService.cleanVideoWatermark(dummyPath);
+        expect(res.success).toBe(false);
+        expect(res.watermarkCleaned).toBe(false);
+        expect(res.cleanVideoPath).toBe(dummyPath);
+        expect(res.reconstructionMethod).toBeUndefined();
+        expect(res.error).toBeDefined();
+        expect(res.error).not.toContain('delogo');
+      } finally {
+        if (fs.existsSync(dummyPath)) fs.unlinkSync(dummyPath);
+      }
+    });
   });
 
   // 4. Robust Error Handling & Malformed Media

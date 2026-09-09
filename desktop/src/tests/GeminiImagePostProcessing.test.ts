@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { GeminiImagePostProcessingService } from '../main/execution/GeminiImagePostProcessingService';
 import { GeminiImageWatermarkDetector } from '../main/execution/GeminiImageWatermarkDetector';
+import { WatermarkMasks } from '../main/execution/WatermarkMasks';
 import { FfmpegResolver } from '../main/utils/FfmpegResolver';
 
 describe('Gemini Image Watermark Quality & Detection Hardening Suite', () => {
@@ -126,6 +127,57 @@ describe('Gemini Image Watermark Quality & Detection Hardening Suite', () => {
         expect(fs.existsSync(res.originalImagePath)).toBe(true);
       } finally {
         if (fs.existsSync(outputClean)) fs.unlinkSync(outputClean);
+      }
+    });
+
+    it('localized pixel modification: touches only watermark pixels and preserves outside pixels byte-for-byte', () => {
+      const W = 100, H = 100;
+      const buf = Buffer.alloc(W * H * 3, 120); // filled with byte 120
+      const copy = Buffer.from(buf);
+
+      const { modifiedPixels } = WatermarkMasks.applyReverseAlphaBlend(buf, W, H, 20, 20, '48', { alphaGain: 0.60, channels: 3 });
+      expect(modifiedPixels).toBeGreaterThan(0);
+      expect(modifiedPixels).toBeLessThan(48 * 48);
+
+      // Verify pixels outside the 48x48 footprint are 100% byte-for-byte identical to copy
+      let outsideTouched = 0;
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          if (x < 20 || x >= 68 || y < 20 || y >= 68) {
+            const idx = (y * W + x) * 3;
+            if (buf[idx] !== 120 || buf[idx+1] !== 120 || buf[idx+2] !== 120) {
+              outsideTouched++;
+            }
+          }
+        }
+      }
+      expect(outsideTouched).toBe(0);
+    });
+
+    it('reverse-alpha failure preserves original without delogo fallback', async () => {
+      const dummyPath = path.join(__dirname, 'test_fail_image.png');
+      fs.writeFileSync(dummyPath, 'not-a-valid-image');
+
+      try {
+        vi.spyOn(FfmpegResolver, 'findFfmpeg').mockReturnValue('C:\\ffmpeg\\bin\\ffmpeg.exe');
+        vi.spyOn(GeminiImageWatermarkDetector, 'detect').mockResolvedValue({
+          detected: true,
+          method: 'geometry_derived',
+          confidence: 0.85,
+          boundingBox: { x: 1130, y: 570, w: 52, h: 52 },
+          imageDimensions: { width: 1280, height: 720 },
+          variant: '48',
+        });
+
+        const res = await GeminiImagePostProcessingService.cleanImageWatermark(dummyPath);
+        expect(res.success).toBe(false);
+        expect(res.watermarkCleaned).toBe(false);
+        expect(res.cleanImagePath).toBe(dummyPath);
+        expect(res.reconstructionMethod).toBeUndefined();
+        expect(res.error).toBeDefined();
+        expect(res.error).not.toContain('delogo');
+      } finally {
+        if (fs.existsSync(dummyPath)) fs.unlinkSync(dummyPath);
       }
     });
   });

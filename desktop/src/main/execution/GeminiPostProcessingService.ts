@@ -1,15 +1,13 @@
 /**
- * GeminiPostProcessingService – Production-grade local post-processing watermark pipeline.
+ * GeminiPostProcessingService – Production-grade local post-processing video watermark pipeline.
  *
  * Responsibilities:
  *  - Automatically detects aspect ratio (16:9 vs 9:16) and calculates the precise
  *    watermark bounding box coordinates for Gemini/Veo generated videos.
- *  - Non-destructively preserves the pristine original downloaded video as `<path>_original.mp4`.
- *  - Executes FFmpeg delogo reconstruction asynchronously in the background via child_process
- *    without blocking the Electron UI thread or Node.js event loop.
- *  - Losslessly copies audio (-c:a copy) and preserves visual clarity (-crf 19 -preset fast).
- *  - Provides resilient error handling: falls back seamlessly to the original video if FFmpeg
- *    is unavailable or fails, ensuring generation jobs never fail due to post-processing.
+ *  - Non-destructively preserves the untouched original downloaded video as `<path>_original.mp4`.
+ *  - Executes visually high-fidelity reverse-alpha reconstruction in planar RGB asynchronously via FFmpeg.
+ *  - Losslessly copies audio stream (-c:a copy) and re-encodes video with visually pristine settings (-c:v libx264 -crf 18 -preset veryfast).
+ *  - Strict quality rule: Does NOT use delogo/blur fallback; if reverse-alpha fails, preserves original.
  */
 
 import * as fs from 'fs';
@@ -40,13 +38,13 @@ export interface WatermarkCleanResult {
   durationMs: number;
   watermarkCleaned?: boolean;
   detectionMethod?: string;
-  reconstructionMethod?: 'reverse_alpha_blending' | 'delogo_fallback';
+  reconstructionMethod?: 'reverse_alpha_blending' | 'reverse_alpha_alternate_variant';
   error?: string;
 }
 
 export class GeminiPostProcessingService {
   /**
-   * Resolves the delogo bounding box based on aspect ratio and resolution.
+   * Resolves the watermark bounding box based on aspect ratio and resolution.
    */
   static getWatermarkBoundingBox(ratio?: string, width?: number, height?: number): { x: number; y: number; w: number; h: number } {
     const isPortrait = ratio === '9:16' || (width !== undefined && height !== undefined && height > width);
@@ -122,7 +120,7 @@ export class GeminiPostProcessingService {
     });
 
     if (!detection.detected) {
-      log.info('gemini_post_process', `Watermark not detected on ${videoPath} (${detection.method}); skipping delogo to preserve pristine source.`);
+      log.info('gemini_post_process', `Watermark not detected on ${videoPath} (${detection.method}); skipping processing to preserve pristine source.`);
       return {
         success: true,
         cleanVideoPath: videoPath,
@@ -149,9 +147,9 @@ export class GeminiPostProcessingService {
     const alphaGain = detection.alphaGain ?? 0.60;
     const x0 = detection.exactCoordinates?.x0 ?? (bbox.x + 2);
     const y0 = detection.exactCoordinates?.y0 ?? (bbox.y + 2);
-    const maskPngPath = WatermarkMasks.getMaskPngPath(variant);
 
-    let reconstructionMethod: 'reverse_alpha_blending' | 'delogo_fallback' = 'reverse_alpha_blending';
+    let reconstructionMethod: 'reverse_alpha_blending' | 'reverse_alpha_alternate_variant' = 'reverse_alpha_blending';
+    let reverseAlphaSuccess = false;
 
     log.info('gemini_post_process', `Starting watermark removal on: ${videoPath}`, {
       variant,
@@ -163,57 +161,57 @@ export class GeminiPostProcessingService {
       ratio: options.ratio || '16:9',
     });
 
+    const attemptVideoReconstruction = async (varToTry: '48' | '96'): Promise<boolean> => {
+      const maskPath = WatermarkMasks.getMaskPngPath(varToTry);
+      const reverseAlphaFilter = `color=c=black:s=${width}x${height}[bg];[bg][1:v]overlay=x=${x0}:y=${y0}:shortest=1[mask];[0:v]format=gbrp[v_rgb];[mask]format=gbrp[m_rgb];[v_rgb][m_rgb]blend=all_expr='if(lte(B,2), A, clip(255*(A-B*${alphaGain.toFixed(2)})/(255-B*${alphaGain.toFixed(2)}), 0, 255))':shortest=1[clean];[clean]format=yuv420p[out]`;
+
+      await execFileAsync(
+        ffmpegPath,
+        [
+          '-y',
+          '-i', videoPath,
+          '-loop', '1',
+          '-i', maskPath,
+          '-filter_complex', reverseAlphaFilter,
+          '-map', '[out]',
+          '-map', '0:a?',
+          '-c:v', 'libx264',
+          '-preset', 'veryfast',
+          '-crf', '18',
+          '-c:a', 'copy',
+          tempCleanPath,
+        ],
+        { timeout: timeoutMs }
+      );
+
+      return fs.existsSync(tempCleanPath) && fs.statSync(tempCleanPath).size > 0;
+    };
+
     try {
-      // 1. Primary Method: Mathematically exact Reverse-Alpha Blending via planar RGB (gbrp)
+      // 1. Primary Method: High-fidelity reverse-alpha blending in planar RGB
       try {
-        const reverseAlphaFilter = `color=c=black:s=${width}x${height}[bg];[bg][1:v]overlay=x=${x0}:y=${y0}:shortest=1[mask];[0:v]format=gbrp[v_rgb];[mask]format=gbrp[m_rgb];[v_rgb][m_rgb]blend=all_expr='if(lte(B,2), A, clip(255*(A-B*${alphaGain.toFixed(2)})/(255-B*${alphaGain.toFixed(2)}), 0, 255))':shortest=1[clean];[clean]format=yuv420p[out]`;
+        reverseAlphaSuccess = await attemptVideoReconstruction(variant);
+      } catch (primErr) {
+        log.warn('gemini_post_process', `Primary reverse-alpha variant (${variant}) failed: ${(primErr as Error).message}`);
+      }
 
-        await execFileAsync(
-          ffmpegPath,
-          [
-            '-y',
-            '-i', videoPath,
-            '-loop', '1',
-            '-i', maskPngPath,
-            '-filter_complex', reverseAlphaFilter,
-            '-map', '[out]',
-            '-map', '0:a?',
-            '-c:v', 'libx264',
-            '-preset', 'veryfast',
-            '-crf', '18',
-            '-c:a', 'copy',
-            tempCleanPath,
-          ],
-          { timeout: timeoutMs }
-        );
-
-        if (!fs.existsSync(tempCleanPath) || fs.statSync(tempCleanPath).size === 0) {
-          throw new Error('Reverse-alpha video output was empty.');
+      // 2. Secondary Method: Alternate variant retry if primary failed
+      if (!reverseAlphaSuccess) {
+        const altVariant: '48' | '96' = variant === '48' ? '96' : '48';
+        log.info('gemini_post_process', `Attempting alternate reverse-alpha variant (${altVariant})`);
+        try {
+          reverseAlphaSuccess = await attemptVideoReconstruction(altVariant);
+          if (reverseAlphaSuccess) {
+            reconstructionMethod = 'reverse_alpha_alternate_variant';
+          }
+        } catch (altErr) {
+          log.warn('gemini_post_process', `Alternate reverse-alpha variant (${altVariant}) also failed: ${(altErr as Error).message}`);
         }
-        reconstructionMethod = 'reverse_alpha_blending';
-      } catch (reverseAlphaErr) {
-        log.warn('gemini_post_process', `Reverse-alpha blending failed, attempting delogo fallback: ${(reverseAlphaErr as Error).message}`);
-        reconstructionMethod = 'delogo_fallback';
-        const delogoFilter = `delogo=x=${bbox.x}:y=${bbox.y}:w=${bbox.w}:h=${bbox.h}`;
+      }
 
-        await execFileAsync(
-          ffmpegPath,
-          [
-            '-y',
-            '-i', videoPath,
-            '-vf', delogoFilter,
-            '-c:v', 'libx264',
-            '-crf', '19',
-            '-preset', 'fast',
-            '-c:a', 'copy',
-            tempCleanPath,
-          ],
-          { timeout: timeoutMs }
-        );
-
-        if (!fs.existsSync(tempCleanPath) || fs.statSync(tempCleanPath).size === 0) {
-          throw new Error('Cleaned video output was not created or has 0 bytes.');
-        }
+      // Strict Quality Rule: NEVER fall back to delogo/blur. If reverse-alpha fails, surface failure and preserve original.
+      if (!reverseAlphaSuccess) {
+        throw new Error('Reverse-alpha video reconstruction failed across all calibrated variants; preserving original to prevent blur/smear artifacts');
       }
 
       // 2. If targetCleanPath is the same as videoPath, archive original first
@@ -262,6 +260,7 @@ export class GeminiPostProcessingService {
         cleanVideoPath: videoPath,
         originalVideoPath: videoPath,
         durationMs,
+        watermarkCleaned: false,
         error: errorMsg,
       };
     }

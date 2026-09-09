@@ -271,7 +271,7 @@ export class GeminiWatermarkDetector {
         if (bestZNCC >= 0.40) {
           const globalX = cropX + bestX;
           const globalY = cropY + bestY;
-          // Add 2px padding for clean delogo bounds
+          // Add 2px padding for bounding box
           const boundingBox: WatermarkBoundingBox = {
             x: Math.max(0, globalX - 2),
             y: Math.max(0, globalY - 2),
