@@ -561,6 +561,8 @@ export class VideoExecutionService {
           mediaPath: destinationPath,
           thumbnailPath: thumbnailPath,
           sourceImagePath: sourceImagePath || undefined,
+          provider: 'flow',
+          providerModel: targetModel,
           modelUsed: targetModel,
           ratioUsed: targetRatio,
           resolution: targetRes,

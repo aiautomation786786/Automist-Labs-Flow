@@ -353,6 +353,21 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
               <span className={`badge badge-${project.status === 'completed' ? 'completed' : project.status === 'running' ? 'running' : 'draft'}`}>
                 {project.status}
               </span>
+              {project.settings.provider && (
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    padding: '2px 8px',
+                    borderRadius: '999px',
+                    backgroundColor: project.settings.provider === 'gemini' ? 'rgba(59, 130, 246, 0.15)' : 'rgba(99, 102, 241, 0.15)',
+                    color: project.settings.provider === 'gemini' ? '#60a5fa' : '#818cf8',
+                    border: `1px solid ${project.settings.provider === 'gemini' ? 'rgba(59, 130, 246, 0.3)' : 'rgba(99, 102, 241, 0.3)'}`,
+                  }}
+                >
+                  {project.settings.provider === 'gemini' ? 'Gemini' : project.settings.provider === 'auto' ? 'Auto Balanced' : 'Google Flow'}
+                </span>
+              )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
               {project.stats.totalImages > 0 && <span>{project.stats.totalImages} Images</span>}

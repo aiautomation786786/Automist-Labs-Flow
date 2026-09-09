@@ -1,7 +1,10 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import type {
   SupportedAspectRatio,
+  GenerationProvider,
+  GeminiAspectRatio,
 } from '../../shared/types';
+import { ProviderRouter } from '../../shared/ProviderRouter';
 import { PromptParser } from '../../shared/PromptParser';
 import { naturalSort, detectAmbiguousNumericOrder } from '../../shared/utils/NaturalSort';
 import { SUPPORTED_IMAGE_MODELS, getImageModelConfig } from '../../shared/image-models';
@@ -288,6 +291,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
   const [omniResolution, setOmniResolution] = useState<'360p' | '720p'>('720p');
   const [omniDuration, setOmniDuration] = useState<'4s' | '6s' | '8s' | '10s'>('4s');
   const [videoDownloadQuality, setVideoDownloadQuality] = useState<'original' | '1080p'>('original');
+  const [videoProvider, setVideoProvider] = useState<'flow' | 'gemini' | 'auto'>('flow');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -414,27 +418,63 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
       }
 
       const effectiveVideoModel = isImageToVideo ? 'Omni 1.1 Flash' : videoModel;
+      const isOmni = effectiveVideoModel.includes('Omni');
+      const effectiveProvider: GenerationProvider = (!isImageMode && isOmni) ? videoProvider : 'flow';
+
       const effectiveDuration = isImageToVideo
-        ? omniDuration
+        ? (effectiveProvider === 'gemini' ? '10s' : omniDuration)
         : videoModel === 'Veo 3.1 - Quality'
         ? '8s'
-        : videoModel.includes('Omni')
-        ? omniDuration
+        : isOmni
+        ? (effectiveProvider === 'gemini' ? '10s' : omniDuration)
         : veoDuration;
+
+      let promptsWithProvider: Array<{ text: string; type: 'image' | 'video'; sourceImagePath?: string; provider?: GenerationProvider }>;
+
+      if (!isImageMode && effectiveProvider === 'auto') {
+        promptsWithProvider = ProviderRouter.routeBulkSlots(promptsList, {
+          requestedProvider: 'auto',
+          model: effectiveVideoModel,
+          duration: effectiveDuration,
+          ratio: aspectRatio,
+          flowSafeCapacity: 5,
+          geminiSafeCapacity: 5,
+        });
+      } else if (!isImageMode && effectiveProvider === 'gemini') {
+        promptsWithProvider = promptsList.map((p) => ({
+          ...p,
+          provider: 'gemini' as const,
+        }));
+      } else {
+        promptsWithProvider = promptsList;
+      }
+
+      const allGemini = !isImageMode && promptsWithProvider.length > 0 && promptsWithProvider.every((p) => p.provider === 'gemini');
+      const resolvedGenMode = allGemini
+        ? (isBulkI2V
+            ? 'gemini_bulk_image_to_video'
+            : isSingleI2V
+            ? 'gemini_image_to_video'
+            : isBulkMode
+            ? 'gemini_bulk_text_to_video'
+            : 'gemini_text_to_video')
+        : mode;
 
       const project = await window.flowApi.createProject({
         name: projectName.trim() || `${mode} project`,
         campaignTag: campaignTag.trim() || undefined,
-        generationMode: mode,
+        provider: effectiveProvider,
+        generationMode: resolvedGenMode,
         imageModel: isImageMode ? imageModel : undefined,
         imageRatio: isImageMode ? aspectRatio : undefined,
         videoRatio: !isImageMode ? aspectRatio : undefined,
+        geminiAspectRatio: effectiveProvider === 'gemini' ? (aspectRatio as GeminiAspectRatio) : undefined,
         imageDownloadQuality: isImageMode ? imageDownloadQuality : undefined,
         videoDownloadQuality: !isImageMode ? videoDownloadQuality : undefined,
-        videoModel: !isImageMode ? effectiveVideoModel : undefined,
-        videoResolution: !isImageMode ? (effectiveVideoModel.includes('Omni') ? omniResolution : '720p') : undefined,
+        videoModel: !isImageMode ? (effectiveProvider === 'gemini' ? 'Gemini Omni' : effectiveVideoModel) : undefined,
+        videoResolution: !isImageMode ? (effectiveProvider === 'gemini' ? '720p' : (isOmni ? omniResolution : '720p')) : undefined,
         videoDuration: !isImageMode ? effectiveDuration : undefined,
-        prompts: promptsList,
+        prompts: promptsWithProvider,
       });
 
       await window.flowApi.startProjectGeneration(project.projectId);
@@ -490,7 +530,11 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                 border: '1px solid var(--border-color)',
               }}
             >
-              {isImageToVideo ? 'Omni 1.1 Flash' : isImageMode ? imageModel : videoModel}
+              {isImageToVideo
+                ? (videoProvider === 'gemini' ? 'Gemini Omni' : 'Omni 1.1 Flash')
+                : isImageMode
+                ? imageModel
+                : (videoModel.includes('Omni') && videoProvider === 'gemini' ? 'Gemini Omni' : videoModel)}
             </span>
           </div>
           <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
@@ -1491,45 +1535,88 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                     High-speed multimodal image-to-video generation engine.
                   </span>
 
-                  {/* Omni Duration & Resolution */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                  {/* Provider Selector for Omni I2V */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                        Duration
+                      <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                        Provider Engine
                       </span>
                       <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                        Flow Omni Flash duration
+                        {videoProvider === 'gemini'
+                          ? 'Gemini Omni Web'
+                          : videoProvider === 'auto'
+                          ? 'Adaptive Flow & Gemini'
+                          : 'Google Flow'}
                       </span>
                     </div>
-                    <SegmentedControl<'4s' | '6s' | '8s' | '10s'>
+                    <SegmentedControl<'flow' | 'gemini' | 'auto'>
                       options={[
-                        { value: '4s', label: '4s (Default)' },
-                        { value: '6s', label: '6s' },
-                        { value: '8s', label: '8s' },
-                        { value: '10s', label: '10s' },
+                        { value: 'flow', label: 'Google Flow' },
+                        { value: 'gemini', label: 'Gemini' },
+                        { value: 'auto', label: 'Auto' },
                       ]}
-                      value={omniDuration}
-                      onChange={(d) => setOmniDuration(d)}
-                      size="sm"
-                      fullWidth
-                    />
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-                      <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                        Resolution
-                      </span>
-                    </div>
-                    <SegmentedControl<'360p' | '720p'>
-                      options={[
-                        { value: '360p', label: '360p' },
-                        { value: '720p', label: '720p' },
-                      ]}
-                      value={omniResolution}
-                      onChange={(r) => setOmniResolution(r)}
+                      value={videoProvider}
+                      onChange={(p) => setVideoProvider(p)}
                       size="sm"
                       fullWidth
                     />
                   </div>
+
+                  {videoProvider === 'gemini' ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '6px' }}>
+                      <div className="native-info-pill" style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', borderColor: 'rgba(59, 130, 246, 0.3)' }}>
+                        <SparklesIcon size={14} style={{ color: '#60a5fa' }} />
+                        <span>Gemini Native Duration:</span>
+                        <strong style={{ color: '#60a5fa' }}>10s</strong>
+                        <span style={{ opacity: 0.8, fontSize: '11px' }}>(Omni Video)</span>
+                      </div>
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        Native 10-second Gemini Omni image animation · 720p output
+                      </span>
+                    </div>
+                  ) : (
+                    /* Omni Duration & Resolution */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                          Duration
+                        </span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                          {videoProvider === 'auto' && omniDuration === '10s'
+                            ? '10s eligible for Flow & Gemini load-balancing'
+                            : 'Flow Omni Flash duration'}
+                        </span>
+                      </div>
+                      <SegmentedControl<'4s' | '6s' | '8s' | '10s'>
+                        options={[
+                          { value: '4s', label: '4s (Default)' },
+                          { value: '6s', label: '6s' },
+                          { value: '8s', label: '8s' },
+                          { value: '10s', label: '10s' },
+                        ]}
+                        value={omniDuration}
+                        onChange={(d) => setOmniDuration(d)}
+                        size="sm"
+                        fullWidth
+                      />
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+                        <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                          Resolution
+                        </span>
+                      </div>
+                      <SegmentedControl<'360p' | '720p'>
+                        options={[
+                          { value: '360p', label: '360p' },
+                          { value: '720p', label: '720p' },
+                        ]}
+                        value={omniResolution}
+                        onChange={(r) => setOmniResolution(r)}
+                        size="sm"
+                        fullWidth
+                      />
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -1557,42 +1644,86 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                   {/* Context-Sensitive Duration & Resolution */}
                   {videoModel.includes('Omni') ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                          Omni Duration
-                        </span>
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                          Omni 1.1 Flash live duration controls
-                        </span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                            Provider Engine
+                          </span>
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                            {videoProvider === 'gemini'
+                              ? 'Gemini Omni Web'
+                              : videoProvider === 'auto'
+                              ? 'Adaptive Flow & Gemini'
+                              : 'Google Flow'}
+                          </span>
+                        </div>
+                        <SegmentedControl<'flow' | 'gemini' | 'auto'>
+                          options={[
+                            { value: 'flow', label: 'Google Flow' },
+                            { value: 'gemini', label: 'Gemini' },
+                            { value: 'auto', label: 'Auto' },
+                          ]}
+                          value={videoProvider}
+                          onChange={(p) => setVideoProvider(p)}
+                          size="sm"
+                          fullWidth
+                        />
                       </div>
-                      <SegmentedControl<'4s' | '6s' | '8s' | '10s'>
-                        options={[
-                          { value: '4s', label: '4s' },
-                          { value: '6s', label: '6s' },
-                          { value: '8s', label: '8s' },
-                          { value: '10s', label: '10s' },
-                        ]}
-                        value={omniDuration}
-                        onChange={(d) => setOmniDuration(d)}
-                        size="sm"
-                        fullWidth
-                      />
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-                        <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                          Omni Generation Resolution
-                        </span>
-                      </div>
-                      <SegmentedControl<'360p' | '720p'>
-                        options={[
-                          { value: '360p', label: '360p' },
-                          { value: '720p', label: '720p' },
-                        ]}
-                        value={omniResolution}
-                        onChange={(r) => setOmniResolution(r)}
-                        size="sm"
-                        fullWidth
-                      />
+                      {videoProvider === 'gemini' ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                          <div className="native-info-pill" style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', borderColor: 'rgba(59, 130, 246, 0.3)' }}>
+                            <SparklesIcon size={14} style={{ color: '#60a5fa' }} />
+                            <span>Gemini Native Duration:</span>
+                            <strong style={{ color: '#60a5fa' }}>10s</strong>
+                            <span style={{ opacity: 0.8, fontSize: '11px' }}>(Omni Video)</span>
+                          </div>
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                            Native 10-second Gemini Omni generation · 720p output
+                          </span>
+                        </div>
+                      ) : (
+                        <>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                              Omni Duration
+                            </span>
+                            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                              {videoProvider === 'auto' && omniDuration === '10s'
+                                ? '10s eligible for Flow & Gemini load-balancing'
+                                : 'Omni 1.1 Flash live duration controls'}
+                            </span>
+                          </div>
+                          <SegmentedControl<'4s' | '6s' | '8s' | '10s'>
+                            options={[
+                              { value: '4s', label: '4s' },
+                              { value: '6s', label: '6s' },
+                              { value: '8s', label: '8s' },
+                              { value: '10s', label: '10s' },
+                            ]}
+                            value={omniDuration}
+                            onChange={(d) => setOmniDuration(d)}
+                            size="sm"
+                            fullWidth
+                          />
+
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+                            <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                              Omni Generation Resolution
+                            </span>
+                          </div>
+                          <SegmentedControl<'360p' | '720p'>
+                            options={[
+                              { value: '360p', label: '360p' },
+                              { value: '720p', label: '720p' },
+                            ]}
+                            value={omniResolution}
+                            onChange={(r) => setOmniResolution(r)}
+                            size="sm"
+                            fullWidth
+                          />
+                        </>
+                      )}
                     </div>
                   ) : videoModel === 'Veo 3.1 - Quality' ? (
                     <div className="native-info-pill">

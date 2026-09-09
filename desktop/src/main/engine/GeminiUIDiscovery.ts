@@ -379,5 +379,32 @@ export class GeminiUIDiscovery {
     }
     return null;
   }
+
+  /**
+   * Checks if the Gemini account interface exposes an official Media Watermark toggle.
+   * NOTE: We never alter SynthID or Content Credentials; this only checks official account configuration.
+   */
+  static async detectOfficialWatermarkSetting(page: Page): Promise<{ available: boolean; enabled?: boolean; description?: string }> {
+    try {
+      const watermarkFound = await page.evaluate(() => {
+        const toggle = document.querySelector('[aria-label*="watermark" i], [data-test-id*="watermark" i]');
+        if (!toggle) return null;
+        const isChecked = toggle.getAttribute('aria-checked') === 'true' || (toggle as HTMLInputElement).checked;
+        return { isChecked };
+      });
+
+      if (watermarkFound) {
+        return {
+          available: true,
+          enabled: watermarkFound.isChecked,
+          description: 'Official Gemini account media watermark toggle detected.',
+        };
+      }
+    } catch {
+      // Ignored
+    }
+    return { available: false, description: 'Standard provider output with SynthID provenance preserved.' };
+  }
 }
+
 

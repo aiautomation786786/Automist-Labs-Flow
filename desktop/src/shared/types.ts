@@ -499,7 +499,7 @@ export type PromptSlotStatus =
 // Provider & Gemini Types
 // ---------------------------------------------------------------------------
 
-export type GenerationProvider = 'flow' | 'gemini';
+export type GenerationProvider = 'flow' | 'gemini' | 'auto';
 
 export type GeminiAspectRatio = '16:9' | '9:16';
 
@@ -517,7 +517,10 @@ export interface SlotMediaResult {
   mediaPath: string;           // Absolute path to local image / video
   thumbnailPath?: string;      // Local thumbnail path
   sourceImagePath?: string;    // Optional path to source image used for Image-to-Video
+  originalMediaPath?: string;  // Non-destructively preserved original media path if post-processing ran
+  watermarkCleaned?: boolean;  // True if local watermark post-processing successfully cleaned the video
   provider?: GenerationProvider;// 'flow' | 'gemini' (defaults to 'flow')
+  providerModel?: string;      // Resolved provider model e.g. 'Gemini Omni', 'Omni 1.1 Flash', 'Veo 3.1 - Quality'
   width?: number;
   height?: number;
   durationSeconds?: number;

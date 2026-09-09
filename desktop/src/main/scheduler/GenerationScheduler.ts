@@ -32,6 +32,7 @@ import { ProfileWorker } from './ProfileWorker';
 import { ImageExecutionService, type ExecutionOptions } from '../execution/ImageExecutionService';
 import { VideoExecutionService } from '../execution/VideoExecutionService';
 import { GeminiVideoExecutionService } from '../execution/GeminiVideoExecutionService';
+import { ProviderRouter } from '../../shared/ProviderRouter';
 import { CreditFailureDetector } from '../engine/CreditFailureDetector';
 import { generationEventBus } from '../events/GenerationEventBus';
 import { AppLogger } from '../utils/AppLogger';
@@ -420,10 +421,24 @@ export class GenerationScheduler {
   private async executeJobOnWorker(worker: ProfileWorker, job: GenerationJobEntity): Promise<void> {
     try {
       const project = await ProjectRepository.get(job.projectId);
-      const isGemini =
+      let isGemini =
         job.provider === 'gemini' ||
         project?.settings.provider === 'gemini' ||
         (project?.settings.generationMode as string)?.startsWith('gemini');
+
+      // If provider is 'auto' or unspecified for a video job, dynamically evaluate eligible providers
+      if (!isGemini && (job.provider === 'auto' || project?.settings.provider === 'auto') && job.promptType === 'video') {
+        const decision = ProviderRouter.routeSingle({
+          requestedProvider: 'auto',
+          model: project?.settings?.videoModel || 'Omni 1.1 Flash',
+          duration: project?.settings?.videoDuration,
+          ratio: project?.settings?.videoRatio,
+          hasSourceImage: Boolean(job.sourceImagePath),
+          flowSafeCapacity: this.workerPool.getAvailableWorker() ? 1 : 0,
+          geminiSafeCapacity: 1,
+        });
+        isGemini = decision.resolvedProvider === 'gemini';
+      }
 
       if (isGemini) {
         await GeminiVideoExecutionService.execute(worker, job, {

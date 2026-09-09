@@ -278,4 +278,63 @@ describe('GenerationStudioScreen', () => {
       })
     );
   });
+
+  it('supports selecting Gemini provider on Omni 1.1 Flash and submits project with provider: gemini', async () => {
+    render(
+      <GenerationStudioScreen
+        initialMode="single_video"
+        onProjectCreated={onProjectCreated}
+        onCancel={onCancel}
+        onNavigateProfiles={onNavigateProfiles}
+      />
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Switch model to Omni 1.1 Flash
+    const select = screen.getByLabelText('AI Video Model');
+    fireEvent.change(select, { target: { value: 'Omni 1.1 Flash' } });
+
+    // Verify Provider Engine segmented control is rendered
+    expect(screen.getByText('Provider Engine')).toBeDefined();
+    expect(screen.getByText('Gemini')).toBeDefined();
+
+    // Click Gemini provider
+    fireEvent.click(screen.getByText('Gemini'));
+
+    // Verify 10s Gemini duration is active
+    expect(screen.getByText('Gemini Native Duration:')).toBeDefined();
+    expect(screen.getByText('10s')).toBeDefined();
+
+    // Enter prompt
+    const promptInput = screen.getByPlaceholderText(/Describe camera movement and cinematography/i);
+    fireEvent.change(promptInput, { target: { value: 'A cosmic nebula expanding in deep space' } });
+
+    // Submit
+    const submitBtn = screen.getByText(/Generate Video/i);
+    fireEvent.click(submitBtn);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(window.flowApi?.createProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'gemini',
+        videoModel: 'Gemini Omni',
+        videoDuration: '10s',
+        generationMode: 'gemini_text_to_video',
+        prompts: [
+          expect.objectContaining({
+            text: 'A cosmic nebula expanding in deep space',
+            type: 'video',
+            provider: 'gemini',
+          }),
+        ],
+      })
+    );
+  });
 });
+

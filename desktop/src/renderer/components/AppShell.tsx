@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { ProjectsScreen } from '../screens/ProjectsScreen';
 import { NewProjectScreen } from '../screens/NewProjectScreen';
 import { GenerationStudioScreen, type GenerationMode } from '../screens/GenerationStudioScreen';
-import { GeminiVideoStudioScreen, type GeminiStudioMode } from '../screens/GeminiVideoStudioScreen';
+import { GeminiStatusScreen } from '../screens/GeminiStatusScreen';
 import { WorkspaceScreen } from '../screens/WorkspaceScreen';
 import { ProfilesScreen } from '../screens/ProfilesScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
@@ -27,7 +27,7 @@ type View =
   | { type: 'bulk_video' }
   | { type: 'image_to_video' }
   | { type: 'bulk_image_to_video' }
-  | { type: 'gemini_video'; initialMode?: GeminiStudioMode }
+  | { type: 'gemini_video' }
   | { type: 'new_generation'; initialMode?: GenerationMode }
   | { type: 'new_project' }
   | { type: 'workspace'; projectId: string }
@@ -105,7 +105,7 @@ export const AppShell: React.FC = () => {
           id: 'single_video',
           label: 'Single Video',
           icon: <VideoIcon size={16} />,
-          badge: 'Veo / Omni',
+          badge: 'Flow + Gemini',
           badgeColor: 'var(--info-video)',
           badgeBg: 'var(--info-video-bg)',
           isActive: currentView.type === 'single_video' || (currentView.type === 'new_generation' && currentView.initialMode === 'single_video'),
@@ -125,7 +125,7 @@ export const AppShell: React.FC = () => {
           id: 'bulk_video',
           label: 'Bulk Video',
           icon: <ClapperboardIcon size={16} />,
-          badge: 'Parallel',
+          badge: 'Flow + Gemini',
           badgeColor: '#10b981',
           badgeBg: 'rgba(16, 185, 129, 0.15)',
           isActive: currentView.type === 'bulk_video' || (currentView.type === 'new_generation' && currentView.initialMode === 'bulk_video'),
@@ -158,9 +158,9 @@ export const AppShell: React.FC = () => {
       items: [
         {
           id: 'gemini_video',
-          label: 'Gemini Video Studio',
+          label: 'Gemini Status',
           icon: <SparklesIcon size={16} />,
-          badge: 'Veo / Omni',
+          badge: 'Diagnostics',
           badgeColor: '#60a5fa',
           badgeBg: 'rgba(59, 130, 246, 0.15)',
           isActive: currentView.type === 'gemini_video',
@@ -428,11 +428,8 @@ export const AppShell: React.FC = () => {
         )}
 
         {currentView.type === 'gemini_video' && (
-          <GeminiVideoStudioScreen
-            initialMode={currentView.initialMode || 'text_to_video'}
-            onProjectCreated={(projectId) => setCurrentView({ type: 'workspace', projectId })}
-            onCancel={() => setCurrentView({ type: 'projects' })}
-            onNavigateProfiles={() => setCurrentView({ type: 'profiles' })}
+          <GeminiStatusScreen
+            onNavigateMode={(mode) => setCurrentView({ type: mode })}
           />
         )}
 

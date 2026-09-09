@@ -26,6 +26,7 @@ import { FfmpegResolver } from '../utils/FfmpegResolver';
 import { generationEventBus } from '../events/GenerationEventBus';
 import { AppLogger } from '../utils/AppLogger';
 import { ProgressEstimator } from './ProgressEstimator';
+import { GeminiPostProcessingService } from './GeminiPostProcessingService';
 
 export interface GeminiVideoExecutionOptions {
   mockMode?: boolean;
@@ -138,6 +139,7 @@ export class GeminiVideoExecutionService {
             thumbnailPath,
             sourceImagePath: sourceImagePath || undefined,
             provider: 'gemini',
+            providerModel: 'Gemini Omni',
             modelUsed: targetModel,
             ratioUsed: targetRatio,
             resolution: '720p',
@@ -276,12 +278,33 @@ export class GeminiVideoExecutionService {
         throw new Error(`Video file integrity check failed: ${fileCheck.error}`);
       }
 
-      // Extract Duration & Poster
-      const durationResult = await VideoDuration.getDuration(destinationPath);
-      const durationSeconds = durationResult?.durationSeconds || completionResult.durationSeconds || 4.0;
+      // Watermark post-processing pipeline
+      let cleanVideoPath = destinationPath;
+      let originalVideoPath: string | undefined = undefined;
+      let watermarkCleaned = false;
+
+      if (!isMock && GeminiPostProcessingService.isAvailable()) {
+        try {
+          const cleanResult = await GeminiPostProcessingService.cleanVideoWatermark(destinationPath, undefined, {
+            ratio: targetRatio,
+          });
+          if (cleanResult.success) {
+            cleanVideoPath = cleanResult.cleanVideoPath;
+            originalVideoPath = cleanResult.originalVideoPath;
+            watermarkCleaned = true;
+            log.info('gemini_video_exec', `Watermark successfully cleaned in ${cleanResult.durationMs}ms`);
+          }
+        } catch (cleanErr) {
+          log.warn('gemini_video_exec', `Watermark post-processing fallback: ${(cleanErr as Error).message}`);
+        }
+      }
+
+      // Extract Duration & Poster (from cleanVideoPath)
+      const durationResult = await VideoDuration.getDuration(cleanVideoPath);
+      const durationSeconds = durationResult?.durationSeconds || completionResult.durationSeconds || 10.0;
       const durationFormatted = durationResult?.durationFormatted || `${durationSeconds.toFixed(1)}s`;
 
-      await FfmpegResolver.extractPoster(destinationPath, thumbnailPath);
+      await FfmpegResolver.extractPoster(cleanVideoPath, thumbnailPath);
 
       currentAttempt.endedAt = new Date().toISOString();
       currentAttempt.submissionState = 'completed';
@@ -294,7 +317,7 @@ export class GeminiVideoExecutionService {
       const completedJob = await JobRepository.updateJob(projectId, jobId, {
         status: 'completed',
         submissionState: 'completed',
-        outputPath: destinationPath,
+        outputPath: cleanVideoPath,
         thumbnailPath,
         sourceImagePath: sourceImagePath || undefined,
         provider: 'gemini',
@@ -305,10 +328,13 @@ export class GeminiVideoExecutionService {
         status: 'completed',
         result: {
           assetId: `gemini_video_${promptId}_${jobId}`,
-          mediaPath: destinationPath,
+          mediaPath: cleanVideoPath,
+          originalMediaPath: originalVideoPath !== cleanVideoPath ? originalVideoPath : undefined,
+          watermarkCleaned,
           thumbnailPath,
           sourceImagePath: sourceImagePath || undefined,
           provider: 'gemini',
+          providerModel: 'Gemini Omni',
           modelUsed: targetModel,
           ratioUsed: targetRatio,
           resolution: '720p',
