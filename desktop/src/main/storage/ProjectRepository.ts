@@ -310,8 +310,25 @@ export class ProjectRepository {
     // Write to temporary file first
     fs.writeFileSync(tmpPath, JSON.stringify(project, null, 2), 'utf-8');
 
-    // Atomic replace
-    fs.renameSync(tmpPath, filePath);
+    // Atomic replace with Windows retry/fallback safeguard
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      try {
+        fs.renameSync(tmpPath, filePath);
+        break;
+      } catch (err: any) {
+        if ((err.code === 'EPERM' || err.code === 'EBUSY' || err.code === 'EACCES') && attempt < 5) {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, attempt * 15);
+        } else {
+          try {
+            fs.copyFileSync(tmpPath, filePath);
+            fs.unlinkSync(tmpPath);
+            break;
+          } catch {
+            throw err;
+          }
+        }
+      }
+    }
 
     try {
       const stat = fs.statSync(filePath);

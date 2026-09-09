@@ -441,7 +441,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                     border: '1px solid var(--border-color)',
                   }}
                 >
-                  {parsedBulkPrompts.map((p, idx) => (
+                  {parsedBulkPrompts.slice(0, 30).map((p, idx) => (
                     <div
                       key={idx}
                       style={{
@@ -459,6 +459,11 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                       </span>
                     </div>
                   ))}
+                  {parsedBulkPrompts.length > 30 && (
+                    <div style={{ color: 'var(--text-muted)', fontSize: '11px', padding: '6px 0', textAlign: 'center' }}>
+                      + {parsedBulkPrompts.length - 30} more scenes assigned...
+                    </div>
+                  )}
                 </div>
               )}
             </div>
