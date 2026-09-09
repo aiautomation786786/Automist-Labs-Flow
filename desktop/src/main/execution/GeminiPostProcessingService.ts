@@ -19,6 +19,7 @@ import { promisify } from 'util';
 import { FfmpegResolver } from '../utils/FfmpegResolver';
 import { AppLogger } from '../utils/AppLogger';
 import { GeminiWatermarkDetector } from './GeminiWatermarkDetector';
+import { WatermarkMasks } from './WatermarkMasks';
 export type { WatermarkBoundingBox } from './GeminiWatermarkDetector';
 
 const execFileAsync = promisify(execFile);
@@ -28,7 +29,7 @@ export interface WatermarkCleanOptions {
   ratio?: string;         // '16:9' | '9:16'
   width?: number;
   height?: number;
-  timeoutMs?: number;     // Defaults to 35000 ms
+  timeoutMs?: number;     // Defaults to 45000 ms
   officialOptOut?: boolean;
 }
 
@@ -39,6 +40,7 @@ export interface WatermarkCleanResult {
   durationMs: number;
   watermarkCleaned?: boolean;
   detectionMethod?: string;
+  reconstructionMethod?: 'reverse_alpha_blending' | 'delogo_fallback';
   error?: string;
 }
 
@@ -140,39 +142,81 @@ export class GeminiPostProcessingService {
     const targetCleanPath = outputCleanPath || videoPath;
 
     const bbox = detection.boundingBox;
-    const filterArg = `delogo=x=${bbox.x}:y=${bbox.y}:w=${bbox.w}:h=${bbox.h}`;
-    const timeoutMs = options.timeoutMs || 35000;
+    const timeoutMs = options.timeoutMs || 45000;
+    const width = detection.videoDimensions.width;
+    const height = detection.videoDimensions.height;
+    const variant = detection.variant ?? (width >= 1080 && height >= 1080 ? '96' : '48');
+    const alphaGain = detection.alphaGain ?? 0.60;
+    const x0 = detection.exactCoordinates?.x0 ?? (bbox.x + 2);
+    const y0 = detection.exactCoordinates?.y0 ?? (bbox.y + 2);
+    const maskPngPath = WatermarkMasks.getMaskPngPath(variant);
+
+    let reconstructionMethod: 'reverse_alpha_blending' | 'delogo_fallback' = 'reverse_alpha_blending';
 
     log.info('gemini_post_process', `Starting watermark removal on: ${videoPath}`, {
-      filter: filterArg,
+      variant,
+      alphaGain,
+      x0,
+      y0,
       method: detection.method,
       confidence: detection.confidence,
       ratio: options.ratio || '16:9',
     });
 
     try {
-      // 1. Run FFmpeg to create the cleaned video
-      await execFileAsync(
-        ffmpegPath,
-        [
-          '-y',
-          '-i', videoPath,
-          '-vf', filterArg,
-          '-c:v', 'libx264',
-          '-crf', '19',
-          '-preset', 'fast',
-          '-c:a', 'copy',
-          tempCleanPath,
-        ],
-        { timeout: timeoutMs }
-      );
+      // 1. Primary Method: Mathematically exact Reverse-Alpha Blending via planar RGB (gbrp)
+      try {
+        const reverseAlphaFilter = `color=c=black:s=${width}x${height}[bg];[bg][1:v]overlay=x=${x0}:y=${y0}:shortest=1[mask];[0:v]format=gbrp[v_rgb];[mask]format=gbrp[m_rgb];[v_rgb][m_rgb]blend=all_expr='if(lte(B,2), A, clip(255*(A-B*${alphaGain.toFixed(2)})/(255-B*${alphaGain.toFixed(2)}), 0, 255))':shortest=1[clean];[clean]format=yuv420p[out]`;
 
-      // 2. Verify temp output file exists and is non-empty
-      if (!fs.existsSync(tempCleanPath) || fs.statSync(tempCleanPath).size === 0) {
-        throw new Error('Cleaned video output was not created or has 0 bytes.');
+        await execFileAsync(
+          ffmpegPath,
+          [
+            '-y',
+            '-i', videoPath,
+            '-loop', '1',
+            '-i', maskPngPath,
+            '-filter_complex', reverseAlphaFilter,
+            '-map', '[out]',
+            '-map', '0:a?',
+            '-c:v', 'libx264',
+            '-preset', 'veryfast',
+            '-crf', '18',
+            '-c:a', 'copy',
+            tempCleanPath,
+          ],
+          { timeout: timeoutMs }
+        );
+
+        if (!fs.existsSync(tempCleanPath) || fs.statSync(tempCleanPath).size === 0) {
+          throw new Error('Reverse-alpha video output was empty.');
+        }
+        reconstructionMethod = 'reverse_alpha_blending';
+      } catch (reverseAlphaErr) {
+        log.warn('gemini_post_process', `Reverse-alpha blending failed, attempting delogo fallback: ${(reverseAlphaErr as Error).message}`);
+        reconstructionMethod = 'delogo_fallback';
+        const delogoFilter = `delogo=x=${bbox.x}:y=${bbox.y}:w=${bbox.w}:h=${bbox.h}`;
+
+        await execFileAsync(
+          ffmpegPath,
+          [
+            '-y',
+            '-i', videoPath,
+            '-vf', delogoFilter,
+            '-c:v', 'libx264',
+            '-crf', '19',
+            '-preset', 'fast',
+            '-c:a', 'copy',
+            tempCleanPath,
+          ],
+          { timeout: timeoutMs }
+        );
+
+        if (!fs.existsSync(tempCleanPath) || fs.statSync(tempCleanPath).size === 0) {
+          throw new Error('Cleaned video output was not created or has 0 bytes.');
+        }
       }
 
-      // 3. If targetCleanPath is the same as videoPath, archive original first
+      // 2. If targetCleanPath is the same as videoPath, archive original first
       if (targetCleanPath === videoPath) {
         if (!fs.existsSync(originalBackupPath)) {
           fs.copyFileSync(videoPath, originalBackupPath);
@@ -182,9 +226,10 @@ export class GeminiPostProcessingService {
       }
 
       const durationMs = Date.now() - startTime;
-      log.info('gemini_post_process', `Watermark removal completed successfully in ${durationMs}ms`, {
+      log.info('gemini_post_process', `Watermark removal completed successfully in ${durationMs}ms (${reconstructionMethod})`, {
         cleanVideoPath: targetCleanPath,
         originalVideoPath: originalBackupPath,
+        reconstructionMethod,
       });
 
       return {
@@ -194,6 +239,7 @@ export class GeminiPostProcessingService {
         durationMs,
         watermarkCleaned: true,
         detectionMethod: detection.method,
+        reconstructionMethod,
       };
     } catch (err) {
       const durationMs = Date.now() - startTime;

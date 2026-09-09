@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { GeminiPostProcessingService } from '../main/execution/GeminiPostProcessingService';
@@ -7,7 +7,7 @@ import { FfmpegResolver } from '../main/utils/FfmpegResolver';
 
 describe('Gemini Watermark Quality & Detection Hardening Suite', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   // 1. Watermark Detection & Bounding-Box Scaling
@@ -110,6 +110,22 @@ describe('Gemini Watermark Quality & Detection Hardening Suite', () => {
         if (fs.existsSync(dummyPath)) fs.unlinkSync(dummyPath);
       }
     });
+
+    it('executes reverse_alpha_blending on valid video with watermark', async () => {
+      const realVideo = 'C:\\Users\\mrand\\AppData\\Local\\GoogleFlowApp\\projects\\proj_49a40c43157d\\videos\\slot_00_slot_533c716d2dcb_job_ecc74aa915e1.mp4';
+      if (!fs.existsSync(realVideo)) return;
+
+      const outputClean = path.join(__dirname, 'test_output_video_cleaned.mp4');
+      try {
+        const res = await GeminiPostProcessingService.cleanVideoWatermark(realVideo, outputClean, { ratio: '16:9' });
+        expect(res.success).toBe(true);
+        expect(res.watermarkCleaned).toBe(true);
+        expect(res.reconstructionMethod).toBe('reverse_alpha_blending');
+        expect(fs.existsSync(outputClean)).toBe(true);
+      } finally {
+        if (fs.existsSync(outputClean)) fs.unlinkSync(outputClean);
+      }
+    }, 25000);
   });
 
   // 4. Robust Error Handling & Malformed Media

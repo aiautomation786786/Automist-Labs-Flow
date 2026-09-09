@@ -17,6 +17,7 @@ import { promisify } from 'util';
 import { FfmpegResolver } from '../utils/FfmpegResolver';
 import { AppLogger } from '../utils/AppLogger';
 import { GeminiImageWatermarkDetector, type ImageWatermarkBoundingBox } from './GeminiImageWatermarkDetector';
+import { WatermarkMasks } from './WatermarkMasks';
 
 const execFileAsync = promisify(execFile);
 const log = new AppLogger({ mirrorToStderr: false });
@@ -36,6 +37,7 @@ export interface ImageWatermarkCleanResult {
   durationMs: number;
   watermarkCleaned: boolean;
   detectionMethod?: string;
+  reconstructionMethod?: 'reverse_alpha_blending' | 'delogo_fallback';
   confidence?: number;
   boundingBox?: ImageWatermarkBoundingBox;
   error?: string;
@@ -128,21 +130,89 @@ export class GeminiImagePostProcessingService {
         log.info('gemini_image_post_process', `Preserved untouched original image at: ${originalBackupPath}`);
       }
 
-      // 2. Execute localized delogo reconstruction
-      const delogoFilter = `delogo=x=${bbox.x}:y=${bbox.y}:w=${bbox.w}:h=${bbox.h}:show=0`;
+      // 2. Execute localized reconstruction
+      // Primary: Mathematically precise in-memory reverse alpha blending on raw pixel buffer
+      // Invariant: Modifies ONLY pixels covered by the watermark, preserving fine textures and background
+      const width = detection.imageDimensions.width;
+      const height = detection.imageDimensions.height;
+      const x0 = detection.exactCoordinates?.x0 ?? bbox.x;
+      const y0 = detection.exactCoordinates?.y0 ?? bbox.y;
+      const variant = detection.variant ?? (Math.max(width, height) > 1500 ? '96' : '48');
+      const alphaGain = detection.alphaGain ?? 0.60;
       const timeoutMs = options.timeoutMs || 15000;
 
-      await execFileAsync(
-        ffmpegPath,
-        [
-          '-y',
-          '-i', originalBackupPath,
-          '-vf', delogoFilter,
-          '-update', '1',
-          tempCleanPath,
-        ],
-        { timeout: timeoutMs }
-      );
+      let reconMethod: 'reverse_alpha_blending' | 'delogo_fallback' = 'reverse_alpha_blending';
+      let reverseAlphaSuccess = false;
+
+      try {
+        const { stdout: rawBuffer } = await execFileAsync(
+          ffmpegPath,
+          [
+            '-y',
+            '-i', originalBackupPath,
+            '-f', 'rawvideo',
+            '-pix_fmt', 'rgb24',
+            '-',
+          ],
+          { encoding: 'buffer' as any, maxBuffer: 150 * 1024 * 1024, timeout: timeoutMs }
+        );
+
+        if (rawBuffer && rawBuffer.length >= width * height * 3) {
+          const { modifiedPixels } = WatermarkMasks.applyReverseAlphaBlend(
+            rawBuffer,
+            width,
+            height,
+            x0,
+            y0,
+            variant,
+            { alphaGain, channels: 3 }
+          );
+          log.info('gemini_image_post_process', `Reverse-alpha reconstructed ${modifiedPixels} pixels under watermark at (${x0}, ${y0}) with gain ${alphaGain}`);
+
+          const tempRawPath = path.join(dir, `${base}_temp_recon_${Date.now()}.raw`);
+          fs.writeFileSync(tempRawPath, rawBuffer);
+          try {
+            await execFileAsync(
+              ffmpegPath,
+              [
+                '-y',
+                '-f', 'rawvideo',
+                '-pix_fmt', 'rgb24',
+                '-s', `${width}x${height}`,
+                '-i', tempRawPath,
+                '-update', '1',
+                tempCleanPath,
+              ],
+              { timeout: timeoutMs }
+            );
+            reverseAlphaSuccess = fs.existsSync(tempCleanPath) && fs.statSync(tempCleanPath).size >= 1000;
+          } finally {
+            if (fs.existsSync(tempRawPath)) {
+              try { fs.unlinkSync(tempRawPath); } catch {}
+            }
+          }
+        }
+      } catch (revErr) {
+        log.warn('gemini_image_post_process', `Reverse-alpha blending failed, falling back to delogo: ${(revErr as Error).message}`);
+      }
+
+      // Safety fallback to delogo if reverse alpha blending did not succeed
+      if (!reverseAlphaSuccess) {
+        reconMethod = 'delogo_fallback';
+        log.warn('gemini_image_post_process', `Applying fallback delogo reconstruction for [x=${bbox.x}, y=${bbox.y}, w=${bbox.w}, h=${bbox.h}]`);
+        const delogoFilter = `delogo=x=${bbox.x}:y=${bbox.y}:w=${bbox.w}:h=${bbox.h}:show=0`;
+        await execFileAsync(
+          ffmpegPath,
+          [
+            '-y',
+            '-i', originalBackupPath,
+            '-vf', delogoFilter,
+            '-update', '1',
+            tempCleanPath,
+          ],
+          { timeout: timeoutMs }
+        );
+      }
 
       // 3. Verify reconstructed file exists and is valid
       if (!fs.existsSync(tempCleanPath)) {
@@ -172,6 +242,7 @@ export class GeminiImagePostProcessingService {
         durationMs,
         watermarkCleaned: true,
         detectionMethod: detection.method,
+        reconstructionMethod: reconMethod,
         confidence: detection.confidence,
         boundingBox: bbox,
       };

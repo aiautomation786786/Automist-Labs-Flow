@@ -35,6 +35,9 @@ export interface ImageWatermarkDetectionResult {
   confidence: number;
   boundingBox: ImageWatermarkBoundingBox;
   imageDimensions: { width: number; height: number };
+  variant?: '48' | '96';
+  alphaGain?: number;
+  exactCoordinates?: { x0: number; y0: number };
 }
 
 export interface DetectImageOptions {
@@ -226,6 +229,9 @@ export class GeminiImageWatermarkDetector {
         confidence: 0.6,
         boundingBox: fallbackBbox,
         imageDimensions: dimensions,
+        variant: '48',
+        alphaGain: 0.60,
+        exactCoordinates: { x0: fallbackBbox.x, y0: fallbackBbox.y },
       };
     }
 
@@ -316,6 +322,9 @@ export class GeminiImageWatermarkDetector {
               h: 52,
             },
             imageDimensions: dimensions,
+            variant: '48',
+            alphaGain: 0.60,
+            exactCoordinates: { x0: globalX, y0: globalY },
           };
         } else {
           log.info('gemini_image_detector', `ZNCC scan peak=${bestZNCC.toFixed(3)} (below threshold 0.68)`);

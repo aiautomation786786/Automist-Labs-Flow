@@ -1,4 +1,4 @@
-﻿/**
+/**
  * GeminiWatermarkDetector – Production-safe multi-tier detection of Gemini video watermarks.
  *
  * Detection Hierarchy:
@@ -32,6 +32,9 @@ export interface WatermarkDetectionResult {
   boundingBox: WatermarkBoundingBox;
   videoDimensions: { width: number; height: number };
   durationSeconds?: number;
+  variant?: '48' | '96';
+  alphaGain?: number;
+  exactCoordinates?: { x0: number; y0: number };
 }
 
 export interface DetectOptions {
@@ -283,6 +286,9 @@ export class GeminiWatermarkDetector {
             boundingBox,
             videoDimensions: dimensions,
             durationSeconds: duration,
+            variant: width >= 1080 && height >= 1080 ? '96' : '48',
+            alphaGain: 0.60,
+            exactCoordinates: { x0: globalX, y0: globalY },
           };
         }
 
@@ -304,6 +310,14 @@ export class GeminiWatermarkDetector {
 
     // TIER 3: Geometry & Aspect-Ratio Derivation
     const geomBox = this.deriveGeometryCoordinates(width, height, options.ratio);
+    const isPortrait = options.ratio === '9:16' || height > width;
+    const geomVariant: '48' | '96' = width >= 1080 && height >= 1080 ? '96' : '48';
+    const scale = isPortrait ? width / 720 : height / 720;
+    const geomSize = Math.round(48 * scale);
+    const geomMargin = Math.round(96 * scale);
+    const x0 = Math.max(0, width - geomMargin - geomSize);
+    const y0 = Math.max(0, height - geomMargin - geomSize);
+
     return {
       detected: true,
       method: 'geometry_derived',
@@ -311,6 +325,9 @@ export class GeminiWatermarkDetector {
       boundingBox: geomBox,
       videoDimensions: dimensions,
       durationSeconds: duration,
+      variant: geomVariant,
+      alphaGain: 0.60,
+      exactCoordinates: { x0, y0 },
     };
   }
 }

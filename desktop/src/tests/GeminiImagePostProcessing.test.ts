@@ -120,6 +120,7 @@ describe('Gemini Image Watermark Quality & Detection Hardening Suite', () => {
         const res = await GeminiImagePostProcessingService.cleanImageWatermark(src169, outputClean, { ratio: '16:9' });
         expect(res.success).toBe(true);
         expect(res.watermarkCleaned).toBe(true);
+        expect(res.reconstructionMethod).toBe('reverse_alpha_blending');
         expect(res.cleanImagePath).toBe(outputClean);
         expect(fs.existsSync(outputClean)).toBe(true);
         expect(fs.existsSync(res.originalImagePath)).toBe(true);
