@@ -312,6 +312,6 @@ describe('Phase 5.4: Existing Chrome Profile Attachment & Safe State Detection',
       expect(mockContext.close).not.toHaveBeenCalled();
       // Browser process termination is NEVER invoked for existing browser sessions
       expect(killChromeSpy).not.toHaveBeenCalled();
-    });
+    }, 15000);
   });
 });

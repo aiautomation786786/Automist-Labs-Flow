@@ -1,4 +1,4 @@
-﻿/**
+/**
  * GeminiPostProcessingService – Production-grade local post-processing watermark pipeline.
  *
  * Responsibilities:
@@ -18,6 +18,8 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { FfmpegResolver } from '../utils/FfmpegResolver';
 import { AppLogger } from '../utils/AppLogger';
+import { GeminiWatermarkDetector } from './GeminiWatermarkDetector';
+export type { WatermarkBoundingBox } from './GeminiWatermarkDetector';
 
 const execFileAsync = promisify(execFile);
 const log = new AppLogger({ mirrorToStderr: false });
@@ -27,6 +29,7 @@ export interface WatermarkCleanOptions {
   width?: number;
   height?: number;
   timeoutMs?: number;     // Defaults to 35000 ms
+  officialOptOut?: boolean;
 }
 
 export interface WatermarkCleanResult {
@@ -34,6 +37,8 @@ export interface WatermarkCleanResult {
   cleanVideoPath: string;
   originalVideoPath: string;
   durationMs: number;
+  watermarkCleaned?: boolean;
+  detectionMethod?: string;
   error?: string;
 }
 
@@ -106,6 +111,26 @@ export class GeminiPostProcessingService {
       };
     }
 
+    // Run multi-tier watermark detection
+    const detection = await GeminiWatermarkDetector.detect(videoPath, {
+      ratio: options.ratio,
+      width: options.width,
+      height: options.height,
+      officialOptOut: options.officialOptOut,
+    });
+
+    if (!detection.detected) {
+      log.info('gemini_post_process', `Watermark not detected on ${videoPath} (${detection.method}); skipping delogo to preserve pristine source.`);
+      return {
+        success: true,
+        cleanVideoPath: videoPath,
+        originalVideoPath: videoPath,
+        durationMs: Date.now() - startTime,
+        watermarkCleaned: false,
+        detectionMethod: detection.method,
+      };
+    }
+
     const dir = path.dirname(videoPath);
     const ext = path.extname(videoPath);
     const base = path.basename(videoPath, ext);
@@ -114,12 +139,14 @@ export class GeminiPostProcessingService {
     const tempCleanPath = outputCleanPath || path.join(dir, `${base}_clean_tmp${ext}`);
     const targetCleanPath = outputCleanPath || videoPath;
 
-    const bbox = this.getWatermarkBoundingBox(options.ratio, options.width, options.height);
+    const bbox = detection.boundingBox;
     const filterArg = `delogo=x=${bbox.x}:y=${bbox.y}:w=${bbox.w}:h=${bbox.h}`;
     const timeoutMs = options.timeoutMs || 35000;
 
     log.info('gemini_post_process', `Starting watermark removal on: ${videoPath}`, {
       filter: filterArg,
+      method: detection.method,
+      confidence: detection.confidence,
       ratio: options.ratio || '16:9',
     });
 
@@ -165,6 +192,8 @@ export class GeminiPostProcessingService {
         cleanVideoPath: targetCleanPath,
         originalVideoPath: fs.existsSync(originalBackupPath) ? originalBackupPath : videoPath,
         durationMs,
+        watermarkCleaned: true,
+        detectionMethod: detection.method,
       };
     } catch (err) {
       const durationMs = Date.now() - startTime;
