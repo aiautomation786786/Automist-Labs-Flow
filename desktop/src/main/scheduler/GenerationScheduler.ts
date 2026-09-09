@@ -31,6 +31,7 @@ import { WorkerPool } from './WorkerPool';
 import { ProfileWorker } from './ProfileWorker';
 import { ImageExecutionService, type ExecutionOptions } from '../execution/ImageExecutionService';
 import { VideoExecutionService } from '../execution/VideoExecutionService';
+import { GeminiVideoExecutionService } from '../execution/GeminiVideoExecutionService';
 import { CreditFailureDetector } from '../engine/CreditFailureDetector';
 import { generationEventBus } from '../events/GenerationEventBus';
 import { AppLogger } from '../utils/AppLogger';
@@ -47,6 +48,9 @@ const MANUAL_ACTION_KEYWORDS = [
   'model verification failed',
   'aspect ratio verification failed',
   'quota',
+  'safety_block',
+  'safety guidelines',
+  'content policy',
 ];
 
 export class GenerationScheduler {
@@ -94,6 +98,7 @@ export class GenerationScheduler {
           projectId,
           promptId: slot.promptId,
           promptType: slot.type,
+          provider: slot.provider || project.settings.provider || 'flow',
           slotIndex: slot.slotIndex,
           sourceImagePath: slot.sourceImagePath,
           maxRetries: project.settings.maxRetries,
@@ -223,6 +228,7 @@ export class GenerationScheduler {
       projectId,
       promptId: slot.promptId,
       promptType: slot.type,
+      provider: slot.provider || project.settings.provider || 'flow',
       slotIndex: slot.slotIndex,
       sourceImagePath: slot.sourceImagePath,
       maxRetries: project.settings.maxRetries,
@@ -413,7 +419,18 @@ export class GenerationScheduler {
    */
   private async executeJobOnWorker(worker: ProfileWorker, job: GenerationJobEntity): Promise<void> {
     try {
-      if (job.promptType === 'image') {
+      const project = await ProjectRepository.get(job.projectId);
+      const isGemini =
+        job.provider === 'gemini' ||
+        project?.settings.provider === 'gemini' ||
+        (project?.settings.generationMode as string)?.startsWith('gemini');
+
+      if (isGemini) {
+        await GeminiVideoExecutionService.execute(worker, job, {
+          ...this.executionOptions,
+          concurrencyLevel: Math.max(1, this.workerPool.busyCount),
+        });
+      } else if (job.promptType === 'image') {
         await ImageExecutionService.execute(worker, job, {
           ...this.executionOptions,
           concurrencyLevel: Math.max(1, this.workerPool.busyCount),

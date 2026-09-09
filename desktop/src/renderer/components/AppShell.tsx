@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { ProjectsScreen } from '../screens/ProjectsScreen';
 import { NewProjectScreen } from '../screens/NewProjectScreen';
 import { GenerationStudioScreen, type GenerationMode } from '../screens/GenerationStudioScreen';
+import { GeminiVideoStudioScreen, type GeminiStudioMode } from '../screens/GeminiVideoStudioScreen';
 import { WorkspaceScreen } from '../screens/WorkspaceScreen';
 import { ProfilesScreen } from '../screens/ProfilesScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
@@ -11,6 +12,7 @@ import {
   VideoIcon,
   LayersIcon,
   ClapperboardIcon,
+  SparklesIcon,
   UsersIcon,
   SettingsIcon,
 } from './Icons';
@@ -24,6 +26,7 @@ type View =
   | { type: 'bulk_video' }
   | { type: 'image_to_video' }
   | { type: 'bulk_image_to_video' }
+  | { type: 'gemini_video'; initialMode?: GeminiStudioMode }
   | { type: 'new_generation'; initialMode?: GenerationMode }
   | { type: 'new_project' }
   | { type: 'workspace'; projectId: string }
@@ -146,6 +149,21 @@ export const AppShell: React.FC = () => {
           badgeBg: 'rgba(139, 92, 246, 0.15)',
           isActive: currentView.type === 'bulk_image_to_video' || (currentView.type === 'new_generation' && currentView.initialMode === 'bulk_image_to_video'),
           onClick: () => setCurrentView({ type: 'bulk_image_to_video' }),
+        },
+      ],
+    },
+    {
+      title: 'GEMINI VIDEO',
+      items: [
+        {
+          id: 'gemini_video',
+          label: 'Gemini Video Studio',
+          icon: <SparklesIcon size={16} />,
+          badge: 'Veo / Omni',
+          badgeColor: '#60a5fa',
+          badgeBg: 'rgba(59, 130, 246, 0.15)',
+          isActive: currentView.type === 'gemini_video',
+          onClick: () => setCurrentView({ type: 'gemini_video' }),
         },
       ],
     },
@@ -394,6 +412,15 @@ export const AppShell: React.FC = () => {
 
         {currentView.type === 'new_project' && (
           <NewProjectScreen
+            onProjectCreated={(projectId) => setCurrentView({ type: 'workspace', projectId })}
+            onCancel={() => setCurrentView({ type: 'projects' })}
+            onNavigateProfiles={() => setCurrentView({ type: 'profiles' })}
+          />
+        )}
+
+        {currentView.type === 'gemini_video' && (
+          <GeminiVideoStudioScreen
+            initialMode={currentView.initialMode || 'text_to_video'}
             onProjectCreated={(projectId) => setCurrentView({ type: 'workspace', projectId })}
             onCancel={() => setCurrentView({ type: 'projects' })}
             onNavigateProfiles={() => setCurrentView({ type: 'profiles' })}

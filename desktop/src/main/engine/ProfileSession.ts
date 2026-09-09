@@ -853,6 +853,7 @@ if ($targetPids.Count -gt 0) {
     }
 
     const jobPage = await this.context.newPage();
+    await jobPage.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
 
     // Determine the correct base Flow URL — NEVER use this.flowUrl directly since
     // it may point to a specific project page (flow.google.com/project/...) where

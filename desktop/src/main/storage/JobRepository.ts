@@ -25,6 +25,7 @@ export interface CreateJobParams {
   projectId: string;
   promptId: string;
   promptType: 'image' | 'video';
+  provider?: import('../../shared/types').GenerationProvider;
   slotIndex: number;
   sourceImagePath?: string;
   maxRetries?: number;
@@ -54,6 +55,7 @@ export class JobRepository {
         projectId: params.projectId,
         promptId: params.promptId,
         promptType: params.promptType,
+        provider: params.provider,
         slotIndex: params.slotIndex,
         sourceImagePath: params.sourceImagePath,
         status: 'pending',
@@ -62,6 +64,7 @@ export class JobRepository {
         maxRetries: params.maxRetries ?? 2,
         metadata: {
           ...(params.metadata ?? {}),
+          ...(params.provider ? { provider: params.provider } : {}),
           ...(params.sourceImagePath ? { sourceImagePath: params.sourceImagePath } : {}),
         },
       };

@@ -495,6 +495,20 @@ export type PromptSlotStatus =
   | 'failed'
   | 'cancelled';
 
+// ---------------------------------------------------------------------------
+// Provider & Gemini Types
+// ---------------------------------------------------------------------------
+
+export type GenerationProvider = 'flow' | 'gemini';
+
+export type GeminiAspectRatio = '16:9' | '9:16';
+
+export type GeminiGenerationMode =
+  | 'gemini_text_to_video'
+  | 'gemini_image_to_video'
+  | 'gemini_bulk_text_to_video'
+  | 'gemini_bulk_image_to_video';
+
 /**
  * Represents the immutable result of a completed generation.
  */
@@ -503,6 +517,7 @@ export interface SlotMediaResult {
   mediaPath: string;           // Absolute path to local image / video
   thumbnailPath?: string;      // Local thumbnail path
   sourceImagePath?: string;    // Optional path to source image used for Image-to-Video
+  provider?: GenerationProvider;// 'flow' | 'gemini' (defaults to 'flow')
   width?: number;
   height?: number;
   durationSeconds?: number;
@@ -518,8 +533,8 @@ export interface SlotMediaResult {
   completionTime?: string;     // ISO 8601
   totalElapsedTimeMs?: number; // Total ms elapsed
   concurrencyLevel?: number;   // Concurrently active jobs during execution
-  modelUsed: string;           // e.g. "Nano Banana 2"
-  ratioUsed: string;           // e.g. "16:9"
+  modelUsed: string;           // e.g. "Nano Banana 2", "Gemini Omni"
+  ratioUsed: string;           // e.g. "16:9", "9:16"
   quantityUsed?: string;        // e.g. "x1"
   completedAt: string;         // ISO 8601
   fileSizeBytes: number;
@@ -550,7 +565,9 @@ export interface PromptSlotEntity {
   projectId: string;
   /** Content generation type */
   type: 'image' | 'video';
-  /** The prompt text to be entered into Google Flow */
+  /** Generation provider: 'flow' or 'gemini' (defaults to 'flow') */
+  provider?: GenerationProvider;
+  /** The prompt text to be entered into Google Flow or Gemini */
   promptText: string;
   /** Optional source image path for Image-to-Video generation */
   sourceImagePath?: string;
@@ -574,14 +591,16 @@ export interface PromptSlotEntity {
  * Configuration options for a generation project.
  */
 export interface ProjectSettings {
+  provider?: GenerationProvider;
   imageRatio: SupportedAspectRatio;
   videoRatio: string;
+  geminiAspectRatio?: GeminiAspectRatio;
   processingOrder: ProcessingOrder;
   autoRetry: boolean;
   maxRetries: number;
   imageDownloadQuality?: 'original' | '2k';
   videoDownloadQuality?: 'original' | '1080p';
-  generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'image_to_video' | 'bulk_image_to_video' | 'custom';
+  generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'image_to_video' | 'bulk_image_to_video' | 'custom' | GeminiGenerationMode;
   imageModel?: string;
   videoModel?: string;
   videoResolution?: string;
@@ -608,6 +627,7 @@ export type FailureClassification =
   | 'credit_exhausted'
   | 'quota_exhausted'
   | 'auth_required'
+  | 'safety_block'
   | 'flow_generation_error'
   | 'timeout'
   | 'browser_error'
@@ -715,6 +735,7 @@ export interface GenerationJobEntity {
   projectId: string;
   promptId: string;
   promptType: 'image' | 'video';
+  provider?: GenerationProvider;
   slotIndex: number;
   status: JobStatus;
   profileId?: string;
@@ -781,20 +802,22 @@ export interface AppSettings {
 export interface CreateProjectParams {
   name: string;
   campaignTag?: string;
+  provider?: GenerationProvider;
   imageRatio?: SupportedAspectRatio;
   videoRatio?: string;
+  geminiAspectRatio?: GeminiAspectRatio;
   processingOrder?: ProcessingOrder;
   autoRetry?: boolean;
   maxRetries?: number;
   imageDownloadQuality?: 'original' | '2k';
   videoDownloadQuality?: 'original' | '1080p';
-  generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'image_to_video' | 'bulk_image_to_video' | 'custom';
+  generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'image_to_video' | 'bulk_image_to_video' | 'custom' | GeminiGenerationMode;
   imageModel?: string;
   videoModel?: string;
   videoResolution?: string;
   videoDuration?: string;
   selectedProfileIds?: string[];
-  prompts: Array<{ text: string; type: 'image' | 'video'; sourceImagePath?: string }>;
+  prompts: Array<{ text: string; type: 'image' | 'video'; sourceImagePath?: string; provider?: GenerationProvider }>;
 }
 
 export interface SchedulerCapacityMetrics {

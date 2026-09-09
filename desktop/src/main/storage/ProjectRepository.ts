@@ -17,8 +17,7 @@ import type {
   ProjectEntity,
   PromptSlotEntity,
   ProjectSettings,
-  SupportedAspectRatio,
-  ProcessingOrder,
+  CreateProjectParams,
 } from '../../shared/types';
 import { AssetManager } from './AssetManager';
 import { fileMutex } from './FileMutex';
@@ -26,24 +25,7 @@ import { AppLogger } from '../utils/AppLogger';
 
 const logger = new AppLogger({ mirrorToStderr: false });
 
-export interface CreateProjectParams {
-  name: string;
-  campaignTag?: string;
-  imageRatio?: SupportedAspectRatio;
-  videoRatio?: string;
-  processingOrder?: ProcessingOrder;
-  autoRetry?: boolean;
-  maxRetries?: number;
-  imageDownloadQuality?: 'original' | '2k';
-  videoDownloadQuality?: 'original' | '1080p';
-  generationMode?: 'single_image' | 'single_video' | 'bulk_image' | 'bulk_video' | 'image_to_video' | 'bulk_image_to_video' | 'custom';
-  imageModel?: string;
-  videoModel?: string;
-  videoResolution?: string;
-  videoDuration?: string;
-  selectedProfileIds?: string[];
-  prompts: Array<{ text: string; type: 'image' | 'video'; sourceImagePath?: string }>;
-}
+export type { CreateProjectParams };
 
 export class ProjectRepository {
   private static cache = new Map<string, { entity: ProjectEntity; mtimeMs: number }>();
@@ -97,6 +79,7 @@ export class ProjectRepository {
       promptId: `slot_${crypto.randomBytes(6).toString('hex')}`,
       projectId,
       type: p.type,
+      provider: p.provider || params.provider || 'flow',
       promptText: p.text.trim(),
       sourceImagePath: p.sourceImagePath,
       status: 'draft',
@@ -105,8 +88,10 @@ export class ProjectRepository {
     }));
 
     const settings: ProjectSettings = {
+      provider: params.provider || 'flow',
       imageRatio: params.imageRatio ?? '16:9',
       videoRatio: params.videoRatio ?? '16:9',
+      geminiAspectRatio: params.geminiAspectRatio ?? (params.videoRatio === '9:16' ? '9:16' : '16:9'),
       processingOrder: params.processingOrder ?? 'images_first',
       autoRetry: params.autoRetry ?? true,
       maxRetries: params.maxRetries ?? 2,

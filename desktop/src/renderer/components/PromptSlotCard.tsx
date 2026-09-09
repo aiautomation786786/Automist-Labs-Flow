@@ -146,6 +146,22 @@ export const PromptSlotCardComponent: React.FC<PromptSlotCardProps> = ({
               I2V
             </span>
           )}
+          {(slot.provider === 'gemini' || slot.result?.provider === 'gemini') && (
+            <span
+              style={{
+                fontSize: '10.5px',
+                padding: '1px 6px',
+                borderRadius: '4px',
+                backgroundColor: 'rgba(59, 130, 246, 0.12)',
+                color: '#60a5fa',
+                border: '1px solid rgba(59, 130, 246, 0.28)',
+                fontWeight: 600,
+              }}
+              title="Generated via Google Gemini Web"
+            >
+              Gemini
+            </span>
+          )}
           {slot.result?.modelUsed && (
             <span
               style={{
