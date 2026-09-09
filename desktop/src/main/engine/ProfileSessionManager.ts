@@ -346,9 +346,9 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       return;
     }
 
-    appLogger.info('session_manager', `Auto-starting ${profiles.length} background profile sessions...`);
+    appLogger.info('session_manager', `Auto-starting ${profiles.length} background profile sessions in parallel...`);
 
-    for (const config of profiles) {
+    const startTasks = profiles.map(async (config) => {
       try {
         let session = this.sessions.get(config.profileId);
         if (!session) {
@@ -361,15 +361,32 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
           this.attachSessionEvents(session);
         }
 
-        if (session.isReady || session.status === 'busy') continue;
+        if (session.isReady || session.status === 'busy') return;
 
-        // Auto-start in background off-screen mode
-        await session.start({ headless: false, background: true });
-        appLogger.info('session_manager', `Profile ${config.profileId} auto-start finished with status: ${session.status}`);
+        // Auto-start in background off-screen mode with bounded retry
+        let attempts = 0;
+        const maxAttempts = 2;
+        while (attempts < maxAttempts) {
+          attempts++;
+          try {
+            await session.start({ headless: false, background: true });
+            appLogger.info('session_manager', `Profile ${config.profileId} auto-start finished with status: ${session.status}`);
+            break;
+          } catch (err) {
+            if (attempts >= maxAttempts) {
+              throw err;
+            }
+            appLogger.warn('session_manager', `Retry ${attempts}/${maxAttempts} auto-starting profile ${config.profileId}: ${(err as Error).message}`);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+        }
       } catch (err) {
         appLogger.warn('session_manager', `Auto-start notice for ${config.profileId}: ${(err as Error).message}`);
       }
-    }
+    });
+
+    await Promise.allSettled(startTasks);
+    appLogger.info('session_manager', 'All background profile auto-start attempts completed');
   }
 
   /**

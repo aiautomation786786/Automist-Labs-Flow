@@ -192,6 +192,28 @@ export class FlowAuthDetector {
         return { state: 'captcha', url, detectedEmail: null, locale: null };
       }
 
+      // Check for explicit session expiration prompts
+      const isSessionExpired = await safeEvaluate(
+        page,
+        () => {
+          const bodyText = document.body?.innerText ?? '';
+          return (
+            bodyText.includes('Your session has expired') ||
+            bodyText.includes('Session expired') ||
+            bodyText.includes('Sign in to continue') ||
+            bodyText.includes("Verify it's you") ||
+            bodyText.includes('Please sign in again')
+          );
+        },
+        false,
+        2500,
+      );
+
+      if (isSessionExpired) {
+        log.info('auth_detector', 'Session expiration prompt detected on Flow page');
+        return { state: 'login_required', url, detectedEmail: null, locale: extractLocale(url) };
+      }
+
       // Check if we're in a project or the Flow studio — both mean authenticated
       const isFlowAuthenticated = await safeEvaluate(
         page,
@@ -279,6 +301,21 @@ export class FlowAuthDetector {
     profileId?: string,
   ): Promise<FlowAuthCheckResult> {
     const log = profileId ? logger.forProfile(profileId) : logger;
+
+    // Fast-path: if page is already on an active project canvas, avoid reloading
+    try {
+      const currentUrl = page.url ? page.url() : '';
+      if (FLOW_PROJECT_URL_PATTERN.test(currentUrl)) {
+        const directCheck = await this.check(page, profileId);
+        if (directCheck.state === 'authenticated') {
+          log.info('auth_detector', 'Fast-path: already on active project canvas', { currentUrl });
+          return directCheck;
+        }
+      }
+    } catch {
+      // Fall through to standard navigation
+    }
+
     log.info('auth_detector', `Navigating to Flow`, { flowUrl });
 
     try {

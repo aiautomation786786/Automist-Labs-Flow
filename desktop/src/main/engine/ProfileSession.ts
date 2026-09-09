@@ -103,6 +103,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   private page: Page | null = null;
   private automationSession: FlowAutomationSession | null = null;
   private isExistingBrowser = false;
+  private postLoginWatcherTimer: NodeJS.Timeout | null = null;
 
   // ---- Auth / locale (discovered at runtime) ------------------------------
   private detectedEmail: string | null = null;
@@ -305,6 +306,9 @@ public class Win32WindowRestorer {
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+  [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 }
 "@ -ErrorAction SilentlyContinue
@@ -332,7 +336,13 @@ if ($targetPids.Count -gt 0) {
     $procId = 0
     [Win32WindowRestorer]::GetWindowThreadProcessId($hwnd, [ref]$procId) | Out-Null
     if ($targetPids -contains $procId) {
+      # Clear WS_EX_TOOLWINDOW (0x80), add WS_EX_APPWINDOW (0x40000)
+      $exStyle = [Win32WindowRestorer]::GetWindowLong($hwnd, -20)
+      $newExStyle = ($exStyle -band (-bnot 0x00000080)) -bor 0x00040000
+      [Win32WindowRestorer]::SetWindowLong($hwnd, -20, $newExStyle) | Out-Null
       [Win32WindowRestorer]::ShowWindow($hwnd, 5) | Out-Null # SW_SHOW = 5
+      # SWP_SHOWWINDOW = 0x0040
+      [Win32WindowRestorer]::SetWindowPos($hwnd, [IntPtr]::Zero, 100, 100, 1280, 900, 0x0040) | Out-Null
     }
     return $true
   }, [IntPtr]::Zero) | Out-Null
@@ -351,6 +361,7 @@ if ($targetPids.Count -gt 0) {
           }
         }
 
+        this.startPostLoginWatcher();
         return { pid, cdpPort: this.config.cdpPort, userDataDir: this.config.userDataDir };
 
       }
@@ -448,6 +459,7 @@ if ($targetPids.Count -gt 0) {
       this.chromeProcess = null;
     });
 
+    this.startPostLoginWatcher();
     return { pid, cdpPort, userDataDir };
   }
 
@@ -455,6 +467,86 @@ if ($targetPids.Count -gt 0) {
   isProcessAlive(): boolean {
     if (!this.chromeProcess) return false;
     return !this.chromeProcess.killed && this.chromeProcess.exitCode === null;
+  }
+
+  /**
+   * Starts a background watcher that monitors the login page for successful sign-in.
+   * As soon as the user logs in and reaches an authenticated Flow state, the window
+   * is automatically hidden into the background, status is set to 'ready', and events emitted.
+   */
+  startPostLoginWatcher(): void {
+    if (this.postLoginWatcherTimer) return;
+
+    this.log.info('auth_watcher', 'Starting post-login background auto-hide watcher');
+
+    const startTime = Date.now();
+    const MAX_WATCH_TIME_MS = 15 * 60 * 1000; // 15 minutes max
+
+    this.postLoginWatcherTimer = setInterval(async () => {
+      // 1. Terminate watcher if session stopped, killed, or timed out
+      if (!this.isProcessAlive() || Date.now() - startTime > MAX_WATCH_TIME_MS) {
+        this.stopPostLoginWatcher();
+        return;
+      }
+
+      // If already ready, no need to keep watching
+      if (this._status === 'ready') {
+        this.stopPostLoginWatcher();
+        return;
+      }
+
+      try {
+        // Ensure connected to browser
+        let page = this.page;
+        if (!page || page.isClosed() || !this.browser || !this.browser.isConnected()) {
+          try {
+            page = await this.connectToRunningBrowser();
+          } catch {
+            return; // Chrome might still be initializing
+          }
+        }
+
+        const currentUrl = page.url();
+        // If still on Google accounts sign-in / password entry, keep waiting quietly
+        if (currentUrl.includes('accounts.google.com') || currentUrl.includes('myaccount.google.com')) {
+          return;
+        }
+
+        // Check auth status
+        const authResult = await FlowAuthDetector.check(page, this.profileId);
+        if (authResult.state === 'authenticated') {
+          this.log.info('auth_watcher', 'Successful authentication detected! Auto-hiding window.', {
+            detectedEmail: authResult.detectedEmail,
+            locale: authResult.locale,
+          });
+
+          this.flowUrl = authResult.url;
+          this.detectedEmail = authResult.detectedEmail ?? this.detectedEmail;
+          this.setStatus('ready');
+          this.emit('status_change', this.getSnapshot());
+
+          // Automatically hide the window from the desktop and taskbar
+          await this.hideWindowFromTaskbar(page).catch(() => {});
+
+          this.stopPostLoginWatcher();
+        }
+      } catch (err) {
+        this.log.debug('auth_watcher', `Post-login check notice: ${(err as Error).message}`);
+      }
+    }, 1500);
+
+    if (this.postLoginWatcherTimer && typeof this.postLoginWatcherTimer.unref === 'function') {
+      this.postLoginWatcherTimer.unref();
+    }
+  }
+
+  /** Stops the post-login background watcher. */
+  stopPostLoginWatcher(): void {
+    if (this.postLoginWatcherTimer) {
+      clearInterval(this.postLoginWatcherTimer);
+      this.postLoginWatcherTimer = null;
+      this.log.info('auth_watcher', 'Stopped post-login background watcher');
+    }
   }
 
   /**
@@ -659,6 +751,7 @@ if ($targetPids.Count -gt 0) {
       case 'authenticated':
         this.setStatus('ready');
         this.emit('status_change', this.getSnapshot());
+        this.stopPostLoginWatcher();
         this.log.info('auth_verify', 'Flow authenticated and ready', {
           email: this.detectedEmail,
           locale: result.locale,
@@ -900,7 +993,7 @@ if ($targetPids.Count -gt 0) {
       }
     }
 
-    // Step 2: Win32 ShowWindow(hwnd, SW_HIDE=0) via PowerShell Base64 EncodedCommand
+    // Step 2: Win32 ShowWindow(hwnd, SW_HIDE=0) + WS_EX_TOOLWINDOW via PowerShell Base64 EncodedCommand
     if (process.platform !== 'win32') return;
 
     try {
@@ -915,6 +1008,9 @@ public class Win32WindowHider {
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+  [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 }
 "@ -ErrorAction SilentlyContinue
@@ -948,7 +1044,13 @@ if ($targetPids.Count -gt 0) {
     $procId = 0
     [Win32WindowHider]::GetWindowThreadProcessId($hwnd, [ref]$procId) | Out-Null
     if ($targetPids -contains $procId) {
+      # GWL_EXSTYLE = -20; WS_EX_TOOLWINDOW = 0x80; WS_EX_APPWINDOW = 0x40000
+      $exStyle = [Win32WindowHider]::GetWindowLong($hwnd, -20)
+      $newExStyle = ($exStyle -bor 0x00000080) -band (-bnot 0x00040000)
+      [Win32WindowHider]::SetWindowLong($hwnd, -20, $newExStyle) | Out-Null
       [Win32WindowHider]::ShowWindow($hwnd, 0) | Out-Null # SW_HIDE = 0
+      # SWP_NOACTIVATE = 0x0010; SWP_HIDEWINDOW = 0x0080; SWP_NOMOVE = 0x0002; SWP_NOSIZE = 0x0001
+      [Win32WindowHider]::SetWindowPos($hwnd, [IntPtr]::Zero, -32000, -32000, 0, 0, 0x0093) | Out-Null
     }
     return $true
   }, [IntPtr]::Zero) | Out-Null
@@ -956,17 +1058,20 @@ if ($targetPids.Count -gt 0) {
 `.trim();
 
       const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
-      exec(
-        `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand ${encoded}`,
-        { timeout: 8000, windowsHide: true },
-        (err) => {
-          if (!err) {
-            this.log.info('session', 'Chrome window hidden from taskbar via Win32 EnumWindows + SW_HIDE');
-          } else {
-            this.log.debug('session', `Win32 hide notice: ${err.message?.substring(0, 120)}`);
+      await new Promise<void>((resolve) => {
+        exec(
+          `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand ${encoded}`,
+          { timeout: 8000, windowsHide: true },
+          (err) => {
+            if (!err) {
+              this.log.info('session', 'Chrome window hidden from taskbar via Win32 EnumWindows + SW_HIDE');
+            } else {
+              this.log.debug('session', `Win32 hide notice: ${err.message?.substring(0, 120)}`);
+            }
+            resolve();
           }
-        }
-      );
+        );
+      });
     } catch (psErr) {
       this.log.debug('session', `Win32 hide notice: ${(psErr as Error).message?.substring(0, 120)}`);
     }
@@ -1015,8 +1120,8 @@ if ($targetPids.Count -gt 0) {
       // Headless mode for CI/testing. Note: Chrome 112+ uses --headless=new.
       flags.push('--headless=new');
     } else if (background) {
-      // Off-screen headed mode: Keeps full WebGL/Canvas/DOM rendering while running unobtrusively in background
-      flags.push('--window-position=-2400,-2400');
+      // Off-screen headed mode: Keeps full WebGL/Canvas/DOM rendering while running completely off-screen
+      flags.push('--window-position=-32000,-32000');
     }
 
     this.log.info('chrome_launch', 'Spawning Chrome', {
@@ -1035,6 +1140,7 @@ if ($targetPids.Count -gt 0) {
       stdio: ['ignore', 'ignore', 'pipe'],
       // IMPORTANT: never use shell: true — prevents cmd.exe injection on Windows
       shell: false,
+      windowsHide: background,
     });
 
     if (!chromeProcess.pid) {
@@ -1044,6 +1150,11 @@ if ($targetPids.Count -gt 0) {
     this.chromeProcess = chromeProcess;
     this.launchedAt = Date.now();
     this.setStatus('chrome_launched');
+
+    // Immediately enforce Win32 hidden window and toolwindow attributes on Windows
+    if (background && process.platform === 'win32') {
+      this.hideWindowFromTaskbar().catch(() => {});
+    }
 
     this.log.info('chrome_launch', 'Chrome spawned', { pid: chromeProcess.pid, cdpPort });
 
@@ -1180,16 +1291,19 @@ if ($targetPids.Count -gt 0) {
     );
 
     this.flowUrl = result.url;
-    this.detectedEmail = result.detectedEmail;
+    this.detectedEmail = result.detectedEmail ?? this.detectedEmail;
 
     switch (result.state) {
       case 'authenticated':
         this.setStatus('ready');
         this.emit('status_change', this.getSnapshot());
+        this.stopPostLoginWatcher();
         this.log.info('auth', 'Flow authenticated and ready', {
           email: this.detectedEmail,
           locale: result.locale,
         });
+        // Ensure the Chrome window is hidden from taskbar and off-screen
+        await this.hideWindowFromTaskbar(this.page).catch(() => {});
         break;
 
       case 'login_required':
@@ -1230,6 +1344,8 @@ if ($targetPids.Count -gt 0) {
   // ---------------------------------------------------------------------------
 
   private async cleanupResources(): Promise<void> {
+    this.stopPostLoginWatcher();
+
     // If connected to an existing browser, close ONLY our dedicated Flow tab
     if (this.isExistingBrowser) {
       this.log.info('session', 'Detaching from existing Chrome session (preserving existing tabs & browser process)');
@@ -1254,6 +1370,8 @@ if ($targetPids.Count -gt 0) {
   }
 
   private async cleanupPlaywrightObjects(): Promise<void> {
+    this.stopPostLoginWatcher();
+
     // Close context with timeout (which closes all pages)
     if (this.context) {
       try {
