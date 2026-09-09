@@ -590,7 +590,11 @@ async function runRuntimeValidation() {
   console.log(`[Report] Saved results to ${reportPath}`);
 }
 
-runRuntimeValidation().catch((err) => {
-  console.error('Fatal runner error:', err);
-  process.exit(1);
-});
+runRuntimeValidation()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error('Fatal runner error:', err);
+    process.exit(1);
+  });
