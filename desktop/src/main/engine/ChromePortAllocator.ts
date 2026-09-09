@@ -73,7 +73,7 @@ export class ChromePortAllocator {
    *
    * @throws Error if no free port is found in the configured range.
    */
-  async allocate(profileId: string): Promise<number> {
+  async allocate(profileId: string, preferredPort?: number): Promise<number> {
     // If this profile already has a port, return it (idempotent).
     const existing = this.allocations.get(profileId);
     if (existing) {
@@ -87,6 +87,31 @@ export class ChromePortAllocator {
     const usedPorts = new Set(
       Array.from(this.allocations.values()).map((a) => a.port),
     );
+
+    // If preferredPort is provided, valid, not claimed, and free, prioritize it
+    if (
+      preferredPort &&
+      preferredPort >= this.portStart &&
+      preferredPort <= this.portEnd &&
+      !usedPorts.has(preferredPort)
+    ) {
+      const free = await isPortFree(preferredPort);
+      if (free) {
+        const allocation: AllocatedPort = {
+          port: preferredPort,
+          profileId,
+          allocatedAt: new Date().toISOString(),
+        };
+        this.allocations.set(profileId, allocation);
+
+        appLogger.info('port_allocator', `Allocated preferred CDP port`, {
+          profileId,
+          port: preferredPort,
+        });
+
+        return preferredPort;
+      }
+    }
 
     for (let port = this.portStart; port <= this.portEnd; port++) {
       if (usedPorts.has(port)) {

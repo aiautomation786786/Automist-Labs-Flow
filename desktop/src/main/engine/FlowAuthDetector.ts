@@ -225,8 +225,9 @@ export class FlowAuthDetector {
           const projectLink = document.querySelector('a[href*="/project/"]');
           const isOnProjectPage = window.location.pathname.includes('/project/');
           const hasAccountButton = !!document.querySelector('[aria-label*="Google Account"], [aria-label*="@"]');
+          const hasNewProjectButton = !!document.querySelector('.new-project-button, [class*="new-project"]');
 
-          return !!(sidebar || promptInput || projectLink || isOnProjectPage || hasAccountButton);
+          return !!(sidebar || promptInput || projectLink || isOnProjectPage || hasAccountButton || hasNewProjectButton);
         },
         false,
         2500,

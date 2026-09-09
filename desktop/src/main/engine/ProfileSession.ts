@@ -1283,13 +1283,22 @@ if ($targetPids.Count -gt 0) {
       throw new Error('No page available for auth check.');
     }
 
-    const result = await FlowAuthDetector.navigateAndCheck(
+    let result = await FlowAuthDetector.navigateAndCheck(
       this.page,
       this.config.flowUrlLocale
         ? `https://labs.google${this.config.flowUrlLocale}`
         : FLOW_BASE_URL,
       this.profileId,
     );
+
+    if (result.state === 'loading') {
+      const startPoll = Date.now();
+      while (Date.now() - startPoll < 5000) {
+        await delay(800);
+        result = await FlowAuthDetector.check(this.page, this.profileId);
+        if (result.state !== 'loading') break;
+      }
+    }
 
     this.flowUrl = result.url;
     this.detectedEmail = result.detectedEmail ?? this.detectedEmail;

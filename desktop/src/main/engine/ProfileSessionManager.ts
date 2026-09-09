@@ -274,7 +274,7 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       const existingPort = this.portAllocator.getPort(profileId);
       if (!existingPort) {
         // Allocate the port stored in the profile config
-        const available = await this.portAllocator.allocate(profileId);
+        const available = await this.portAllocator.allocate(profileId, config.cdpPort);
         if (available !== config.cdpPort) {
           // Port stored in profile config is taken; update config with new port
           const updatedConfig = ProfileConfigManager.update(profileId, { cdpPort: available });
@@ -466,7 +466,7 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       // Ensure port is allocated
       const existingPort = this.portAllocator.getPort(profileId);
       if (!existingPort) {
-        const available = await this.portAllocator.allocate(profileId);
+        const available = await this.portAllocator.allocate(profileId, config.cdpPort);
         if (available !== config.cdpPort) {
           const updatedConfig = ProfileConfigManager.update(profileId, { cdpPort: available });
           Object.assign(config, updatedConfig);
