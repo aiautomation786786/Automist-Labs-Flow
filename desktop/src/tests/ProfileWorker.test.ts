@@ -78,9 +78,9 @@ describe('ProfileWorker', () => {
     expect(worker.currentJob).toBe(job);
   });
 
-  it('MULTI-SLOT: worker can hold 2 concurrent jobs simultaneously (default cap=2)', () => {
+  it('MULTI-SLOT: worker can hold 2 concurrent jobs simultaneously (cap=2)', () => {
     const session = new ProfileSession(createMockProfileConfig('profile_1'));
-    const worker = new ProfileWorker(session); // default cap=2
+    const worker = new ProfileWorker(session, 2); // explicit cap=2
     const job1 = createMockJob('job_1', 0);
     const job2 = createMockJob('job_2', 1);
 
@@ -97,7 +97,7 @@ describe('ProfileWorker', () => {
 
   it('CAPACITY ENFORCEMENT: assignJob throws when all slots are occupied (cap=2)', () => {
     const session = new ProfileSession(createMockProfileConfig('profile_1'));
-    const worker = new ProfileWorker(session); // cap=2
+    const worker = new ProfileWorker(session, 2); // explicit cap=2
     const job1 = createMockJob('job_1');
     const job2 = createMockJob('job_2');
     const job3 = createMockJob('job_3');
@@ -123,7 +123,7 @@ describe('ProfileWorker', () => {
 
   it('TARGETED RELEASE: release(jobId) frees only the specified slot', () => {
     const session = new ProfileSession(createMockProfileConfig('profile_1'));
-    const worker = new ProfileWorker(session); // cap=2
+    const worker = new ProfileWorker(session, 2); // explicit cap=2
     const job1 = createMockJob('job_1');
     const job2 = createMockJob('job_2');
 
@@ -145,7 +145,7 @@ describe('ProfileWorker', () => {
 
   it('TARGETED RELEASE: after releasing all individual slots, worker becomes idle', () => {
     const session = new ProfileSession(createMockProfileConfig('profile_1'));
-    const worker = new ProfileWorker(session); // cap=2
+    const worker = new ProfileWorker(session, 2); // explicit cap=2
     const job1 = createMockJob('job_1');
     const job2 = createMockJob('job_2');
 
@@ -164,7 +164,7 @@ describe('ProfileWorker', () => {
 
   it('FULL RELEASE: release() with no args clears all active slots', () => {
     const session = new ProfileSession(createMockProfileConfig('profile_1'));
-    const worker = new ProfileWorker(session); // cap=2
+    const worker = new ProfileWorker(session, 2); // explicit cap=2
     const job1 = createMockJob('job_1');
     const job2 = createMockJob('job_2');
 

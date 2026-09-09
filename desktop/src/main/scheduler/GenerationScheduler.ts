@@ -23,6 +23,7 @@ import type {
   GenerationJobEntity,
   ProcessingOrder,
   ProjectEntity,
+  SchedulerCapacityMetrics,
 } from '../../shared/types';
 import { JobRepository } from '../storage/JobRepository';
 import { ProjectRepository } from '../storage/ProjectRepository';
@@ -54,6 +55,7 @@ export class GenerationScheduler {
   private isDispatching = false;
   private hasPendingDispatch = false;
   private isStopped = false;
+  private inFlightJobIds: Set<string> = new Set();
 
   constructor(workerPool: WorkerPool, executionOptions: ExecutionOptions = {}) {
     this.workerPool = workerPool;
@@ -126,11 +128,41 @@ export class GenerationScheduler {
       return;
     }
 
+    this.inFlightJobIds.delete(jobId);
     const cancelledJob = await JobRepository.updateJob(projectId, jobId, { status: 'cancelled' });
     await ProjectRepository.updateSlot(projectId, job.slotIndex, { status: 'cancelled' });
 
     generationEventBus.emitTyped('job:cancelled', cancelledJob);
     logger.info('scheduler', `Cancelled job ${jobId}`);
+  }
+
+  /**
+   * Returns live scheduler capacity metrics across all profiles and active jobs.
+   */
+  async getCapacityMetrics(): Promise<SchedulerCapacityMetrics> {
+    const pending = await this.getPendingJobsCount();
+    return this.workerPool.getCapacityMetrics(pending);
+  }
+
+  /**
+   * Calculates total queued jobs awaiting execution across all active projects.
+   */
+  async getPendingJobsCount(): Promise<number> {
+    try {
+      const projects = await ProjectRepository.getAll();
+      let pending = 0;
+      for (const project of projects) {
+        if (project.status === 'queued' || project.status === 'running') {
+          const allJobs = await JobRepository.getJobsByProject(project.projectId);
+          pending += allJobs.filter(
+            (j) => j.status === 'queued' && !this.inFlightJobIds.has(j.jobId)
+          ).length;
+        }
+      }
+      return pending;
+    } catch {
+      return 0;
+    }
   }
 
   /**
@@ -248,44 +280,49 @@ export class GenerationScheduler {
       while (!this.isStopped) {
         this.hasPendingDispatch = false;
 
-        // Step 1: Find next eligible job and an available worker matching its profile restrictions
-        const match = await this.findNextEligibleJobAndWorker();
-        if (!match) {
-          // No available worker or no queued jobs ready for dispatch
+        // Step 1: Collect and assign all eligible jobs across all available execution contexts in burst
+        const assignments = await this.collectAndAssignEligibleJobs();
+        if (assignments.length === 0) {
           break;
         }
 
-        const { job, project, worker } = match;
+        // Step 2: Concurrently persist assignments and launch jobs asynchronously
+        await Promise.all(
+          assignments.map(async ({ worker, job, project }) => {
+            try {
+              const assignedJob = await JobRepository.updateJob(job.projectId, job.jobId, {
+                status: 'assigned',
+                profileId: worker.profileId,
+              });
 
-        // Step 2: Idempotency check: verify job is still queued and slot not completed
-        const slot = project.slots.find((s) => s.slotIndex === job.slotIndex);
-        if (!slot || slot.status === 'completed' || job.status !== 'queued') {
-          logger.warn('scheduler', `Skipping non-eligible job ${job.jobId} (Slot ${job.slotIndex})`);
-          continue;
-        }
+              await ProjectRepository.updateSlot(job.projectId, job.slotIndex, {
+                status: 'running',
+                assignedProfileId: worker.profileId,
+              });
 
-        // Step 3: Assign worker
-        worker.assignJob(job);
+              if (project.status !== 'running') {
+                project.status = 'running';
+                await ProjectRepository.update(job.projectId, { status: 'running' }).catch(() => {});
+              }
 
-        const assignedJob = await JobRepository.updateJob(job.projectId, job.jobId, {
-          status: 'assigned',
-          profileId: worker.profileId,
-        });
+              generationEventBus.emitTyped('job:assigned', assignedJob, worker.profileId);
+              generationEventBus.emitTyped('worker:busy', worker.profileId, job.jobId);
 
-        await ProjectRepository.updateSlot(job.projectId, job.slotIndex, {
-          status: 'running',
-          assignedProfileId: worker.profileId,
-        });
-
-        await ProjectRepository.update(job.projectId, { status: 'running' });
-
-        generationEventBus.emitTyped('job:assigned', assignedJob, worker.profileId);
-        generationEventBus.emitTyped('worker:busy', worker.profileId, job.jobId);
-
-        // Step 4: Execute job asynchronously on the worker
-        this.executeJobOnWorker(worker, assignedJob).catch((err) => {
-          logger.error('scheduler', `Unhandled error executing job ${job.jobId}`, err as Error);
-        });
+              // Step 3: Execute job asynchronously without awaiting long-running browser generation
+              this.executeJobOnWorker(worker, assignedJob)
+                .catch((err) => {
+                  logger.error('scheduler', `Unhandled error executing job ${job.jobId}`, err as Error);
+                })
+                .finally(() => {
+                  this.inFlightJobIds.delete(job.jobId);
+                });
+            } catch (err) {
+              logger.error('scheduler', `Error persisting assigned job ${job.jobId}`, err as Error);
+              this.inFlightJobIds.delete(job.jobId);
+              worker.release(job.jobId);
+            }
+          })
+        );
       }
     } finally {
       this.isDispatching = false;
@@ -294,6 +331,49 @@ export class GenerationScheduler {
         this.triggerDispatch();
       }
     }
+  }
+
+  /**
+   * Scans active projects and assigns queued jobs to available workers up to maximum safe capacity.
+   */
+  private async collectAndAssignEligibleJobs(): Promise<
+    Array<{ job: GenerationJobEntity; project: ProjectEntity; worker: ProfileWorker }>
+  > {
+    const projects = await ProjectRepository.getAll();
+    const assignments: Array<{ job: GenerationJobEntity; project: ProjectEntity; worker: ProfileWorker }> = [];
+
+    for (const project of projects) {
+      if (project.status !== 'queued' && project.status !== 'running') {
+        continue;
+      }
+
+      const allJobs = await JobRepository.getJobsByProject(project.projectId);
+      const queuedJobs = allJobs.filter(
+        (j) => j.status === 'queued' && !this.inFlightJobIds.has(j.jobId)
+      );
+
+      if (queuedJobs.length === 0) continue;
+
+      const sortedJobs = this.sortAllJobsByProcessingOrder(queuedJobs, project.settings.processingOrder);
+
+      for (const job of sortedJobs) {
+        const slot = project.slots.find((s) => s.slotIndex === job.slotIndex);
+        if (!slot || slot.status === 'completed') continue;
+
+        const worker = this.workerPool.getAvailableWorker(project.settings.selectedProfileIds);
+        if (!worker) {
+          // All eligible workers are at full capacity
+          break;
+        }
+
+        // Assign immediately in memory and track in-flight to prevent race conditions
+        worker.assignJob(job);
+        this.inFlightJobIds.add(job.jobId);
+        assignments.push({ job, project, worker });
+      }
+    }
+
+    return assignments;
   }
 
   /**
@@ -369,67 +449,29 @@ export class GenerationScheduler {
   }
 
   /**
-   * Scans active projects and finds the next queued job and an available worker matching its profile restrictions.
+   * Sorts all queued jobs according to the project's processing order.
    */
-  private async findNextEligibleJobAndWorker(): Promise<{
-    job: GenerationJobEntity;
-    project: ProjectEntity;
-    worker: ProfileWorker;
-  } | null> {
-    const projects = await ProjectRepository.getAll();
-
-    for (const project of projects) {
-      if (project.status !== 'queued' && project.status !== 'running') {
-        continue;
-      }
-
-      const allJobs = await JobRepository.getJobsByProject(project.projectId);
-      const queuedJobs = allJobs.filter((j) => j.status === 'queued');
-
-      if (queuedJobs.length === 0) continue;
-
-      const worker = this.workerPool.getAvailableWorker(project.settings.selectedProfileIds);
-      if (!worker) {
-        // No available worker for this project right now
-        continue;
-      }
-
-      const selectedJob = this.sortJobsByProcessingOrder(queuedJobs, project.settings.processingOrder);
-      if (selectedJob) {
-        return { job: selectedJob, project, worker };
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Sorts queued jobs according to the project's processing order:
-   *  - images_first: picks image jobs first
-   *  - videos_first: picks video jobs first
-   *  - automatic: picks earliest queued job
-   */
-  private sortJobsByProcessingOrder(
+  private sortAllJobsByProcessingOrder(
     jobs: GenerationJobEntity[],
     order: ProcessingOrder
-  ): GenerationJobEntity | null {
-    if (jobs.length === 0) return null;
+  ): GenerationJobEntity[] {
+    if (jobs.length <= 1) return [...jobs];
 
     if (order === 'images_first') {
-      const imageJob = jobs.find((j) => j.promptType === 'image');
-      if (imageJob) return imageJob;
-      return jobs[0]!;
+      const images = jobs.filter((j) => j.promptType === 'image').sort((a, b) => a.slotIndex - b.slotIndex);
+      const videos = jobs.filter((j) => j.promptType === 'video').sort((a, b) => a.slotIndex - b.slotIndex);
+      return [...images, ...videos];
     }
 
     if (order === 'videos_first') {
-      const videoJob = jobs.find((j) => j.promptType === 'video');
-      if (videoJob) return videoJob;
-      return jobs[0]!;
+      const videos = jobs.filter((j) => j.promptType === 'video').sort((a, b) => a.slotIndex - b.slotIndex);
+      const images = jobs.filter((j) => j.promptType === 'image').sort((a, b) => a.slotIndex - b.slotIndex);
+      return [...videos, ...images];
     }
 
-    // automatic / FIFO
-    return jobs[0]!;
+    return [...jobs].sort((a, b) => a.slotIndex - b.slotIndex);
   }
+
 
   // ---------------------------------------------------------------------------
   // Event & Safety Loop

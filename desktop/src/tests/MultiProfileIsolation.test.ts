@@ -55,8 +55,8 @@ describe('Multi-Profile Isolation & Fair Scheduling', () => {
     Object.defineProperty(sessionA, 'isReady', { get: () => true });
     Object.defineProperty(sessionB, 'isReady', { get: () => true });
 
-    const workerA = new ProfileWorker(sessionA);
-    const workerB = new ProfileWorker(sessionB);
+    const workerA = new ProfileWorker(sessionA, 2);
+    const workerB = new ProfileWorker(sessionB, 2);
 
     const mockSessionMgr = {
       getReadySessions: vi.fn().mockReturnValue([sessionA, sessionB]),

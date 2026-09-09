@@ -21,6 +21,7 @@ import type {
   CreateProjectParams,
   JobProgressEvent,
   SlotUpdatedEvent,
+  SchedulerCapacityMetrics,
 } from '../shared/types';
 
 const flowApi: FlowApi = {
@@ -45,6 +46,8 @@ const flowApi: FlowApi = {
     ipcRenderer.invoke('projects:cancelJob', projectId, jobId),
   getProjectJobs: (projectId: string): Promise<GenerationJobEntity[]> =>
     ipcRenderer.invoke('projects:getJobs', projectId),
+  getCapacityMetrics: (): Promise<SchedulerCapacityMetrics> =>
+    ipcRenderer.invoke('scheduler:metrics'),
 
   // Profiles
   listProfiles: (): Promise<ProfileSessionSnapshot[]> => ipcRenderer.invoke('profiles:list'),

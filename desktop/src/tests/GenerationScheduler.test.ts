@@ -43,10 +43,10 @@ function createMockProfileConfig(id: string): ProfileConfig {
   };
 }
 
-function createMockWorker(id: string): ProfileWorker {
+function createMockWorker(id: string, maxConcurrentJobs: number = 1): ProfileWorker {
   const session = new ProfileSession(createMockProfileConfig(id));
   Object.defineProperty(session, 'isReady', { get: () => true });
-  return new ProfileWorker(session);
+  return new ProfileWorker(session, maxConcurrentJobs);
 }
 
 async function advanceAndCompleteJob(job: { projectId: string; jobId: string }, outputPath?: string) {

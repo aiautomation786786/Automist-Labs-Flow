@@ -21,7 +21,8 @@ import { ProfileWorker } from './ProfileWorker';
 import { ProfileSessionManager } from '../engine/ProfileSessionManager';
 import { generationEventBus } from '../events/GenerationEventBus';
 import { AppLogger } from '../utils/AppLogger';
-import { MAX_CONCURRENT_JOBS_PER_PROFILE } from './ConcurrencyConfig';
+import { ConcurrencyConfig } from './ConcurrencyConfig';
+import type { SchedulerCapacityMetrics } from '../../shared/types';
 
 const logger = new AppLogger({ mirrorToStderr: false });
 
@@ -40,15 +41,47 @@ export class WorkerPool {
    */
   attachSessionManager(sessionManager: ProfileSessionManager): void {
     this.sessionManager = sessionManager;
+
     this.sessionManager.on('session:ready', (profileId) => {
       this.syncWithSessionManager();
       generationEventBus.emitTyped('worker:available', profileId);
       logger.info('worker_pool', `session:ready received for ${profileId}; worker pool synced and worker:available emitted`);
     });
+
+    this.sessionManager.on('session:status', (snapshot) => {
+      if (snapshot.status === 'ready') {
+        this.syncWithSessionManager();
+        generationEventBus.emitTyped('worker:available', snapshot.profileId);
+      } else if (snapshot.status === 'error' || snapshot.status === 'stopped' || snapshot.status === 'auth_required') {
+        const worker = this.workers.get(snapshot.profileId);
+        if (worker) {
+          worker.markError(snapshot.errorMessage || `Session status: ${snapshot.status}`);
+          logger.warn('worker_pool', `Profile ${snapshot.profileId} status changed to ${snapshot.status}; marked unavailable`);
+        }
+      }
+    });
+
+    this.sessionManager.on('session:error', (profileId, message) => {
+      const worker = this.workers.get(profileId);
+      if (worker) {
+        worker.markError(message || 'Session error');
+        logger.warn('worker_pool', `Profile ${profileId} encountered error; marked unavailable`);
+      }
+    });
+
+    this.sessionManager.on('session:crash', (profileId) => {
+      const worker = this.workers.get(profileId);
+      if (worker) {
+        worker.markError('Chrome browser process crashed');
+        logger.warn('worker_pool', `Profile ${profileId} crashed; marked unavailable`);
+      }
+    });
+
     this.sessionManager.on('profile:deleted', (profileId) => {
       this.workers.delete(profileId);
       logger.info('worker_pool', `profile:deleted received for ${profileId}; removed worker from pool`);
     });
+
     this.syncWithSessionManager();
   }
 
@@ -68,21 +101,32 @@ export class WorkerPool {
   }
 
   /**
-   * Synchronizes the pool with the active sessions in ProfileSessionManager.
-   * Instantiates a ProfileWorker for any newly started profile session.
-   * Workers are created with the global MAX_CONCURRENT_JOBS_PER_PROFILE cap.
+   * Synchronizes the pool with active sessions in ProfileSessionManager.
+   * Discovers newly ready profiles and automatically adds them to the pool
+   * with the single source of truth capacity from ConcurrencyConfig.
    */
-  syncWithSessionManager(): void {
+  syncWithSessionManager(sessionManager?: ProfileSessionManager): void {
+    if (sessionManager) {
+      this.attachSessionManager(sessionManager);
+    }
     if (!this.sessionManager) return;
 
     const allSnapshots = this.sessionManager.getAllProfiles();
+    const targetCap = ConcurrencyConfig.maxConcurrentJobsPerProfile;
+
     for (const snap of allSnapshots) {
-      if (snap.status === 'ready' && !this.workers.has(snap.profileId)) {
-        const session = this.sessionManager.getSession(snap.profileId);
-        if (session) {
-          const worker = new ProfileWorker(session, MAX_CONCURRENT_JOBS_PER_PROFILE);
-          this.workers.set(snap.profileId, worker);
-          logger.info('worker_pool', `Created ProfileWorker for active session: ${snap.profileId} (cap=${MAX_CONCURRENT_JOBS_PER_PROFILE})`);
+      if (snap.status === 'ready') {
+        const existing = this.workers.get(snap.profileId);
+        if (!existing) {
+          const session = this.sessionManager.getSession(snap.profileId);
+          if (session) {
+            const worker = new ProfileWorker(session, targetCap);
+            this.workers.set(snap.profileId, worker);
+            logger.info('worker_pool', `Created ProfileWorker for active session: ${snap.profileId} (cap=${targetCap})`);
+          }
+        } else if (existing.state === 'error') {
+          existing.resetError();
+          logger.info('worker_pool', `Restored healthy ready state for ProfileWorker: ${snap.profileId}`);
         }
       }
     }
@@ -162,6 +206,34 @@ export class WorkerPool {
    */
   get size(): number {
     return this.workers.size;
+  }
+
+  /**
+   * Returns live capacity metrics across all profiles and execution contexts.
+   */
+  getCapacityMetrics(pendingJobs = 0): SchedulerCapacityMetrics {
+    this.syncWithSessionManager();
+    const allWorkers = Array.from(this.workers.values());
+    const totalProfiles = this.sessionManager ? this.sessionManager.getAllProfiles().length : allWorkers.length;
+    const readyProfiles = allWorkers.filter((w) => (w.isAvailable || (w.isBusy && !w.lastError)) && w.state !== 'error').length;
+    const busyProfiles = allWorkers.filter((w) => w.isBusy).length;
+    const errorProfiles = allWorkers.filter((w) => w.state === 'error').length;
+    const totalCapacity = allWorkers
+      .filter((w) => w.state !== 'error')
+      .reduce((sum, w) => sum + w.maxConcurrentJobs, 0);
+    const activeJobs = allWorkers.reduce((sum, w) => sum + w.activeJobCount, 0);
+    const availableCapacity = Math.max(0, totalCapacity - activeJobs);
+
+    return {
+      totalProfiles,
+      readyProfiles,
+      busyProfiles,
+      errorProfiles,
+      totalCapacity,
+      activeJobs,
+      availableCapacity,
+      pendingJobs,
+    };
   }
 
   /**

@@ -24,6 +24,7 @@ import type { GenerationJobEntity } from '../../shared/types';
 import { ProfileSession } from '../engine/ProfileSession';
 import { FlowAutomationSession } from '../engine/FlowAutomationSession';
 import { AppLogger } from '../utils/AppLogger';
+import { MAX_CONCURRENT_JOBS_PER_PROFILE } from './ConcurrencyConfig';
 
 export type WorkerState = 'idle' | 'busy' | 'error' | 'offline';
 
@@ -39,7 +40,7 @@ export class ProfileWorker {
   private _isError: boolean = false;
   private _lastError: string | null = null;
 
-  constructor(profileSession: ProfileSession, maxConcurrentJobs = 2) {
+  constructor(profileSession: ProfileSession, maxConcurrentJobs = MAX_CONCURRENT_JOBS_PER_PROFILE) {
     this.session = profileSession;
     this.profileId = profileSession.profileId;
     this.automation = profileSession.getAutomationSession();

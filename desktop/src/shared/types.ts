@@ -717,6 +717,17 @@ export interface CreateProjectParams {
   prompts: Array<{ text: string; type: 'image' | 'video' }>;
 }
 
+export interface SchedulerCapacityMetrics {
+  totalProfiles: number;
+  readyProfiles: number;
+  busyProfiles: number;
+  errorProfiles: number;
+  totalCapacity: number;
+  activeJobs: number;
+  availableCapacity: number;
+  pendingJobs: number;
+}
+
 export interface FlowApi {
   // Projects
   listProjects: () => Promise<ProjectEntity[]>;
@@ -734,6 +745,7 @@ export interface FlowApi {
   startProjectGeneration: (projectId: string) => Promise<GenerationJobEntity[]>;
   cancelJob: (projectId: string, jobId: string) => Promise<void>;
   getProjectJobs: (projectId: string) => Promise<GenerationJobEntity[]>;
+  getCapacityMetrics?: () => Promise<SchedulerCapacityMetrics>;
 
   // Profiles
   listProfiles: () => Promise<ProfileSessionSnapshot[]>;

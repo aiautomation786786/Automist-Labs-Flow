@@ -148,6 +148,10 @@ export class IpcHandlers {
       return await scheduler.retrySlot(projectId, slotIndex);
     });
 
+    ipcMain.handle('scheduler:metrics', async () => {
+      return await scheduler.getCapacityMetrics();
+    });
+
     // -------------------------------------------------------------------------
     // Profiles API
     // -------------------------------------------------------------------------
