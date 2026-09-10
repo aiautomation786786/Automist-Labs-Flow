@@ -631,8 +631,30 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
 
       // Update persistent metadata if email or locale discovered
       if (authResult.detectedEmail || authResult.locale) {
+        let safeEmailToPersist: string | undefined = authResult.detectedEmail ?? undefined;
+        if (safeEmailToPersist) {
+          const diskProfiles = ProfileConfigManager.readAll();
+          const otherProfiles = diskProfiles.filter((p) => p.profileId !== profileId);
+          const hasConflict = otherProfiles.some(
+            (p) =>
+              (p.expectedEmail && p.expectedEmail.toLowerCase() === safeEmailToPersist!.toLowerCase()) ||
+              (p.detectedEmail && p.detectedEmail.toLowerCase() === safeEmailToPersist!.toLowerCase())
+          );
+          if (hasConflict) {
+            appLogger.warn(
+              'session_manager',
+              `Cross-profile contamination blocked: detected email '${safeEmailToPersist}' belongs to another profile. Reverting to local user data email for '${profileId}'.`
+            );
+            safeEmailToPersist =
+              LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
+                config.userDataDir,
+                config.chromeProfileName || 'Default'
+              ) || undefined;
+          }
+        }
+
         ProfileConfigManager.update(profileId, {
-          ...(authResult.detectedEmail ? { detectedEmail: authResult.detectedEmail } : {}),
+          ...(safeEmailToPersist ? { detectedEmail: safeEmailToPersist } : {}),
           ...(authResult.locale ? { flowUrlLocale: `/fx/${authResult.locale}/tools/flow` } : {}),
         });
       }
@@ -714,6 +736,12 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       if (session) {
         snapshots.push(session.getSnapshot());
       } else {
+        const localEmail = LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
+          config.userDataDir,
+          config.chromeProfileName || 'Default'
+        );
+        const resolvedEmail = localEmail || config.detectedEmail || config.expectedEmail || null;
+
         // Synthesize a stopped snapshot from the persisted config
         snapshots.push({
           profileId: config.profileId,
@@ -721,7 +749,7 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
           status: 'stopped',
           cdpPort: config.cdpPort,
           chromePath: config.chromePath,
-          detectedEmail: config.detectedEmail,
+          detectedEmail: resolvedEmail,
           expectedEmail: config.expectedEmail ?? null,
           flowUrl: null,
           errorMessage: null,

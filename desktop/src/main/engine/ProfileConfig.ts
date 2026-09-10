@@ -17,6 +17,7 @@ import * as crypto from 'crypto';
 import type { ProfileConfig } from '../../shared/types';
 import { getAppDataDir } from '../utils/AppLogger';
 import { appLogger } from '../utils/AppLogger';
+import { LocalChromeProfileDiscoverer } from './LocalChromeProfileDiscoverer';
 
 // ---------------------------------------------------------------------------
 // Path helpers
@@ -137,7 +138,30 @@ export class ProfileConfigManager {
 
     try {
       const raw = fs.readFileSync(configPath, 'utf-8');
-      return JSON.parse(raw) as ProfileConfig;
+      const config = JSON.parse(raw) as ProfileConfig;
+
+      // Identity self-healing: verify against local Chrome profile data if present
+      if (config.userDataDir && fs.existsSync(config.userDataDir)) {
+        const localEmail = LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
+          config.userDataDir,
+          config.chromeProfileName || 'Default'
+        );
+        if (localEmail && localEmail !== config.detectedEmail) {
+          appLogger.info('profile_config', `Self-healing profile identity for ${profileId}: updating detectedEmail from '${config.detectedEmail}' to '${localEmail}'`);
+          config.detectedEmail = localEmail;
+          if (!config.expectedEmail || config.expectedEmail !== localEmail) {
+            config.expectedEmail = localEmail;
+          }
+          config.updatedAt = new Date().toISOString();
+          try {
+            this.write(config);
+          } catch {
+            // Non-fatal write failure during read
+          }
+        }
+      }
+
+      return config;
     } catch (err) {
       throw new Error(
         `Failed to parse profile config for ${profileId}: ${(err as Error).message}`

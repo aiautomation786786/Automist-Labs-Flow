@@ -118,6 +118,14 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     this.profileId = config.profileId;
     this.config = config;
     this.log = new AppLogger({ profileId: config.profileId, mirrorToStderr: true });
+    this.detectedEmail =
+      LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
+        config.userDataDir,
+        config.chromeProfileName || 'Default'
+      ) ||
+      config.detectedEmail ||
+      config.expectedEmail ||
+      null;
   }
 
   // ---------------------------------------------------------------------------
@@ -521,7 +529,18 @@ if ($targetPids.Count -gt 0) {
           });
 
           this.flowUrl = authResult.url;
-          this.detectedEmail = authResult.detectedEmail ?? this.detectedEmail;
+          if (authResult.detectedEmail) {
+            const localEmail = LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
+              this.config.userDataDir,
+              this.config.chromeProfileName || 'Default'
+            );
+            if (localEmail && localEmail.toLowerCase() !== authResult.detectedEmail.toLowerCase()) {
+              this.log.warn('auth_watcher', `Detected email '${authResult.detectedEmail}' does not match profile's local account '${localEmail}'. Preserving local identity.`);
+              this.detectedEmail = localEmail;
+            } else {
+              this.detectedEmail = authResult.detectedEmail;
+            }
+          }
           this.setStatus('ready');
           this.emit('status_change', this.getSnapshot());
 
@@ -744,7 +763,27 @@ if ($targetPids.Count -gt 0) {
     }
 
     this.flowUrl = result.url;
-    this.detectedEmail = result.detectedEmail ?? this.detectedEmail;
+    if (result.detectedEmail) {
+      const localEmail = LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
+        this.config.userDataDir,
+        this.config.chromeProfileName || 'Default'
+      );
+      if (localEmail && localEmail.toLowerCase() !== result.detectedEmail.toLowerCase()) {
+        this.log.warn('auth_verify', `Detected email '${result.detectedEmail}' differs from profile's local account '${localEmail}'. Preserving local identity.`);
+        this.detectedEmail = localEmail;
+      } else {
+        this.detectedEmail = result.detectedEmail;
+      }
+    } else if (!this.detectedEmail) {
+      this.detectedEmail =
+        LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
+          this.config.userDataDir,
+          this.config.chromeProfileName || 'Default'
+        ) ||
+        this.config.detectedEmail ||
+        this.config.expectedEmail ||
+        null;
+    }
 
     // 3. Update status based on detected result
     switch (result.state) {
@@ -770,15 +809,17 @@ if ($targetPids.Count -gt 0) {
 
       case 'captcha':
         this.setStatus('auth_required');
+        this.errorMessage = 'Bot challenge / CAPTCHA detected on Flow. Manual solve required.';
         this.emit('status_change', this.getSnapshot());
-        this.log.warn('auth_verify', 'CAPTCHA detected on Flow page');
+        this.log.warn('auth_verify', 'CAPTCHA detected; setting status to auth_required');
         break;
 
       case 'loading':
       case 'unknown':
+      default:
         this.setStatus('browser_open');
         this.emit('status_change', this.getSnapshot());
-        this.log.warn('auth_verify', `Indeterminate auth state: ${result.state}`);
+        this.log.info('auth_verify', `Auth state '${result.state}'; keeping browser_open`);
         break;
     }
 
@@ -790,9 +831,17 @@ if ($targetPids.Count -gt 0) {
   }
 
 
-  /** Returns the current snapshot for this session. */
+  // ---------------------------------------------------------------------------
+  // Snapshots & Getters
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns a serialisable snapshot of the current session state.
+   * Emitted to renderer via IPC on state changes.
+   */
   getSnapshot(): ProfileSessionSnapshot {
     let connectionState: ProfileSessionSnapshot['connectionState'] = 'profile_closed';
+
     if (this._status === 'ready') {
       connectionState = this.isExistingBrowser ? 'connected_existing' : 'connected_dedicated';
     } else if (this._status === 'auth_required') {
@@ -809,13 +858,23 @@ if ($targetPids.Count -gt 0) {
       connectionState = 'browser_open';
     }
 
+    const resolvedEmail =
+      this.detectedEmail ||
+      LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
+        this.config.userDataDir,
+        this.config.chromeProfileName || 'Default'
+      ) ||
+      this.config.detectedEmail ||
+      this.config.expectedEmail ||
+      null;
+
     return {
       profileId: this.profileId,
       displayName: this.config.displayName,
       status: this._status,
       cdpPort: this.config.cdpPort,
       chromePath: this.config.chromePath,
-      detectedEmail: this.detectedEmail,
+      detectedEmail: resolvedEmail,
       expectedEmail: this.config.expectedEmail ?? null,
       flowUrl: this.flowUrl,
       errorMessage: this.errorMessage,

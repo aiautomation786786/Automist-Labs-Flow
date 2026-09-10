@@ -155,7 +155,12 @@ export class LocalChromeProfileDiscoverer {
 
             const existing = profilesMap.get(name);
             const prefProfileName = pref?.profile?.name;
-            const accountInfo = Array.isArray(pref?.account_info) ? pref.account_info[0] : undefined;
+            let accountInfo: { email?: string; full_name?: string } | undefined;
+            if (Array.isArray(pref?.account_info)) {
+              accountInfo = pref.account_info[0];
+            } else if (pref?.account_info && typeof pref.account_info === 'object') {
+              accountInfo = pref.account_info as { email?: string; full_name?: string };
+            }
             const prefEmail = accountInfo?.email;
             const prefFullName = accountInfo?.full_name;
 
@@ -176,6 +181,57 @@ export class LocalChromeProfileDiscoverer {
     }
 
     return Array.from(profilesMap.values());
+  }
+
+  /**
+   * Directly extracts the primary Google Account email from a profile's user data directory.
+   * Inspects Preferences and Local State without launching Chrome.
+   */
+  static extractEmailFromUserDataDir(
+    userDataDir?: string | null,
+    profileName = 'Default'
+  ): string | null {
+    if (!userDataDir || !fs.existsSync(userDataDir)) return null;
+
+    // Strategy 1: Check Preferences for candidate profile directories
+    const candidateDirs = [profileName, 'Default'];
+    for (const dir of candidateDirs) {
+      const prefPath = path.join(userDataDir, dir, 'Preferences');
+      if (fs.existsSync(prefPath)) {
+        try {
+          const raw = fs.readFileSync(prefPath, 'utf-8');
+          const pref = JSON.parse(raw);
+          let accountInfo: { email?: string; full_name?: string } | undefined;
+          if (Array.isArray(pref?.account_info)) {
+            accountInfo = pref.account_info[0];
+          } else if (pref?.account_info && typeof pref.account_info === 'object') {
+            accountInfo = pref.account_info as { email?: string; full_name?: string };
+          }
+          if (accountInfo?.email && typeof accountInfo.email === 'string' && accountInfo.email.includes('@')) {
+            return this.normalizeEmail(accountInfo.email);
+          }
+        } catch { /* continue */ }
+      }
+    }
+
+    // Strategy 2: Check Local State info_cache
+    const localStatePath = path.join(userDataDir, 'Local State');
+    if (fs.existsSync(localStatePath)) {
+      try {
+        const raw = fs.readFileSync(localStatePath, 'utf-8');
+        const state = JSON.parse(raw);
+        const infoCache = state?.profile?.info_cache;
+        if (infoCache) {
+          const profileInfo = infoCache[profileName] || infoCache['Default'];
+          const email = profileInfo?.user_name;
+          if (email && typeof email === 'string' && email.includes('@')) {
+            return this.normalizeEmail(email);
+          }
+        }
+      } catch { /* continue */ }
+    }
+
+    return null;
   }
 
   /**
