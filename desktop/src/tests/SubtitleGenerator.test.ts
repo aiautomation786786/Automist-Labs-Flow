@@ -185,4 +185,82 @@ describe('SubtitleGenerator', () => {
     // Alignment 5 is Middle Center in ASS numpad notation
     expect(content).toContain(',5,');
   });
+
+  it('11. Supports karaoke, fade, and pop animation in ASS event tags', async () => {
+    const karaokeOut = path.join(tempDir, 'test_karaoke.ass');
+    await SubtitleGenerator.generateAssFile({
+      narrationText: 'Word highlight animation test',
+      durationSeconds: 2.0,
+      subtitleConfig: {
+        enabled: true,
+        animation: 'karaoke',
+      },
+      aspectRatio: '16:9',
+      outputPath: karaokeOut,
+    });
+    const karaokeContent = fs.readFileSync(karaokeOut, 'utf8');
+    expect(karaokeContent).toContain('{\\kf');
+
+    const fadeOut = path.join(tempDir, 'test_fade.ass');
+    await SubtitleGenerator.generateAssFile({
+      narrationText: 'Smooth fade animation test',
+      durationSeconds: 2.0,
+      subtitleConfig: {
+        enabled: true,
+        animation: 'fade',
+      },
+      aspectRatio: '16:9',
+      outputPath: fadeOut,
+    });
+    const fadeContent = fs.readFileSync(fadeOut, 'utf8');
+    expect(fadeContent).toContain('{\\fad(200,200)}');
+
+    const popOut = path.join(tempDir, 'test_pop.ass');
+    await SubtitleGenerator.generateAssFile({
+      narrationText: 'Bouncy pop entrance test',
+      durationSeconds: 2.0,
+      subtitleConfig: {
+        enabled: true,
+        animation: 'pop',
+      },
+      aspectRatio: '16:9',
+      outputPath: popOut,
+    });
+    const popContent = fs.readFileSync(popOut, 'utf8');
+    expect(popContent).toContain('{\\t(0,100,\\fscx112\\fscy112)');
+  });
+
+  it('12. Supports whatToShow filtering for dialogue_only and narration_only', async () => {
+    const mixedText = 'The captain shouted, "All hands on deck!" as waves crashed.';
+
+    const dialogueOut = path.join(tempDir, 'test_dialogue.ass');
+    await SubtitleGenerator.generateAssFile({
+      narrationText: mixedText,
+      durationSeconds: 2.0,
+      subtitleConfig: {
+        enabled: true,
+        whatToShow: 'dialogue_only',
+      },
+      aspectRatio: '16:9',
+      outputPath: dialogueOut,
+    });
+    const dialogueContent = fs.readFileSync(dialogueOut, 'utf8');
+    expect(dialogueContent).toContain('"All hands on deck!"');
+    expect(dialogueContent).not.toContain('The captain shouted');
+
+    const narrationOut = path.join(tempDir, 'test_narration.ass');
+    await SubtitleGenerator.generateAssFile({
+      narrationText: mixedText,
+      durationSeconds: 2.0,
+      subtitleConfig: {
+        enabled: true,
+        whatToShow: 'narration_only',
+      },
+      aspectRatio: '16:9',
+      outputPath: narrationOut,
+    });
+    const narrationContent = fs.readFileSync(narrationOut, 'utf8');
+    expect(narrationContent).toContain('The captain shouted');
+    expect(narrationContent).not.toContain('"All hands on deck!"');
+  });
 });

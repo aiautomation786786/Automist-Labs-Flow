@@ -159,11 +159,13 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
     fontSize: 32,
     textColor: '#FFFFFF',
     backgroundColor: '#1A1917',
+    boxColor: '#1A1917',
     boxEnabled: true,
     outlineWidth: 3,
     shadowDepth: 0,
+    animation: 'karaoke',
+    whatToShow: 'all',
   });
-  const [showSubtitleAdvanced, setShowSubtitleAdvanced] = useState<boolean>(false);
 
   // Script Input Tab: 'paste' | 'one_file' | 'separate_files'
   const [scriptInputMode, setScriptInputMode] = useState<'paste' | 'one_file' | 'separate_files'>('paste');
@@ -2838,10 +2840,10 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                   backgroundColor: 'var(--bg-surface)',
                   border: '1px solid var(--border-color)',
                   borderRadius: 'var(--radius-lg)',
-                  padding: '24px',
+                  padding: '20px 24px',
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '20px',
+                  gap: '14px',
                 }}
               >
                 <div>
@@ -2859,7 +2861,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    padding: '14px 18px',
+                    padding: '10px 16px',
                     backgroundColor: 'var(--bg-subtle)',
                     borderRadius: 'var(--radius-md)',
                     border: '1px solid var(--border-color)',
@@ -2870,7 +2872,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                       Burn Subtitles onto Video
                     </div>
                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                      Synchronized word-level subtitles burned via libass rendering.
+                      Synchronized animated subtitles burned directly onto video clips.
                     </div>
                   </div>
                   <button
@@ -2904,6 +2906,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                           fontSize: 32,
                           textColor: '#FFFFFF',
                           backgroundColor: '#1A1917',
+                          boxColor: '#1A1917',
                           boxEnabled: true,
                           outlineWidth: 3,
                           shadowDepth: 0,
@@ -2920,6 +2923,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                           fontSize: 32,
                           textColor: '#FFFFFF',
                           backgroundColor: '#000000',
+                          boxColor: '#000000',
                           boxEnabled: true,
                           outlineWidth: 4,
                           shadowDepth: 0,
@@ -2936,6 +2940,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                           fontSize: 34,
                           textColor: '#00FFFF',
                           backgroundColor: '#101010',
+                          boxColor: '#101010',
                           boxEnabled: false,
                           outlineWidth: 3,
                           shadowDepth: 2,
@@ -2952,6 +2957,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                           fontSize: 34,
                           textColor: '#FFE500',
                           backgroundColor: '#000000',
+                          boxColor: '#000000',
                           boxEnabled: false,
                           outlineWidth: 3,
                           shadowDepth: 2,
@@ -2982,20 +2988,415 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                             }
                           }}
                           style={{
-                            padding: '12px',
+                            padding: '12px 14px',
                             borderRadius: 'var(--radius-sm)',
                             border: isSel && subtitlesEnabled ? '2px solid #a855f7' : '1px solid var(--border-color)',
-                            backgroundColor: isSel && subtitlesEnabled ? 'rgba(168, 85, 247, 0.12)' : 'var(--bg-subtle)',
-                            opacity: subtitlesEnabled ? 1 : 0.5,
-                            cursor: subtitlesEnabled ? 'pointer' : 'default',
-                            textAlign: 'center',
+                            backgroundColor: isSel && subtitlesEnabled ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-subtle)',
+                            boxShadow: isSel && subtitlesEnabled ? '0 0 0 1px rgba(168, 85, 247, 0.3)' : 'none',
+                            opacity: subtitlesEnabled ? 1 : 0.45,
+                            cursor: subtitlesEnabled ? 'pointer' : 'not-allowed',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '4px',
+                            transition: 'all 0.18s ease-in-out',
                           }}
                         >
-                          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>{st.name}</div>
-                          <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', marginTop: '2px' }}>{st.desc}</div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '12.5px', fontWeight: isSel && subtitlesEnabled ? 700 : 600, color: isSel && subtitlesEnabled ? '#ffffff' : 'var(--text-primary)' }}>
+                              {st.name}
+                            </span>
+                            <div
+                              style={{
+                                width: '16px',
+                                height: '16px',
+                                borderRadius: '50%',
+                                backgroundColor: isSel && subtitlesEnabled ? '#a855f7' : 'transparent',
+                                border: isSel && subtitlesEnabled ? '2px solid #a855f7' : '1.5px solid var(--border-color)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                            >
+                              {isSel && subtitlesEnabled && <CheckIcon size={10} color="#ffffff" />}
+                            </div>
+                          </div>
+                          <span style={{ fontSize: '11px', color: isSel && subtitlesEnabled ? '#d8b4fe' : 'var(--text-muted)' }}>
+                            {st.desc}
+                          </span>
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+
+                {/* Direct Individual Subtitle Controls */}
+                <div
+                  style={{
+                    backgroundColor: 'var(--bg-subtle)',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-color)',
+                    padding: '14px 18px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
+                    opacity: subtitlesEnabled ? 1 : 0.45,
+                    pointerEvents: subtitlesEnabled ? 'auto' : 'none',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Configuration
+                    </span>
+                    <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                      Directly configure animation, positioning, typography, and container styling
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+                    {/* Row 1, Col 1: Animation */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        Animation
+                      </label>
+                      <select
+                        value={subtitleConfig.animation || 'karaoke'}
+                        onChange={(e) => {
+                          const val = e.target.value as any;
+                          setSubtitleConfig((prev) => ({ ...prev, animation: val }));
+                          persistDraft({ subtitleConfig: { ...subtitleConfig, animation: val } });
+                        }}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: 'var(--bg-surface)',
+                          border: '1px solid var(--border-color)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12.5px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <option value="karaoke">Karaoke — Word-by-word Highlight</option>
+                        <option value="none">None — Static Subtitles</option>
+                        <option value="fade">Fade — Smooth In / Out</option>
+                        <option value="pop">Pop — Bouncy Entrance</option>
+                      </select>
+                    </div>
+
+                    {/* Row 1, Col 2: What to Show */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        What to Show
+                      </label>
+                      <select
+                        value={subtitleConfig.whatToShow || 'all'}
+                        onChange={(e) => {
+                          const val = e.target.value as any;
+                          setSubtitleConfig((prev) => ({ ...prev, whatToShow: val }));
+                          persistDraft({ subtitleConfig: { ...subtitleConfig, whatToShow: val } });
+                        }}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: 'var(--bg-surface)',
+                          border: '1px solid var(--border-color)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12.5px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <option value="all">All Spoken Text</option>
+                        <option value="dialogue_only">Dialogue Only</option>
+                        <option value="narration_only">Narration Only</option>
+                      </select>
+                    </div>
+
+                    {/* Row 1, Col 3: Position */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        Position
+                      </label>
+                      <select
+                        value={subtitleConfig.position || 'bottom'}
+                        onChange={(e) => {
+                          const val = e.target.value as 'bottom' | 'center' | 'top';
+                          setSubtitleConfig((prev) => ({ ...prev, position: val }));
+                          persistDraft({ subtitleConfig: { ...subtitleConfig, position: val } });
+                        }}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: 'var(--bg-surface)',
+                          border: '1px solid var(--border-color)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12.5px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <option value="bottom">Bottom Overlay</option>
+                        <option value="center">Center Screen</option>
+                        <option value="top">Top Header</option>
+                      </select>
+                    </div>
+
+                    {/* Row 2, Col 1: Font */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        Font
+                      </label>
+                      <select
+                        value={subtitleConfig.fontFamily || 'Arial'}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setSubtitleConfig((prev) => ({ ...prev, fontFamily: val }));
+                          persistDraft({ subtitleConfig: { ...subtitleConfig, fontFamily: val } });
+                        }}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: 'var(--bg-surface)',
+                          border: '1px solid var(--border-color)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12.5px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {['Arial', 'Montserrat', 'Roboto', 'Impact', 'Helvetica', 'Georgia', 'Inter'].map((f) => (
+                          <option key={f} value={f}>{f}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Row 2, Col 2: Size */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        Size
+                      </label>
+                      <select
+                        value={subtitleConfig.fontSize || 32}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          setSubtitleConfig((prev) => ({ ...prev, fontSize: val }));
+                          persistDraft({ subtitleConfig: { ...subtitleConfig, fontSize: val } });
+                        }}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: 'var(--bg-surface)',
+                          border: '1px solid var(--border-color)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12.5px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <option value={24}>Small (24px)</option>
+                        <option value={28}>Normal (28px)</option>
+                        <option value={32}>Medium (32px)</option>
+                        <option value={36}>Large (36px)</option>
+                        <option value={42}>Extra Large (42px)</option>
+                      </select>
+                    </div>
+
+                    {/* Row 2, Col 3: Text Color */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        Text Color
+                      </label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <select
+                          value={
+                            ['#FFFFFF', '#FFE500', '#00FFFF', '#A855F7', '#38BDF8', '#4ADE80', '#FF4D4D'].includes((subtitleConfig.textColor || '#FFFFFF').toUpperCase())
+                              ? (subtitleConfig.textColor || '#FFFFFF').toUpperCase()
+                              : 'custom'
+                          }
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val !== 'custom') {
+                              setSubtitleConfig((prev) => ({ ...prev, textColor: val }));
+                              persistDraft({ subtitleConfig: { ...subtitleConfig, textColor: val } });
+                            }
+                          }}
+                          style={{
+                            flex: 1,
+                            padding: '8px 12px',
+                            borderRadius: 'var(--radius-sm)',
+                            backgroundColor: 'var(--bg-surface)',
+                            border: '1px solid var(--border-color)',
+                            color: 'var(--text-primary)',
+                            fontSize: '12.5px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <option value="#FFFFFF">White</option>
+                          <option value="#FFE500">Yellow</option>
+                          <option value="#00FFFF">Cyan</option>
+                          <option value="#A855F7">Purple</option>
+                          <option value="#38BDF8">Sky Blue</option>
+                          <option value="#4ADE80">Electric Green</option>
+                          <option value="#FF4D4D">Red</option>
+                          {!['#FFFFFF', '#FFE500', '#00FFFF', '#A855F7', '#38BDF8', '#4ADE80', '#FF4D4D'].includes((subtitleConfig.textColor || '#FFFFFF').toUpperCase()) && (
+                            <option value="custom">Custom ({(subtitleConfig.textColor || '#FFFFFF').toUpperCase()})</option>
+                          )}
+                        </select>
+                        <input
+                          type="color"
+                          value={subtitleConfig.textColor || '#FFFFFF'}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSubtitleConfig((prev) => ({ ...prev, textColor: val }));
+                            persistDraft({ subtitleConfig: { ...subtitleConfig, textColor: val } });
+                          }}
+                          title="Choose custom text color"
+                          style={{
+                            width: '36px',
+                            height: '36px',
+                            padding: 0,
+                            borderRadius: 'var(--radius-sm)',
+                            border: '1px solid var(--border-color)',
+                            backgroundColor: 'transparent',
+                            cursor: 'pointer',
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Row 3, Col 1: Background Box */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        Background Box
+                      </label>
+                      <select
+                        value={subtitleConfig.boxEnabled ? 'box' : 'no_box'}
+                        onChange={(e) => {
+                          const isBox = e.target.value === 'box';
+                          setSubtitleConfig((prev) => ({ ...prev, boxEnabled: isBox }));
+                          persistDraft({ subtitleConfig: { ...subtitleConfig, boxEnabled: isBox } });
+                        }}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: 'var(--bg-surface)',
+                          border: '1px solid var(--border-color)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12.5px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <option value="no_box">No Background Box</option>
+                        <option value="box">Background Box (Glass / Bar)</option>
+                      </select>
+                    </div>
+
+                    {/* Row 3, Col 2: Box Color */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', opacity: subtitleConfig.boxEnabled ? 1 : 0.45 }}>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        Box Color
+                      </label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <select
+                          disabled={!subtitleConfig.boxEnabled}
+                          value={
+                            ['#1A1917', '#000000', '#1E1B4B', '#18181B', '#7C2D12'].includes((subtitleConfig.boxColor || subtitleConfig.backgroundColor || '#1A1917').toUpperCase())
+                              ? (subtitleConfig.boxColor || subtitleConfig.backgroundColor || '#1A1917').toUpperCase()
+                              : 'custom'
+                          }
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val !== 'custom') {
+                              setSubtitleConfig((prev) => ({ ...prev, boxColor: val, backgroundColor: val }));
+                              persistDraft({ subtitleConfig: { ...subtitleConfig, boxColor: val, backgroundColor: val } });
+                            }
+                          }}
+                          style={{
+                            flex: 1,
+                            padding: '8px 12px',
+                            borderRadius: 'var(--radius-sm)',
+                            backgroundColor: 'var(--bg-surface)',
+                            border: '1px solid var(--border-color)',
+                            color: 'var(--text-primary)',
+                            fontSize: '12.5px',
+                            cursor: subtitleConfig.boxEnabled ? 'pointer' : 'not-allowed',
+                          }}
+                        >
+                          <option value="#1A1917">Frosted Dark Glass</option>
+                          <option value="#000000">Pure Black</option>
+                          <option value="#1E1B4B">Midnight Navy</option>
+                          <option value="#18181B">Zinc Charcoal</option>
+                          <option value="#7C2D12">Warm Amber</option>
+                          {!['#1A1917', '#000000', '#1E1B4B', '#18181B', '#7C2D12'].includes((subtitleConfig.boxColor || subtitleConfig.backgroundColor || '#1A1917').toUpperCase()) && (
+                            <option value="custom">Custom ({(subtitleConfig.boxColor || subtitleConfig.backgroundColor || '#1A1917').toUpperCase()})</option>
+                          )}
+                        </select>
+                        <input
+                          type="color"
+                          disabled={!subtitleConfig.boxEnabled}
+                          value={subtitleConfig.boxColor || subtitleConfig.backgroundColor || '#1A1917'}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSubtitleConfig((prev) => ({ ...prev, boxColor: val, backgroundColor: val }));
+                            persistDraft({ subtitleConfig: { ...subtitleConfig, boxColor: val, backgroundColor: val } });
+                          }}
+                          title="Choose custom box color"
+                          style={{
+                            width: '36px',
+                            height: '36px',
+                            padding: 0,
+                            borderRadius: 'var(--radius-sm)',
+                            border: '1px solid var(--border-color)',
+                            backgroundColor: 'transparent',
+                            cursor: subtitleConfig.boxEnabled ? 'pointer' : 'not-allowed',
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Row 3, Col 3: Outline & Shadow */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        Outline & Shadow
+                      </label>
+                      <select
+                        value={
+                          subtitleConfig.outlineWidth === 4
+                            ? 'heavy'
+                            : subtitleConfig.shadowDepth === 2
+                            ? 'shadow'
+                            : subtitleConfig.outlineWidth === 0 && subtitleConfig.shadowDepth === 0
+                            ? 'none'
+                            : 'medium'
+                        }
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          let outlineWidth = 3;
+                          let shadowDepth = 0;
+                          if (val === 'heavy') {
+                            outlineWidth = 4;
+                            shadowDepth = 0;
+                          } else if (val === 'shadow') {
+                            outlineWidth = 3;
+                            shadowDepth = 2;
+                          } else if (val === 'none') {
+                            outlineWidth = 0;
+                            shadowDepth = 0;
+                          }
+                          setSubtitleConfig((prev) => ({ ...prev, outlineWidth, shadowDepth }));
+                          persistDraft({ subtitleConfig: { ...subtitleConfig, outlineWidth, shadowDepth } });
+                        }}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: 'var(--bg-surface)',
+                          border: '1px solid var(--border-color)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12.5px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <option value="medium">Medium Outline (3px)</option>
+                        <option value="heavy">Heavy Outline (4px)</option>
+                        <option value="shadow">Drop Shadow & Outline</option>
+                        <option value="none">None (Clean Text)</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
 
@@ -3006,7 +3407,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                       Live Subtitle Interactive Preview
                     </label>
                     <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                      Canvas preview ({aspectRatio})
+                      Preview canvas ({aspectRatio})
                     </span>
                   </div>
 
@@ -3014,8 +3415,8 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                     style={{
                       position: 'relative',
                       width: '100%',
-                      maxWidth: aspectRatio === '9:16' ? '280px' : '520px',
-                      height: aspectRatio === '9:16' ? '240px' : '160px',
+                      maxWidth: aspectRatio === '9:16' ? '240px' : '480px',
+                      height: aspectRatio === '9:16' ? '160px' : '100px',
                       margin: '0 auto',
                       borderRadius: 'var(--radius-md)',
                       background: 'radial-gradient(circle at center, #1e1b4b 0%, #09090b 100%)',
@@ -3056,9 +3457,9 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                           fontSize: `${Math.round((subtitleConfig.fontSize || 32) * 0.42)}px`,
                           color: subtitleConfig.textColor || '#FFFFFF',
                           backgroundColor: subtitleConfig.boxEnabled
-                            ? subtitleConfig.backgroundColor || 'rgba(0,0,0,0.7)'
+                            ? subtitleConfig.boxColor || subtitleConfig.backgroundColor || 'rgba(0,0,0,0.7)'
                             : 'transparent',
-                          padding: subtitleConfig.boxEnabled ? '4px 10px' : '0',
+                          padding: subtitleConfig.boxEnabled ? '5px 12px' : '0',
                           borderRadius: '4px',
                           textAlign: 'center',
                           maxWidth: '85%',
@@ -3072,7 +3473,24 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                           border: subtitleConfig.boxEnabled ? '1px solid rgba(255,255,255,0.1)' : 'none',
                         }}
                       >
-                        Bioluminescent creatures illuminate the oceanic abyss.
+                        {subtitleConfig.animation === 'karaoke' ? (
+                          <>
+                            Bioluminescent creatures{' '}
+                            <span
+                              style={{
+                                color: (subtitleConfig.textColor || '#FFFFFF').toUpperCase() === '#FFE500' ? '#FFFFFF' : '#FFE500',
+                                textDecoration: 'underline',
+                              }}
+                            >
+                              illuminate
+                            </span>{' '}
+                            the abyss.
+                          </>
+                        ) : subtitleConfig.whatToShow === 'dialogue_only' ? (
+                          '"The abyss is glowing with life."'
+                        ) : (
+                          'Bioluminescent creatures illuminate the oceanic abyss.'
+                        )}
                       </div>
                     ) : (
                       <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
@@ -3080,193 +3498,6 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                       </span>
                     )}
                   </div>
-                </div>
-
-                {/* Collapsible / Expandable Typography & Appearance Settings */}
-                <div
-                  style={{
-                    backgroundColor: 'var(--bg-subtle)',
-                    borderRadius: 'var(--radius-md)',
-                    border: '1px solid var(--border-color)',
-                    overflow: 'hidden',
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setShowSubtitleAdvanced((prev) => !prev)}
-                    style={{
-                      width: '100%',
-                      padding: '12px 16px',
-                      backgroundColor: 'transparent',
-                      border: 'none',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      cursor: 'pointer',
-                      color: 'var(--text-primary)',
-                      fontSize: '13px',
-                      fontWeight: 600,
-                    }}
-                  >
-                    <span>Typography & Appearance Controls</span>
-                    <span style={{ fontSize: '11px', color: '#c084fc' }}>
-                      {showSubtitleAdvanced ? '▲ Collapse' : '▼ Customize Font, Colors, Position'}
-                    </span>
-                  </button>
-
-                  {showSubtitleAdvanced && (
-                    <div style={{ padding: '16px', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                      {/* Position Selector */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                          Screen Position:
-                        </label>
-                        <div style={{ display: 'flex', gap: '6px' }}>
-                          {(['bottom', 'center', 'top'] as const).map((pos) => {
-                            const isSel = (subtitleConfig.position || 'bottom') === pos;
-                            return (
-                              <button
-                                key={pos}
-                                type="button"
-                                onClick={() => {
-                                  setSubtitleConfig((prev) => ({ ...prev, position: pos }));
-                                  persistDraft({ subtitleConfig: { ...subtitleConfig, position: pos } });
-                                }}
-                                style={{
-                                  padding: '4px 12px',
-                                  fontSize: '11px',
-                                  borderRadius: '4px',
-                                  border: isSel ? '1px solid #a855f7' : '1px solid var(--border-color)',
-                                  backgroundColor: isSel ? 'rgba(168, 85, 247, 0.2)' : 'var(--bg-surface)',
-                                  color: isSel ? '#c084fc' : 'var(--text-secondary)',
-                                  cursor: 'pointer',
-                                  textTransform: 'capitalize',
-                                }}
-                              >
-                                {pos}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Font Family */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                          Font Family:
-                        </label>
-                        <select
-                          value={subtitleConfig.fontFamily || 'Arial'}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setSubtitleConfig((prev) => ({ ...prev, fontFamily: val }));
-                            persistDraft({ subtitleConfig: { ...subtitleConfig, fontFamily: val } });
-                          }}
-                          style={{
-                            padding: '4px 10px',
-                            borderRadius: '4px',
-                            backgroundColor: 'var(--bg-surface)',
-                            border: '1px solid var(--border-color)',
-                            color: 'var(--text-primary)',
-                            fontSize: '12px',
-                          }}
-                        >
-                          {['Arial', 'Impact', 'Montserrat', 'Roboto', 'Helvetica', 'Georgia'].map((f) => (
-                            <option key={f} value={f}>{f}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Font Size */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-                        <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                          Font Size: {subtitleConfig.fontSize || 32}px
-                        </label>
-                        <input
-                          type="range"
-                          min="20"
-                          max="48"
-                          step="2"
-                          value={subtitleConfig.fontSize || 32}
-                          onChange={(e) => {
-                            const val = parseInt(e.target.value, 10);
-                            setSubtitleConfig((prev) => ({ ...prev, fontSize: val }));
-                            persistDraft({ subtitleConfig: { ...subtitleConfig, fontSize: val } });
-                          }}
-                          style={{ flex: 1, maxWidth: '200px' }}
-                        />
-                      </div>
-
-                      {/* Text Color */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                          Text Color:
-                        </label>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <input
-                            type="color"
-                            value={subtitleConfig.textColor || '#FFFFFF'}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setSubtitleConfig((prev) => ({ ...prev, textColor: val }));
-                              persistDraft({ subtitleConfig: { ...subtitleConfig, textColor: val } });
-                            }}
-                            style={{ width: '28px', height: '28px', padding: 0, border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-                          />
-                          <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-                            {subtitleConfig.textColor || '#FFFFFF'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Background Box */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                          Background Box:
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const next = !subtitleConfig.boxEnabled;
-                            setSubtitleConfig((prev) => ({ ...prev, boxEnabled: next }));
-                            persistDraft({ subtitleConfig: { ...subtitleConfig, boxEnabled: next } });
-                          }}
-                          className={subtitleConfig.boxEnabled ? 'btn-primary' : 'btn-secondary'}
-                          style={{ padding: '3px 12px', fontSize: '11px' }}
-                        >
-                          {subtitleConfig.boxEnabled ? 'Box Enabled' : 'No Box (Outline)'}
-                        </button>
-                      </div>
-
-                      {subtitleConfig.boxEnabled && (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                            Box Background Color:
-                          </label>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <input
-                              type="color"
-                              value={subtitleConfig.backgroundColor || '#1A1917'}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setSubtitleConfig((prev) => ({ ...prev, backgroundColor: val }));
-                                persistDraft({ subtitleConfig: { ...subtitleConfig, backgroundColor: val } });
-                              }}
-                              style={{ width: '28px', height: '28px', padding: 0, border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-                            />
-                            <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-                              {subtitleConfig.backgroundColor || '#1A1917'}
-                            </span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Subtitles Status */}
-                <div style={{ padding: '10px 14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', fontSize: '11.5px', color: '#10b981' }}>
-                  <strong>Subtitles Pipeline:</strong> Synchronized word-level subtitles are compiled to ASS V4+ events and burned into per-scene MP4 clips via local FFmpeg libass rendering with exact typography parameters.
                 </div>
               </div>
             )}
@@ -3892,7 +4123,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                       {subtitlesEnabled ? `Enabled · ${subtitleStyle} (${subtitleConfig.fontFamily || 'Arial'})` : 'Disabled'}
                     </span>
                     <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
-                      Position: {subtitleConfig.position || 'bottom'} · Size: {subtitleConfig.fontSize || 32}px {subtitleConfig.boxEnabled ? '· Box' : '· Outline'}
+                      Position: {subtitleConfig.position || 'bottom'} · Size: {subtitleConfig.fontSize || 32}px {subtitleConfig.boxEnabled ? '· Box' : '· Outline'}{subtitleConfig.animation ? ` · ${subtitleConfig.animation}` : ''}
                     </span>
                   </div>
 

@@ -826,9 +826,12 @@ export interface SubtitleConfig {
     fontSize?: number;
     textColor?: string;
     backgroundColor?: string;
+    boxColor?: string;
     boxEnabled?: boolean;
     outlineWidth?: number;
     shadowDepth?: number;
+    animation?: 'none' | 'karaoke' | 'fade' | 'pop';
+    whatToShow?: 'all' | 'dialogue_only' | 'narration_only';
 }
 
 export interface VideoFactoryConfig {

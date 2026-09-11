@@ -125,7 +125,7 @@ describe('ZBot Create Video Parity Test Suite', () => {
     expect(screen.getByText(/Source \/ Original/i)).toBeDefined();
   });
 
-  it('4. Step 3 (Subtitles): renders master switch, 4 presets, live preview canvas, and typography controls', async () => {
+  it('4. Step 3 (Subtitles): renders master switch, 4 presets, direct individual controls, live preview, and no dummy blocks', async () => {
     await setupScreen();
 
     // Step 1 -> Step 2 -> Step 3
@@ -133,10 +133,33 @@ describe('ZBot Create Video Parity Test Suite', () => {
     fireEvent.click(screen.getByRole('button', { name: /Next Step/i }));
 
     expect(screen.getByText(/Subtitles Configuration/i)).toBeDefined();
+    expect(screen.getByText(/Burn Subtitles onto Video/i)).toBeDefined();
+
+    // 1. Verify exactly 4 presets exist
     expect(screen.getByText(/Bottom Glass/i)).toBeDefined();
     expect(screen.getByText(/Solid Bar/i)).toBeDefined();
     expect(screen.getByText(/Neon Punch/i)).toBeDefined();
     expect(screen.getByText(/Cinema Yellow/i)).toBeDefined();
+
+    // 2. Verify all direct controls are visible WITHOUT accordion
+    expect(screen.getByText(/^Animation$/i)).toBeDefined();
+    expect(screen.getByText(/^What to Show$/i)).toBeDefined();
+    expect(screen.getByText(/^Position$/i)).toBeDefined();
+    expect(screen.getByText(/^Font$/i)).toBeDefined();
+    expect(screen.getByText(/^Size$/i)).toBeDefined();
+    expect(screen.getByText(/^Text Color$/i)).toBeDefined();
+    expect(screen.getByText(/^Background Box$/i)).toBeDefined();
+    expect(screen.getByText(/^Box Color$/i)).toBeDefined();
+    expect(screen.getByText(/^Outline & Shadow$/i)).toBeDefined();
+
+    // 3. Verify old accordion is removed
+    expect(screen.queryByText(/Typography & Appearance Controls/i)).toBeNull();
+    expect(screen.queryByText(/Customize Font, Colors, Position/i)).toBeNull();
+
+    // 4. Verify old dummy pipeline text is removed
+    expect(screen.queryByText(/Subtitles Pipeline:/i)).toBeNull();
+
+    // 5. Verify live preview canvas
     expect(screen.getByText(/Live Subtitle Interactive Preview/i)).toBeDefined();
   });
 

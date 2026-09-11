@@ -279,7 +279,8 @@ export class SubtitleGenerator {
       if (config.fontFamily) font = config.fontFamily;
       if (typeof config.fontSize === 'number' && config.fontSize > 0) fontSize = config.fontSize;
       if (config.textColor) primaryColor = SubtitleGenerator.hexToAssColor(config.textColor, '00');
-      if (config.backgroundColor) backColor = SubtitleGenerator.hexToAssColor(config.backgroundColor, '80');
+      const boxCol = config.boxColor || config.backgroundColor;
+      if (boxCol) backColor = SubtitleGenerator.hexToAssColor(boxCol, '80');
       if (typeof config.boxEnabled === 'boolean') {
         borderStyle = config.boxEnabled ? 3 : 1;
       }
@@ -310,14 +311,40 @@ export class SubtitleGenerator {
 
     const styleInput = options.subtitleConfig || options.subtitleStyle || 'bottom_glass';
     const styleLine = this.getStyleDefinition(styleInput);
-    const cues = this.buildCues(options.narrationText, options.durationSeconds, options.wordTimings);
+    const config = typeof styleInput === 'object' ? styleInput : undefined;
+
+    let textToProcess = options.narrationText || '';
+    if (config?.whatToShow === 'dialogue_only') {
+      const matches = textToProcess.match(/["“][^"”]+["”]/g);
+      if (matches && matches.length > 0) {
+        textToProcess = matches.join(' ');
+      }
+    } else if (config?.whatToShow === 'narration_only') {
+      const stripped = textToProcess.replace(/["“][^"”]+["”]/g, '').trim();
+      if (stripped) {
+        textToProcess = stripped;
+      }
+    }
+
+    const cues = this.buildCues(textToProcess, options.durationSeconds, options.wordTimings);
 
     let dialogueLines = '';
+    const anim = config?.animation;
     for (const cue of cues) {
       const start = this.formatAssTime(cue.startMs);
       const end = this.formatAssTime(cue.endMs);
       const escaped = this.escapeAssText(cue.text);
-      dialogueLines += `Dialogue: 0,${start},${end},Default,,0,0,0,,${escaped}\n`;
+      let eventText = escaped;
+      if (anim === 'fade') {
+        eventText = `{\\fad(200,200)}${escaped}`;
+      } else if (anim === 'pop') {
+        eventText = `{\\t(0,100,\\fscx112\\fscy112)\\t(100,200,\\fscx100\\fscy100)}${escaped}`;
+      } else if (anim === 'karaoke') {
+        const words = escaped.split(/\s+/).filter(Boolean);
+        const durCs = Math.max(1, Math.round((cue.endMs - cue.startMs) / 10 / Math.max(1, words.length)));
+        eventText = words.map((w) => `{\\kf${durCs}}${w}`).join(' ');
+      }
+      dialogueLines += `Dialogue: 0,${start},${end},Default,,0,0,0,,${eventText}\n`;
     }
 
     return `[Script Info]
