@@ -48,21 +48,21 @@ describe('All-Pages-Mounted Architecture (ZBot §4 Parity)', () => {
     expect(projectsContainer.style.display).toBe('flex');
   });
 
-  it('preserves Projects in the DOM with display: none when navigating to Channels', async () => {
+  it('preserves Projects in the DOM with display: none when navigating to Create Video', async () => {
     await act(async () => {
       render(<AppShell />);
     });
 
-    const channelsNavBtn = screen.getByTestId('nav-item-channels');
+    const createVideoNavBtn = screen.getByTestId('nav-item-create_video');
 
     await act(async () => {
-      fireEvent.click(channelsNavBtn);
+      fireEvent.click(createVideoNavBtn);
     });
 
-    // Channels container should now be mounted and visible
-    const channelsContainer = screen.getByTestId('view-container-channels');
-    expect(channelsContainer).toBeTruthy();
-    expect(channelsContainer.style.display).toBe('flex');
+    // Create Video container should now be mounted and visible
+    const createVideoContainer = screen.getByTestId('view-container-create-video');
+    expect(createVideoContainer).toBeTruthy();
+    expect(createVideoContainer.style.display).toBe('flex');
 
     // Projects container MUST remain in the DOM (never unmounted), with display: none
     const projectsContainer = screen.getByTestId('view-container-projects');
@@ -75,16 +75,6 @@ describe('All-Pages-Mounted Architecture (ZBot §4 Parity)', () => {
       render(<AppShell />);
     });
 
-    // Visit Channels
-    const channelsNavBtn = screen.getByTestId('nav-item-channels');
-    await act(async () => {
-      fireEvent.click(channelsNavBtn);
-    });
-
-    const channelsContainer = screen.getByTestId('view-container-channels');
-    expect(channelsContainer.style.display).toBe('flex');
-    expect(screen.getByTestId('view-container-projects').style.display).toBe('none');
-
     // Visit Create Video
     const createVideoNavBtn = screen.getByTestId('nav-item-create_video');
     await act(async () => {
@@ -93,7 +83,17 @@ describe('All-Pages-Mounted Architecture (ZBot §4 Parity)', () => {
 
     const createVideoContainer = screen.getByTestId('view-container-create-video');
     expect(createVideoContainer.style.display).toBe('flex');
-    expect(screen.getByTestId('view-container-channels').style.display).toBe('none');
+    expect(screen.getByTestId('view-container-projects').style.display).toBe('none');
+
+    // Visit Single Image
+    const singleImageNavBtn = screen.getByTestId('nav-item-single_image');
+    await act(async () => {
+      fireEvent.click(singleImageNavBtn);
+    });
+
+    const singleImageContainer = screen.getByTestId('view-container-generation-studio');
+    expect(singleImageContainer.style.display).toBe('flex');
+    expect(screen.getByTestId('view-container-create-video').style.display).toBe('none');
     expect(screen.getByTestId('view-container-projects').style.display).toBe('none');
 
     // Return to Projects
@@ -105,6 +105,6 @@ describe('All-Pages-Mounted Architecture (ZBot §4 Parity)', () => {
     // Projects should be visible again without remounting
     expect(screen.getByTestId('view-container-projects').style.display).toBe('flex');
     expect(screen.getByTestId('view-container-create-video').style.display).toBe('none');
-    expect(screen.getByTestId('view-container-channels').style.display).toBe('none');
+    expect(screen.getByTestId('view-container-generation-studio').style.display).toBe('none');
   });
 });

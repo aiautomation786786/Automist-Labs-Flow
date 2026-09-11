@@ -53,10 +53,12 @@ describe('AppShell Sidebar Cleanup', () => {
     // Standalone Skills item is removed per ZBot §4 (accessed via From Skill & Channel settings)
     expect(screen.queryByTestId('nav-item-skills')).toBeNull();
 
+    // Standalone Channels item is removed per ZBot §4 (integrated inside Projects workspace)
+    expect(screen.queryByTestId('nav-item-channels')).toBeNull();
+
     // Clean valid navigation items must exist
     expect(screen.getByTestId('nav-item-projects')).toBeDefined();
     expect(screen.getByTestId('nav-item-create_video')).toBeDefined();
-    expect(screen.getByTestId('nav-item-channels')).toBeDefined();
     expect(screen.getByTestId('nav-item-single_image')).toBeDefined();
     expect(screen.getByTestId('nav-item-single_video')).toBeDefined();
     expect(screen.getByTestId('nav-item-bulk_image')).toBeDefined();

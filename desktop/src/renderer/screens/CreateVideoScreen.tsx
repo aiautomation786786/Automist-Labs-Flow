@@ -37,6 +37,7 @@ import {
 interface CreateVideoScreenProps {
   initialMode?: VideoFactoryMode;
   initialSkillId?: string;
+  initialChannelId?: string;
   onProjectCreated: (projectId: string) => void;
   onCancel: () => void;
 }
@@ -201,6 +202,7 @@ const MOTION_NAMES: Record<string, string> = {
 export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
   initialMode,
   initialSkillId,
+  initialChannelId,
   onProjectCreated,
   onCancel,
 }) => {
@@ -283,7 +285,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
   const [createdAudioProjectId, setCreatedAudioProjectId] = useState<string | null>(null);
 
   // Channel State
-  const [channelId, setChannelId] = useState<string | undefined>();
+  const [channelId, setChannelId] = useState<string | undefined>(initialChannelId);
   const [channelName, setChannelName] = useState<string | undefined>();
   const [availableChannels, setAvailableChannels] = useState<ChannelEntity[]>([]);
 
@@ -435,7 +437,16 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
     const loadDraft = async () => {
       if (window.flowApi?.listChannels) {
         window.flowApi.listChannels().then((chs) => {
-          if (mounted && chs) setAvailableChannels(chs);
+          if (mounted && chs) {
+            setAvailableChannels(chs);
+            if (initialChannelId) {
+              const matched = chs.find((c) => c.id === initialChannelId);
+              if (matched) {
+                setChannelId(matched.id);
+                setChannelName(matched.name);
+              }
+            }
+          }
         }).catch(() => {});
       }
 

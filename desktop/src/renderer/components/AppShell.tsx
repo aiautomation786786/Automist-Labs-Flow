@@ -6,7 +6,6 @@ import { WorkspaceScreen } from '../screens/WorkspaceScreen';
 import { ProfilesScreen } from '../screens/ProfilesScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { CreateVideoScreen } from '../screens/CreateVideoScreen';
-import { ChannelsScreen } from '../screens/ChannelsScreen';
 import { SkillsScreen } from '../screens/SkillsScreen';
 import {
   FolderIcon,
@@ -17,13 +16,12 @@ import {
   SparklesIcon,
   UsersIcon,
   SettingsIcon,
-  TvIcon,
 } from './Icons';
 import { InfinityFlowMark } from './InfinityFlowLogo';
 import type { ProfileSessionSnapshot, VideoFactoryMode } from '../../shared/types';
 
 type View =
-  | { type: 'projects' }
+  | { type: 'projects'; initialTab?: 'projects' | 'channels' }
   | { type: 'single_image' }
   | { type: 'single_video' }
   | { type: 'bulk_image' }
@@ -33,7 +31,7 @@ type View =
   | { type: 'new_generation'; initialMode?: GenerationMode }
   | { type: 'new_project' }
   | { type: 'workspace'; projectId: string }
-  | { type: 'create_video'; initialMode?: VideoFactoryMode; initialSkillId?: string }
+  | { type: 'create_video'; initialMode?: VideoFactoryMode; initialSkillId?: string; initialChannelId?: string }
   | { type: 'channels' }
   | { type: 'skills' }
   | { type: 'profiles' }
@@ -67,6 +65,7 @@ export const AppShell: React.FC = () => {
   const [createVideoProps, setCreateVideoProps] = useState<{
     initialMode?: VideoFactoryMode;
     initialSkillId?: string;
+    initialChannelId?: string;
   }>({});
 
   const isGenerationStudio =
@@ -94,7 +93,10 @@ export const AppShell: React.FC = () => {
       setCreateVideoProps({
         initialMode: currentView.initialMode,
         initialSkillId: currentView.initialSkillId,
+        initialChannelId: currentView.initialChannelId,
       });
+    } else if (currentView.type === 'channels') {
+      setCurrentView({ type: 'projects', initialTab: 'channels' });
     }
   }, [currentView, viewCategory]);
 
@@ -141,13 +143,6 @@ export const AppShell: React.FC = () => {
           icon: <SparklesIcon size={16} />,
           isActive: currentView.type === 'create_video',
           onClick: () => setCurrentView({ type: 'create_video' }),
-        },
-        {
-          id: 'channels',
-          label: 'Channels',
-          icon: <TvIcon size={16} />,
-          isActive: currentView.type === 'channels',
-          onClick: () => setCurrentView({ type: 'channels' }),
         },
       ],
     },
@@ -421,8 +416,12 @@ export const AppShell: React.FC = () => {
             }}
           >
             <ProjectsScreen
+              initialTab={currentView.type === 'projects' ? currentView.initialTab : undefined}
               onOpenProject={(projectId) => setCurrentView({ type: 'workspace', projectId })}
               onNavigateNewProject={() => setCurrentView({ type: 'single_image' })}
+              onNavigateVideoFactory={(channelId) =>
+                setCurrentView({ type: 'create_video', initialChannelId: channelId })
+              }
             />
           </div>
         )}
@@ -535,6 +534,7 @@ export const AppShell: React.FC = () => {
             <CreateVideoScreen
               initialMode={createVideoProps.initialMode}
               initialSkillId={createVideoProps.initialSkillId}
+              initialChannelId={createVideoProps.initialChannelId}
               onProjectCreated={(projectId) => setCurrentView({ type: 'workspace', projectId })}
               onCancel={() => setCurrentView({ type: 'projects' })}
             />
@@ -552,9 +552,13 @@ export const AppShell: React.FC = () => {
               overflow: 'hidden',
             }}
           >
-            <ChannelsScreen
+            <ProjectsScreen
+              initialTab="channels"
               onOpenProject={(projectId) => setCurrentView({ type: 'workspace', projectId })}
-              onNavigateVideoFactory={() => setCurrentView({ type: 'create_video' })}
+              onNavigateNewProject={() => setCurrentView({ type: 'single_image' })}
+              onNavigateVideoFactory={(channelId) =>
+                setCurrentView({ type: 'create_video', initialChannelId: channelId })
+              }
             />
           </div>
         )}

@@ -5,12 +5,34 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import { ProjectsScreen } from '../renderer/screens/ProjectsScreen';
-import type { ProjectEntity } from '../shared/types';
+import type { ProjectEntity, ChannelEntity } from '../shared/types';
 
 describe('ProjectsScreen', () => {
   afterEach(() => {
     cleanup();
   });
+
+  const mockChannels: ChannelEntity[] = [
+    {
+      id: 'ch_1',
+      name: 'SciFi Universe',
+      description: 'Futuristic sci-fi channel',
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      destinations: {
+        shortsDir: 'D:/Videos/SciFi/Shorts',
+        longsDir: 'D:/Videos/SciFi/Longs',
+      },
+      rulebook: {
+        tone: 'Cinematic',
+      },
+      stats: {
+        totalVideos: 4,
+        deliveredVideos: 2,
+      },
+    },
+  ];
   const mockProjects: ProjectEntity[] = [
     {
       projectId: 'proj_1',
@@ -120,6 +142,14 @@ describe('ProjectsScreen', () => {
       onJobFailed: vi.fn().mockReturnValue(() => {}),
       launchLoginBrowser: vi.fn().mockResolvedValue({ success: true, pid: 99999, cdpPort: 9222, userDataDir: 'C:\\test', message: 'Chrome opened' }),
       onWorkerStatus: vi.fn().mockReturnValue(() => {}),
+      listChannels: vi.fn().mockResolvedValue(mockChannels),
+      assignProjectToChannel: vi.fn().mockResolvedValue({}),
+      deliverProjectToChannel: vi.fn().mockResolvedValue({
+        channelName: 'SciFi Universe',
+        deliveredVideoPath: 'D:/Videos/SciFi/Shorts/video.mp4',
+      }),
+      getChannelHistory: vi.fn().mockResolvedValue({ records: [], total: 0 }),
+      deleteChannel: vi.fn().mockResolvedValue({ success: true, unassignedProjects: 1 }),
     };
   });
 
@@ -143,7 +173,7 @@ describe('ProjectsScreen', () => {
     expect(screen.getByText('Fantasy Landscapes')).toBeDefined();
 
     // Filter by "cyber"
-    const searchInput = screen.getByPlaceholderText(/Search projects by name or tag/i);
+    const searchInput = screen.getByPlaceholderText(/Search projects by name/i);
     fireEvent.change(searchInput, { target: { value: 'cyber' } });
 
     expect(screen.getByText('Cyberpunk Episode')).toBeDefined();
@@ -183,5 +213,106 @@ describe('ProjectsScreen', () => {
     });
 
     expect(window.flowApi?.deleteProject).toHaveBeenCalledWith('proj_1');
+  });
+
+  it('switches to Channels tab and renders Channel Grid with action cards', async () => {
+    render(
+      <ProjectsScreen
+        onOpenProject={() => {}}
+        onNavigateNewProject={() => {}}
+      />
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Both switcher buttons exist
+    const projectsTabBtn = screen.getByTestId('tab-projects');
+    const channelsTabBtn = screen.getByTestId('tab-channels');
+    expect(projectsTabBtn).toBeDefined();
+    expect(channelsTabBtn).toBeDefined();
+
+    // Click Channels tab
+    await act(async () => {
+      fireEvent.click(channelsTabBtn);
+      await Promise.resolve();
+    });
+
+    // New Channel card & Unsorted Projects card must be present per ZBot §4
+    expect(screen.getByTestId('create-new-channel-card')).toBeDefined();
+    expect(screen.getByTestId('unsorted-projects-card')).toBeDefined();
+
+    // Existing channel card must be rendered with name and tone
+    expect(screen.getByTestId('channel-card-ch_1')).toBeDefined();
+    expect(screen.getByText('SciFi Universe')).toBeDefined();
+    expect(screen.getByText(/Tone: Cinematic/i)).toBeDefined();
+  });
+
+  it('filters projects by channel and supports moving project to channel', async () => {
+    render(
+      <ProjectsScreen
+        onOpenProject={() => {}}
+        onNavigateNewProject={() => {}}
+      />
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Channel filter dropdown should be present in Projects view
+    const channelFilterSelect = screen.getByTestId('channel-filter-select') as HTMLSelectElement;
+    expect(channelFilterSelect).toBeDefined();
+
+    // Move to channel dropdown on project card
+    const moveSelect = screen.getByTestId('move-channel-select-proj_1') as HTMLSelectElement;
+    expect(moveSelect).toBeDefined();
+
+    await act(async () => {
+      fireEvent.change(moveSelect, { target: { value: 'ch_1' } });
+      await Promise.resolve();
+    });
+
+    expect(window.flowApi?.assignProjectToChannel).toHaveBeenCalledWith('proj_1', 'ch_1');
+  });
+
+  it('drills into channel detail view and displays orientation tabs', async () => {
+    const onNavigateVideoFactory = vi.fn();
+    render(
+      <ProjectsScreen
+        onOpenProject={() => {}}
+        onNavigateNewProject={() => {}}
+        initialTab="channels"
+        onNavigateVideoFactory={onNavigateVideoFactory}
+      />
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Click View Projects on the channel card
+    const viewProjectsBtn = screen.getByTestId('btn-view-projects-ch_1');
+    await act(async () => {
+      fireEvent.click(viewProjectsBtn);
+      await Promise.resolve();
+    });
+
+    // Back to Channels button must exist
+    expect(screen.getByTestId('btn-back-to-channels')).toBeDefined();
+
+    // Orientation tabs per ZBot §4
+    expect(screen.getByTestId('tab-orientation-all')).toBeDefined();
+    expect(screen.getByTestId('tab-orientation-shorts')).toBeDefined();
+    expect(screen.getByTestId('tab-orientation-longs')).toBeDefined();
+
+    // Back to channels grid
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('btn-back-to-channels'));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId('create-new-channel-card')).toBeDefined();
   });
 });
