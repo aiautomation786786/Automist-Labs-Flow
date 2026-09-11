@@ -2647,16 +2647,16 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                     {
                       ratio: '16:9' as SupportedAspectRatio,
                       title: '16:9 Landscape',
-                      desc: 'Standard widescreen for YouTube Longs, desktop displays, and TV broadcast.',
-                      boxWidth: '70px',
-                      boxHeight: '40px',
+                      platforms: ['YouTube', 'TV'],
+                      boxWidth: '80px',
+                      boxHeight: '45px',
                     },
                     {
                       ratio: '9:16' as SupportedAspectRatio,
                       title: '9:16 Portrait (Vertical)',
-                      desc: 'Vertical format optimized for YouTube Shorts, Instagram Reels, and TikTok.',
-                      boxWidth: '40px',
-                      boxHeight: '70px',
+                      platforms: ['TikTok', 'Reels', 'Shorts'],
+                      boxWidth: '45px',
+                      boxHeight: '80px',
                     },
                   ].map((f) => {
                     const isSel = aspectRatio === f.ratio;
@@ -2668,49 +2668,97 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                           persistDraft({ aspectRatio: f.ratio });
                         }}
                         style={{
-                          backgroundColor: isSel ? 'rgba(168, 85, 247, 0.12)' : 'var(--bg-subtle)',
+                          backgroundColor: isSel ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-subtle)',
                           border: isSel ? '2px solid #a855f7' : '1px solid var(--border-color)',
+                          boxShadow: isSel ? '0 0 0 1px rgba(168, 85, 247, 0.4), 0 4px 16px rgba(168, 85, 247, 0.15)' : 'none',
                           borderRadius: 'var(--radius-md)',
-                          padding: '18px',
+                          padding: '20px',
                           cursor: 'pointer',
                           display: 'flex',
                           flexDirection: 'column',
-                          gap: '12px',
+                          gap: '16px',
+                          transition: 'all 0.18s ease-in-out',
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <span style={{ fontSize: '14px', fontWeight: 700, color: isSel ? '#c084fc' : 'var(--text-primary)' }}>
+                          <span style={{ fontSize: '15px', fontWeight: isSel ? 700 : 600, color: isSel ? '#ffffff' : 'var(--text-primary)' }}>
                             {f.title}
                           </span>
-                          {isSel && <CheckIcon size={16} color="#a855f7" />}
+                          <div
+                            style={{
+                              width: '22px',
+                              height: '22px',
+                              borderRadius: '50%',
+                              backgroundColor: isSel ? '#a855f7' : 'transparent',
+                              border: isSel ? '2px solid #a855f7' : '2px solid var(--border-color)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              transition: 'all 0.18s ease-in-out',
+                            }}
+                          >
+                            {isSel && <CheckIcon size={13} color="#ffffff" />}
+                          </div>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px 0' }}>
+
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '96px' }}>
                           <div
                             style={{
                               width: f.boxWidth,
                               height: f.boxHeight,
-                              border: isSel ? '2px solid #a855f7' : '2px dashed var(--border-color)',
-                              borderRadius: '4px',
-                              backgroundColor: isSel ? 'rgba(168, 85, 247, 0.2)' : 'transparent',
+                              border: isSel ? '2px solid #a855f7' : '2px dashed rgba(255, 255, 255, 0.25)',
+                              borderRadius: '6px',
+                              backgroundColor: isSel ? 'rgba(168, 85, 247, 0.28)' : 'rgba(255, 255, 255, 0.02)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              transition: 'all 0.18s ease-in-out',
                             }}
-                          />
+                          >
+                            <span
+                              style={{
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                color: isSel ? '#e9d5ff' : 'var(--text-muted)',
+                              }}
+                            >
+                              {f.ratio}
+                            </span>
+                          </div>
                         </div>
-                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>
-                          {f.desc}
-                        </p>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          {f.platforms.map((platform) => (
+                            <span
+                              key={platform}
+                              style={{
+                                fontSize: '11px',
+                                fontWeight: 500,
+                                padding: '3px 9px',
+                                borderRadius: '12px',
+                                backgroundColor: isSel ? 'rgba(168, 85, 247, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                                color: isSel ? '#e9d5ff' : 'var(--text-muted)',
+                                border: isSel ? '1px solid rgba(168, 85, 247, 0.45)' : '1px solid rgba(255, 255, 255, 0.08)',
+                                transition: 'all 0.18s ease-in-out',
+                              }}
+                            >
+                              {platform}
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     );
                   })}
                 </div>
 
-                {/* Local Final-Render Output Resolution (User-Requested Enhancement) */}
+                {/* Output Resolution */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   <div>
                     <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                      Local Final-Render Output Resolution
+                      Output Resolution
                     </label>
                     <p style={{ fontSize: '11.5px', color: 'var(--text-muted)', margin: '2px 0 0 0' }}>
-                      Controls the output canvas resolution generated during local FFmpeg broadcast video assembly.
+                      Choose the final output resolution.
                     </p>
                   </div>
 
@@ -2719,20 +2767,17 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                       {
                         id: 'source' as FinalOutputResolution,
                         name: 'Source / Original',
-                        badge: 'NATIVE',
-                        desc: aspectRatio === '9:16' ? 'Native generation (720x1280)' : 'Native generation (1280x720)',
+                        desc: aspectRatio === '9:16' ? '720 × 1280' : '1280 × 720',
                       },
                       {
                         id: '1080p' as FinalOutputResolution,
                         name: '1080p Full HD',
-                        badge: 'POPULAR',
-                        desc: aspectRatio === '9:16' ? '1080x1920 (Vertical HD)' : '1920x1080 (Full HD Widescreen)',
+                        desc: aspectRatio === '9:16' ? '1080 × 1920' : '1920 × 1080',
                       },
                       {
                         id: '4k' as FinalOutputResolution,
                         name: '4K Ultra HD',
-                        badge: 'ULTRA RES',
-                        desc: aspectRatio === '9:16' ? '2160x3840 (4K Vertical)' : '3840x2160 (4K UHD Widescreen)',
+                        desc: aspectRatio === '9:16' ? '2160 × 3840' : '3840 × 2160',
                       },
                     ].map((res) => {
                       const isSel = outputResolution === res.id;
@@ -2747,50 +2792,40 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                             padding: '12px 14px',
                             borderRadius: 'var(--radius-sm)',
                             border: isSel ? '2px solid #a855f7' : '1px solid var(--border-color)',
-                            backgroundColor: isSel ? 'rgba(168, 85, 247, 0.12)' : 'var(--bg-subtle)',
+                            backgroundColor: isSel ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-subtle)',
+                            boxShadow: isSel ? '0 0 0 1px rgba(168, 85, 247, 0.3)' : 'none',
                             cursor: 'pointer',
                             display: 'flex',
                             flexDirection: 'column',
                             gap: '4px',
+                            transition: 'all 0.18s ease-in-out',
                           }}
                         >
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: '12.5px', fontWeight: 600, color: isSel ? '#c084fc' : 'var(--text-primary)' }}>
+                            <span style={{ fontSize: '13px', fontWeight: isSel ? 700 : 600, color: isSel ? '#ffffff' : 'var(--text-primary)' }}>
                               {res.name}
                             </span>
-                            <span
+                            <div
                               style={{
-                                fontSize: '9px',
-                                fontWeight: 700,
-                                padding: '1px 5px',
-                                borderRadius: '3px',
-                                backgroundColor: isSel ? 'rgba(168, 85, 247, 0.2)' : 'var(--bg-surface)',
-                                color: isSel ? '#a855f7' : 'var(--text-muted)',
+                                width: '16px',
+                                height: '16px',
+                                borderRadius: '50%',
+                                backgroundColor: isSel ? '#a855f7' : 'transparent',
+                                border: isSel ? '2px solid #a855f7' : '1.5px solid var(--border-color)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
                               }}
                             >
-                              {res.badge}
-                            </span>
+                              {isSel && <CheckIcon size={10} color="#ffffff" />}
+                            </div>
                           </div>
-                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                          <span style={{ fontSize: '11px', color: isSel ? '#d8b4fe' : 'var(--text-muted)' }}>
                             {res.desc}
                           </span>
                         </div>
                       );
                     })}
-                  </div>
-
-                  <div
-                    style={{
-                      padding: '10px 14px',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'rgba(59, 130, 246, 0.08)',
-                      border: '1px solid rgba(59, 130, 246, 0.25)',
-                      fontSize: '11.5px',
-                      color: '#60a5fa',
-                      lineHeight: 1.45,
-                    }}
-                  >
-                    <strong>Resolution Architecture:</strong> Native Google Flow and Gemini assets generate at provider resolutions. Infinity Flow's local FFmpeg final assembly engine scales and pads video streams to 4K Ultra HD ({aspectRatio === '9:16' ? '2160x3840' : '3840x2160'}) or 1080p Full HD using high-fidelity lanczos/bicubic resampling.
                   </div>
                 </div>
               </div>
@@ -3846,7 +3881,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                       {aspectRatio === '9:16' ? '9:16 Vertical (Shorts/Reels)' : '16:9 Landscape (Widescreen)'}
                     </span>
                     <span style={{ fontSize: '12px', color: '#c084fc', fontWeight: 600 }}>
-                      Output Resolution: {outputResolution === '4k' ? '4K Ultra HD (Local Assembly)' : outputResolution === '1080p' ? '1080p Full HD' : 'Source / Original'}
+                      Output Resolution: {outputResolution === '4k' ? '4K Ultra HD' : outputResolution === '1080p' ? '1080p Full HD' : 'Source / Original'}
                     </span>
                   </div>
 

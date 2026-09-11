@@ -119,7 +119,7 @@ describe('ZBot Create Video Parity Test Suite', () => {
 
     expect(screen.getByText(/16:9 Landscape/i)).toBeDefined();
     expect(screen.getByText(/9:16 Portrait/i)).toBeDefined();
-    expect(screen.getByText(/Local Final-Render Output Resolution/i)).toBeDefined();
+    expect(screen.getAllByText(/Output Resolution/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/4K Ultra HD/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/1080p Full HD/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/Source \/ Original/i)).toBeDefined();
