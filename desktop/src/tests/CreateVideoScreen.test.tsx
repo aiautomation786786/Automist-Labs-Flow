@@ -129,12 +129,10 @@ describe('CreateVideoScreen', () => {
     // Switch to From Skill
     fireEvent.click(screen.getByRole('button', { name: /From Skill/i }));
     expect(screen.getByText(/From Skill Workflow/i)).toBeDefined();
-    expect(screen.getByText(/Phase 8/i)).toBeDefined();
 
     // Switch to Audio Only
     fireEvent.click(screen.getByRole('button', { name: /Audio Only/i }));
     expect(screen.getByText(/Audio Only Workflow/i)).toBeDefined();
-    expect(screen.getByText(/Phase 4/i)).toBeDefined();
   });
 
   it('navigates through the 5 steps in Full Video mode and preserves state', async () => {

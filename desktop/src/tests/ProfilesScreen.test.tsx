@@ -140,4 +140,30 @@ describe('ProfilesScreen', () => {
 
     expect(window.flowApi?.stopProfile).toHaveBeenCalledWith('prof_1');
   });
+
+  it('launches Chrome immediately on clicking Add Flow Account without multi-step wizard', async () => {
+    render(<ProfilesScreen />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const addBtns = screen.getAllByRole('button', { name: /Add Flow Account/i });
+    await act(async () => {
+      fireEvent.click(addBtns[0]);
+      await Promise.resolve();
+    });
+
+    // Verify createProfile was called with auto-generated name
+    expect(window.flowApi?.createProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ displayName: expect.stringMatching(/Flow Account/) })
+    );
+
+    // Verify launchLoginBrowser was called immediately
+    expect(window.flowApi?.launchLoginBrowser).toHaveBeenCalledWith('prof_3');
+
+    // Verify streamlined modal is open instructing user to sign in
+    expect(screen.getByText(/Chrome window is open to Google Flow/i)).toBeDefined();
+    expect(screen.getByText(/Sign into your Google Account in the Chrome window/i)).toBeDefined();
+  });
 });

@@ -34,6 +34,7 @@ import { ChannelRepository } from '../storage/ChannelRepository';
 import { PromptBuilder } from './PromptBuilder';
 import { GeminiOpenAiProvider } from './GeminiOpenAiProvider';
 import { MockScriptAiProvider } from './MockScriptAiProvider';
+import { GeminiApiKeyManager } from './GeminiApiKeyManager';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AssetManager } from '../storage/AssetManager';
@@ -62,10 +63,14 @@ export class ScriptAiService {
     }
 
     const settings = SettingsManager.readSettings();
+    const keyManager = GeminiApiKeyManager.getInstance();
+    if (keyManager.getKeyCount() === 0) {
+      keyManager.loadAndMigrate();
+    }
     const keys = SettingsManager.getScriptAiKeys();
     const model = (settings.scriptAiModel as string) || GeminiOpenAiProvider.DEFAULT_MODEL;
 
-    if (keys.length > 0) {
+    if (keys.length > 0 || keyManager.getKeyCount() > 0) {
       return new GeminiOpenAiProvider(keys, model);
     }
 

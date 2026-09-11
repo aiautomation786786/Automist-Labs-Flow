@@ -117,18 +117,6 @@ export const SkillsScreen: React.FC<SkillsScreenProps> = ({
               <h1 style={{ margin: 0, fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)' }}>
                 Skills Library
               </h1>
-              <span
-                style={{
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  padding: '2px 8px',
-                  borderRadius: '12px',
-                  backgroundColor: 'rgba(16, 185, 129, 0.15)',
-                  color: '#10b981',
-                }}
-              >
-                Phase 8
-              </span>
             </div>
             <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
               Configure AI narrative rules, style rulebooks, and visual prompt directives for autonomous video production.

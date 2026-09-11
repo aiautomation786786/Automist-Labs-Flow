@@ -374,7 +374,7 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({
             {activeTab === 'rulebook' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <div style={{ fontSize: '12px', color: '#94a3b8', lineHeight: 1.5, marginBottom: '4px' }}>
-                  Define the stylistic and editorial guidelines for this channel. In Phase 7, these guidelines organize and document your channel persona; Phase 8 will consume them directly during autonomous script and prompt generation.
+                  Define the stylistic and editorial guidelines for this channel. These guidelines organize your channel persona and are consumed directly during autonomous script and prompt generation.
                 </div>
 
                 <div>

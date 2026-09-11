@@ -463,9 +463,12 @@ export class ScriptParser {
         const blocks = this.parseAssetBlocks(pText);
         extractedPrompts = blocks.map((b) => b.imagePrompt).filter((p) => p.length > 0);
       } else {
-        extractedPrompts = pText
-          .split(/\r?\n\r?\n+/)
-          .map((line) => line.trim().replace(/^(?:IMG|IMAGE|PROMPT|ASSET)\s*\d*[:\-\s]*/i, '').trim())
+        let rawLines = pText.split(/\r?\n\r?\n+/);
+        if (rawLines.length <= 1) {
+          rawLines = pText.split(/\r?\n/);
+        }
+        extractedPrompts = rawLines
+          .map((line) => line.trim().replace(/^(?:IMG|IMAGE|PROMPT|ASSET|\d+[\.:\)])\s*\d*[:\-\s]*/i, '').trim())
           .filter((p) => p.length > 0 && !p.startsWith('#') && !p.startsWith('===') && !p.startsWith('THUMBNAIL:'));
       }
     }

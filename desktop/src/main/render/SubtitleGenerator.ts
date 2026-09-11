@@ -11,6 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { WordTiming, SupportedAspectRatio } from './RenderTypes';
+import type { SubtitleConfig } from '../../shared/types';
 
 export interface SubtitleCue {
   text: string;
@@ -22,12 +23,39 @@ export interface GenerateSubtitleOptions {
   narrationText: string;
   durationSeconds: number;
   subtitleStyle?: string;
+  subtitleConfig?: SubtitleConfig;
   aspectRatio: SupportedAspectRatio;
   wordTimings?: WordTiming[];
   outputPath?: string;
 }
 
 export class SubtitleGenerator {
+  /**
+   * Converts a HEX color string (#RRGGBB or #RRGGBBAA) to ASS &HAABBGGRR format.
+   */
+  static hexToAssColor(hex: string, defaultAlpha = '00'): string {
+    if (!hex) return `&H${defaultAlpha}FFFFFF`;
+    let clean = hex.replace('#', '').trim();
+    if (clean.length === 3) {
+      clean = clean.split('').map(c => c + c).join('');
+    }
+    if (clean.length === 6) {
+      const r = clean.slice(0, 2);
+      const g = clean.slice(2, 4);
+      const b = clean.slice(4, 6);
+      return `&H${defaultAlpha}${b}${g}${r}`.toUpperCase();
+    }
+    if (clean.length === 8) {
+      const r = clean.slice(0, 2);
+      const g = clean.slice(2, 4);
+      const b = clean.slice(4, 6);
+      const a = clean.slice(6, 8);
+      const alphaNum = 255 - parseInt(a, 16);
+      const assAlpha = Math.max(0, Math.min(255, alphaNum)).toString(16).padStart(2, '0');
+      return `&H${assAlpha}${b}${g}${r}`.toUpperCase();
+    }
+    return `&H${defaultAlpha}FFFFFF`;
+  }
   /**
    * Formats milliseconds into ASS timestamp format: H:MM:SS.cc (centiseconds)
    */
@@ -148,30 +176,128 @@ export class SubtitleGenerator {
   }
 
   /**
-   * Generates the V4+ Styles section for the selected style.
+   * Generates the V4+ Styles section for the selected style or configuration.
    */
-  static getStyleDefinition(styleId: string): string {
-    const s = (styleId || 'bottom_glass').toLowerCase();
+  static getStyleDefinition(styleOrConfig?: string | SubtitleConfig): string {
+    let config: SubtitleConfig | undefined;
+    let presetName = 'bottom_glass';
+
+    if (typeof styleOrConfig === 'object' && styleOrConfig !== null) {
+      config = styleOrConfig;
+      presetName = config.preset || 'bottom_glass';
+    } else if (typeof styleOrConfig === 'string') {
+      const trimmed = styleOrConfig.trim();
+      if (trimmed.startsWith('{')) {
+        try {
+          config = JSON.parse(trimmed) as SubtitleConfig;
+          presetName = config.preset || 'bottom_glass';
+        } catch {
+          presetName = trimmed;
+        }
+      } else {
+        presetName = trimmed;
+      }
+    }
+
+    const s = (presetName || 'bottom_glass').toLowerCase();
+
+    // Base defaults per preset
+    let font = 'Arial';
+    let fontSize = 32;
+    let primaryColor = '&H00FFFFFF';
+    let secondaryColor = '&H000000FF';
+    let outlineColor = '&H00000000';
+    let backColor = '&H801A1917';
+    let borderStyle = 3; // 1 = outline + shadow, 3 = opaque/semi-trans box
+    let outline = 3;
+    let shadow = 0;
+    let alignment = 2; // bottom center
+    let marginV = 38;
 
     switch (s) {
       case 'solid_bar':
       case 'bottom_bar':
-        // High-contrast full opaque black bar behind bold white text
-        return 'Style: Default,Arial,32,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,3,4,0,2,24,24,36,1';
+        font = 'Arial';
+        fontSize = 32;
+        primaryColor = '&H00FFFFFF';
+        secondaryColor = '&H000000FF';
+        outlineColor = '&H00000000';
+        backColor = '&H00000000';
+        borderStyle = 3;
+        outline = 4;
+        shadow = 0;
+        alignment = 2;
+        marginV = 36;
+        break;
 
       case 'neon_punch':
-        // Electric neon cyan text with rich dark border and glow
-        return 'Style: Default,Arial,34,&H00FFFF00,&H000000FF,&H00101010,&H80000000,1,0,0,0,100,100,0,0,1,3,2,2,24,24,40,1';
+        font = 'Arial';
+        fontSize = 34;
+        primaryColor = '&H00FFFF00';
+        secondaryColor = '&H000000FF';
+        outlineColor = '&H00101010';
+        backColor = '&H80000000';
+        borderStyle = 1;
+        outline = 3;
+        shadow = 2;
+        alignment = 2;
+        marginV = 40;
+        break;
 
       case 'cinema_yellow':
-        // Classic cinematic documentary yellow with black outline & drop shadow
-        return 'Style: Default,Arial,34,&H0000E5FF,&H000000FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,3,2,2,24,24,42,1';
+        font = 'Arial';
+        fontSize = 34;
+        primaryColor = '&H0000E5FF';
+        secondaryColor = '&H000000FF';
+        outlineColor = '&H00000000';
+        backColor = '&H80000000';
+        borderStyle = 1;
+        outline = 3;
+        shadow = 2;
+        alignment = 2;
+        marginV = 42;
+        break;
 
       case 'bottom_glass':
       default:
-        // Frosted semi-transparent backing box (alpha &H80) behind bold white text
-        return 'Style: Default,Arial,32,&H00FFFFFF,&H000000FF,&H00000000,&H801A1917,1,0,0,0,100,100,0,0,3,3,0,2,24,24,38,1';
+        font = 'Arial';
+        fontSize = 32;
+        primaryColor = '&H00FFFFFF';
+        secondaryColor = '&H000000FF';
+        outlineColor = '&H00000000';
+        backColor = '&H801A1917';
+        borderStyle = 3;
+        outline = 3;
+        shadow = 0;
+        alignment = 2;
+        marginV = 38;
+        break;
     }
+
+    // Apply custom config overrides if provided
+    if (config) {
+      if (config.fontFamily) font = config.fontFamily;
+      if (typeof config.fontSize === 'number' && config.fontSize > 0) fontSize = config.fontSize;
+      if (config.textColor) primaryColor = SubtitleGenerator.hexToAssColor(config.textColor, '00');
+      if (config.backgroundColor) backColor = SubtitleGenerator.hexToAssColor(config.backgroundColor, '80');
+      if (typeof config.boxEnabled === 'boolean') {
+        borderStyle = config.boxEnabled ? 3 : 1;
+      }
+      if (typeof config.outlineWidth === 'number') outline = config.outlineWidth;
+      if (typeof config.shadowDepth === 'number') shadow = config.shadowDepth;
+
+      if (config.position === 'top') {
+        alignment = 8;
+        marginV = 40;
+      } else if (config.position === 'center') {
+        alignment = 5;
+        marginV = 0;
+      } else if (config.position === 'bottom') {
+        alignment = 2;
+      }
+    }
+
+    return `Style: Default,${font},${fontSize},${primaryColor},${secondaryColor},${outlineColor},${backColor},1,0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},${alignment},24,24,${marginV},1`;
   }
 
   /**
@@ -182,7 +308,8 @@ export class SubtitleGenerator {
     const playResX = isPortrait ? 720 : 1280;
     const playResY = isPortrait ? 1280 : 720;
 
-    const styleLine = this.getStyleDefinition(options.subtitleStyle || 'bottom_glass');
+    const styleInput = options.subtitleConfig || options.subtitleStyle || 'bottom_glass';
+    const styleLine = this.getStyleDefinition(styleInput);
     const cues = this.buildCues(options.narrationText, options.durationSeconds, options.wordTimings);
 
     let dialogueLines = '';

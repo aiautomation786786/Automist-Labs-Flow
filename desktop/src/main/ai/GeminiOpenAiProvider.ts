@@ -23,6 +23,8 @@ import type {
 } from './ScriptAiTypes';
 import { AppLogger } from '../utils/AppLogger';
 
+import { GeminiApiKeyManager } from './GeminiApiKeyManager';
+
 const logger = new AppLogger({ mirrorToStderr: false });
 
 export class GeminiOpenAiProvider implements IScriptAiProvider {
@@ -43,11 +45,20 @@ export class GeminiOpenAiProvider implements IScriptAiProvider {
     this.keys = keys.filter((k) => typeof k === 'string' && k.trim());
     this.model = model;
     this.endpoint = endpoint;
+
+    // Synchronize keys with key manager if keys passed directly
+    if (this.keys.length > 0) {
+      const manager = GeminiApiKeyManager.getInstance();
+      if (manager.getKeyCount() === 0) {
+        manager.setKeysForTesting(this.keys);
+      }
+    }
   }
 
   setKeys(keys: string[]): void {
     this.keys = keys.filter((k) => typeof k === 'string' && k.trim());
     this.currentKeyIndex = 0;
+    GeminiApiKeyManager.getInstance().setKeysForTesting(this.keys);
   }
 
   setModel(model: string): void {
@@ -57,20 +68,27 @@ export class GeminiOpenAiProvider implements IScriptAiProvider {
   /**
    * Returns currently active key masked for logging.
    */
-  private getActiveKeyMasked(): string {
-    const key = this.keys[this.currentKeyIndex] || '';
-    if (!key) return '(no key)';
-    return key.length > 8 ? `••••••••${key.slice(-4)}` : '••••••••';
+  private getActiveKeyMasked(keyStr?: string): string {
+    const key = keyStr || this.keys[this.currentKeyIndex] || '';
+    return GeminiApiKeyManager.maskKey(key);
   }
 
   /**
-   * Rotates to next key in pool upon 429 quota exhaustion.
+   * Rotates to next key in pool upon 429 quota exhaustion or retryable failure.
    */
-  private rotateKey(): boolean {
-    if (this.keys.length <= 1) return false;
-    this.currentKeyIndex = (this.currentKeyIndex + 1) % this.keys.length;
-    logger.info('script_ai', `Rotated to next key in pool (${this.currentKeyIndex + 1}/${this.keys.length})`);
-    return true;
+  private rotateKey(excludeId?: string): { id: string; key: string; masked: string } | null {
+    const manager = GeminiApiKeyManager.getInstance();
+    const next = manager.getNextKey(excludeId);
+    if (next) {
+      logger.info('script_ai', `Rotated to healthy key in pool: ${next.masked}`);
+      return next;
+    }
+    if (this.keys.length > 1) {
+      this.currentKeyIndex = (this.currentKeyIndex + 1) % this.keys.length;
+      const k = this.keys[this.currentKeyIndex];
+      return { id: `manual-${this.currentKeyIndex}`, key: k, masked: GeminiApiKeyManager.maskKey(k) };
+    }
+    return null;
   }
 
   /**
@@ -184,7 +202,16 @@ export class GeminiOpenAiProvider implements IScriptAiProvider {
         tailSnippet: accumulatedText.slice(-60),
       });
 
-      const currentKey = this.keys[this.currentKeyIndex];
+      const keyManager = GeminiApiKeyManager.getInstance();
+      const currentKeyObj = keyManager.getNextKey();
+      const currentKey = currentKeyObj?.key || this.keys[this.currentKeyIndex];
+      const currentKeyId = currentKeyObj?.id;
+      const currentKeyMasked = currentKeyObj?.masked || this.getActiveKeyMasked();
+
+      if (!currentKey) {
+        throw new Error('No valid Gemini API key available. All configured keys may be invalid or quota-limited.');
+      }
+
       let response;
 
       try {
@@ -205,12 +232,19 @@ export class GeminiOpenAiProvider implements IScriptAiProvider {
         throw new Error(`Network failure calling Gemini endpoint: ${networkErr.message}`);
       }
 
-      // Handle Quota Exhaustion (429) -> Rotate key in pool or back off retry
+      // Handle Quota Exhaustion (429) -> Record failure, rotate key in pool or back off retry
       if (response.statusCode === 429) {
-        logger.warn('script_ai', `Received 429 Quota Exhausted on key ${this.getActiveKeyMasked()}`);
-        const rotated = this.rotateKey();
-        if (rotated) {
+        const retryAfterSec = Math.min(Math.max(Number(response.headers['retry-after']) || 60, 5), 120);
+        if (currentKeyId) {
+          keyManager.recordFailure(currentKeyId, 'quota_limited', 'HTTP 429 Quota Exceeded', retryAfterSec * 1000);
+        }
+        logger.warn('script_ai', `Received 429 Quota Exhausted on key ${currentKeyMasked}`);
+
+        // Attempt failover to another healthy key
+        const nextHealthy = this.rotateKey(currentKeyId);
+        if (nextHealthy && nextHealthy.id !== currentKeyId) {
           keyRotations++;
+          logger.info('script_ai', `Failing over to healthy key ${nextHealthy.masked} after 429 quota exhaustion.`);
           rounds--; // Don't count quota retry against continuation rounds
           continue;
         } else if (activeModel === 'gemini-flash-latest') {
@@ -218,9 +252,9 @@ export class GeminiOpenAiProvider implements IScriptAiProvider {
           activeModel = 'gemini-3.6-flash';
           continue;
         } else if (rounds < GeminiOpenAiProvider.MAX_CONTINUATION_ROUNDS) {
-          const retryAfter = Math.min(Math.max(Number(response.headers['retry-after']) || 5, 2), 10);
-          logger.warn('script_ai', `Rate limit 429 hit with single key. Backing off for ${retryAfter}s before automatic retry...`);
-          await new Promise((r) => setTimeout(r, retryAfter * 1000));
+          const waitSec = Math.min(retryAfterSec, 10);
+          logger.warn('script_ai', `Rate limit 429 hit with single key. Backing off for ${waitSec}s before automatic retry...`);
+          await new Promise((r) => setTimeout(r, waitSec * 1000));
           continue;
         } else {
           // Check retry-after header
@@ -229,11 +263,36 @@ export class GeminiOpenAiProvider implements IScriptAiProvider {
         }
       }
 
+      // Handle Authentication / Invalid Key (401 or 403)
+      if (response.statusCode === 401 || response.statusCode === 403) {
+        if (currentKeyId) {
+          keyManager.recordFailure(currentKeyId, 'invalid', `HTTP ${response.statusCode} Authentication Failure`);
+        }
+        const nextHealthy = this.rotateKey(currentKeyId);
+        if (nextHealthy && nextHealthy.id !== currentKeyId) {
+          keyRotations++;
+          logger.warn('script_ai', `Key ${currentKeyMasked} is invalid (${response.statusCode}). Failing over to healthy key ${nextHealthy.masked}.`);
+          rounds--;
+          continue;
+        }
+      }
+
       // Handle 503 High Demand / Spikes (temporary server-side overload)
-      if (response.statusCode === 503 && rounds < GeminiOpenAiProvider.MAX_CONTINUATION_ROUNDS) {
-        logger.warn('script_ai', 'Gemini API returned 503 (high demand spike). Waiting 1.5s before retry...');
-        await new Promise((r) => setTimeout(r, 1500));
-        continue;
+      if (response.statusCode === 503) {
+        if (currentKeyId) {
+          keyManager.recordFailure(currentKeyId, 'temporarily_unavailable', 'HTTP 503 Service Spike', 15000);
+        }
+        const nextHealthy = this.rotateKey(currentKeyId);
+        if (nextHealthy && nextHealthy.id !== currentKeyId) {
+          keyRotations++;
+          logger.info('script_ai', `HTTP 503 spike on key ${currentKeyMasked}. Failing over to healthy key ${nextHealthy.masked}.`);
+          rounds--;
+          continue;
+        } else if (rounds < GeminiOpenAiProvider.MAX_CONTINUATION_ROUNDS) {
+          logger.warn('script_ai', 'Gemini API returned 503 (high demand spike). Waiting 1.5s before retry...');
+          await new Promise((r) => setTimeout(r, 1500));
+          continue;
+        }
       }
 
       // Handle Retired Model (404)
@@ -272,6 +331,11 @@ export class GeminiOpenAiProvider implements IScriptAiProvider {
 
       if (!completionChunk) {
         throw new Error('Gemini API returned an empty completion');
+      }
+
+      // Successful round completed with this key
+      if (currentKeyId) {
+        keyManager.recordSuccess(currentKeyId);
       }
 
       accumulatedText += completionChunk;
@@ -328,12 +392,15 @@ export class GeminiOpenAiProvider implements IScriptAiProvider {
    * Tests connectivity using the primary key.
    */
   async testConnection(): Promise<{ success: boolean; error?: string; model?: string; isMock?: boolean }> {
-    if (this.keys.length === 0) {
+    const keyManager = GeminiApiKeyManager.getInstance();
+    const keyObj = keyManager.getNextKey();
+    const currentKey = keyObj?.key || this.keys[this.currentKeyIndex] || this.keys[0];
+
+    if (!currentKey) {
       return { success: false, error: 'No API keys configured', isMock: false };
     }
 
     try {
-      const currentKey = this.keys[this.currentKeyIndex] || this.keys[0];
       let response = await this.postJson(
         {
           model: this.model,

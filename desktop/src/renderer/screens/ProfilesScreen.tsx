@@ -59,13 +59,14 @@ export const ProfilesScreen: React.FC = () => {
   const [actionFeedback, setActionFeedback] = useState<Record<string, { msg: string; isError?: boolean }>>({});
   const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
 
-  // ---- Add Flow Account wizard state ----
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
-  const [newAccountName, setNewAccountName] = useState('');
-  const [newAccountEmail, setNewAccountEmail] = useState('');
-  const [wizardStatus, setWizardStatus] = useState<{ text: string; isError?: boolean } | null>(null);
-  const [isWizardBusy, setIsWizardBusy] = useState(false);
+  // ---- Simplified 1-Click Add Flow Account State ----
+  const [addingState, setAddingState] = useState<{
+    profileId: string;
+    displayName: string;
+    status: 'launching' | 'waiting' | 'verified' | 'failed';
+    detectedEmail?: string | null;
+    message?: string;
+  } | null>(null);
 
   // ---- Connect Existing Profile Modal (advanced, de-emphasised) ----
   const [isExistingModalOpen, setIsExistingModalOpen] = useState(false);
@@ -100,6 +101,46 @@ export const ProfilesScreen: React.FC = () => {
       return () => unsub();
     }
   }, []);
+
+  // Auto-detect authentication while adding Flow account
+  useEffect(() => {
+    if (!addingState || addingState.status !== 'waiting' || !window.flowApi) return;
+
+    let isMounted = true;
+    const interval = setInterval(async () => {
+      try {
+        const res = await window.flowApi!.verifyAccount(addingState.profileId);
+        if (!isMounted) return;
+
+        if (res.success && res.status === 'ready') {
+          clearInterval(interval);
+          setAddingState((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: 'verified',
+                  detectedEmail: res.detectedEmail,
+                  message: `✅ Authenticated as ${res.detectedEmail ?? 'Google Account'}. Account is ready!`,
+                }
+              : null
+          );
+          await loadProfiles(true);
+          setTimeout(() => {
+            if (isMounted) {
+              setAddingState(null);
+            }
+          }, 1800);
+        }
+      } catch {
+        // Quietly retry
+      }
+    }, 2000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [addingState?.profileId, addingState?.status]);
 
   const setFeedback = (profileId: string, msg: string, isError = false) => {
     setActionFeedback((prev) => ({ ...prev, [profileId]: { msg, isError } }));
@@ -230,62 +271,134 @@ export const ProfilesScreen: React.FC = () => {
     }
   };
 
-  // ---- Add Flow Account wizard ----
+  // ---- Simplified 1-Click Flow Account Onboarding ----
 
-  const resetWizard = () => {
-    setWizardStep(1);
-    setNewAccountName('');
-    setNewAccountEmail('');
-    setWizardStatus(null);
-    setIsWizardBusy(false);
-  };
-
-  const handleAddModalClose = () => {
-    if (isWizardBusy) return;
-    setIsAddModalOpen(false);
-    resetWizard();
-  };
-
-  const handleWizardNext = () => {
-    if (wizardStep === 1 && !newAccountName.trim()) return;
-    setWizardStep((s) => Math.min(s + 1, 3) as 1 | 2 | 3);
-  };
-
-  const handleWizardBack = () => {
-    setWizardStep((s) => Math.max(s - 1, 1) as 1 | 2 | 3);
-    setWizardStatus(null);
-  };
-
-  const handleWizardOpenLogin = async () => {
+  const handleAddFlowAccount = async () => {
     if (!window.flowApi) return;
     try {
-      setIsWizardBusy(true);
-      setWizardStatus({ text: 'Creating dedicated profile directory…' });
+      // 1. Auto-generate next unique Flow Account name without forcing user to type
+      let count = profiles.length + 1;
+      let defaultName = `Flow Account ${count}`;
+      while (profiles.some((p) => p.displayName.toLowerCase() === defaultName.toLowerCase())) {
+        count++;
+        defaultName = `Flow Account ${count}`;
+      }
 
-      // Step 1: create profile config on disk
+      // 2. Immediately create isolated profile config
       const created = await window.flowApi.createProfile({
-        displayName: newAccountName.trim(),
-        expectedEmail: newAccountEmail.trim() || undefined,
-      });
-      setWizardStatus({ text: 'Profile created. Launching dedicated Chrome window…' });
-
-      // Step 2: fast-path browser launch (returns when PID confirmed)
-      const launchResult = await window.flowApi.launchLoginBrowser(created.profileId);
-      setWizardStatus({
-        text: `✅ ${launchResult.message}`,
+        displayName: defaultName,
       });
 
-      await loadProfiles();
+      setAddingState({
+        profileId: created.profileId,
+        displayName: defaultName,
+        status: 'launching',
+        message: 'Launching dedicated Chrome window…',
+      });
 
-      // Close wizard after a brief success pause
-      setTimeout(() => {
-        setIsAddModalOpen(false);
-        resetWizard();
-      }, 2500);
+      // 3. Immediately launch dedicated visible Chrome window to Google Flow
+      await window.flowApi.launchLoginBrowser(created.profileId);
+
+      setAddingState({
+        profileId: created.profileId,
+        displayName: defaultName,
+        status: 'waiting',
+        message: 'Chrome window is open. Sign in to your Google Account.',
+      });
+
+      await loadProfiles(true);
     } catch (err) {
-      setWizardStatus({ text: `Error: ${(err as Error).message}`, isError: true });
-    } finally {
-      setIsWizardBusy(false);
+      setAddingState((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: 'failed',
+              message: `Failed to launch: ${(err as Error).message}`,
+            }
+          : null
+      );
+    }
+  };
+
+  const handleManualVerify = async () => {
+    if (!addingState || !window.flowApi) return;
+    try {
+      setAddingState((prev) => (prev ? { ...prev, message: 'Checking Flow authentication state…' } : null));
+      const res = await window.flowApi.verifyAccount(addingState.profileId);
+      if (res.success && res.status === 'ready') {
+        setAddingState((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: 'verified',
+                detectedEmail: res.detectedEmail,
+                message: `✅ Authenticated as ${res.detectedEmail ?? 'Google Account'}. Account is ready!`,
+              }
+            : null
+        );
+        await loadProfiles(true);
+        setTimeout(() => setAddingState(null), 1500);
+      } else {
+        setAddingState((prev) =>
+          prev
+            ? {
+                ...prev,
+                message: res.error || 'Google Flow sign-in not yet detected. Complete sign-in in Chrome and retry.',
+              }
+            : null
+        );
+      }
+    } catch (err) {
+      setAddingState((prev) =>
+        prev
+          ? {
+              ...prev,
+              message: `Verification check: ${(err as Error).message}`,
+            }
+          : null
+      );
+    }
+  };
+
+  const handleReopenChrome = async () => {
+    if (!addingState || !window.flowApi) return;
+    try {
+      setAddingState((prev) => (prev ? { ...prev, message: 'Re-opening dedicated Chrome window…' } : null));
+      await window.flowApi.launchLoginBrowser(addingState.profileId);
+      setAddingState((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: 'waiting',
+              message: 'Chrome window is open. Sign in to your Google Account.',
+            }
+          : null
+      );
+    } catch (err) {
+      setAddingState((prev) =>
+        prev
+          ? {
+              ...prev,
+              message: `Failed to open Chrome: ${(err as Error).message}`,
+            }
+          : null
+      );
+    }
+  };
+
+  const handleCancelAdd = async () => {
+    if (!addingState) return;
+    const targetId = addingState.profileId;
+    const isVerified = addingState.status === 'verified';
+    setAddingState(null);
+    if (!isVerified && window.flowApi) {
+      // Clean up temporary unverified profile so it does not linger
+      try {
+        await window.flowApi.deleteProfile(targetId);
+        await loadProfiles(true);
+      } catch {
+        /* ignore */
+      }
     }
   };
 
@@ -393,7 +506,7 @@ export const ProfilesScreen: React.FC = () => {
           </button>
           <button
             className="btn-primary"
-            onClick={() => { setIsAddModalOpen(true); resetWizard(); }}
+            onClick={handleAddFlowAccount}
           >
             <PlusIcon size={16} />
             Add Flow Account
@@ -466,7 +579,7 @@ export const ProfilesScreen: React.FC = () => {
           </p>
           <button
             className="btn-primary"
-            onClick={() => { setIsAddModalOpen(true); resetWizard(); }}
+            onClick={handleAddFlowAccount}
             style={{ marginTop: '8px' }}
           >
             <PlusIcon size={16} />
@@ -700,205 +813,159 @@ export const ProfilesScreen: React.FC = () => {
       />
 
       {/* ================================================================== */}
-      {/* Add Flow Account Wizard Modal                                        */}
+      {/* Add Flow Account Streamlined Onboarding Modal                        */}
       {/* ================================================================== */}
-      {isAddModalOpen && (
-        <div className="modal-overlay" onClick={handleAddModalClose}>
-          <div className="modal-content" style={{ maxWidth: '520px' }} onClick={(e) => e.stopPropagation()}>
+      {addingState && (
+        <div className="modal-overlay" onClick={handleCancelAdd}>
+          <div className="modal-content" style={{ maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Add Flow Account</h2>
               <button
                 type="button"
                 className="btn-secondary btn-sm"
-                onClick={handleAddModalClose}
-                disabled={isWizardBusy}
+                onClick={handleCancelAdd}
               >
                 &times;
               </button>
             </div>
 
-            {/* Wizard steps indicator */}
-            <div
-              style={{
-                display: 'flex',
-                gap: '8px',
-                padding: '12px 20px',
-                borderBottom: '1px solid var(--border-color)',
-                backgroundColor: 'var(--bg-subtle)',
-              }}
-            >
-              {([1, 2, 3] as const).map((step) => (
-                <div
-                  key={step}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    fontSize: '12px',
-                    fontWeight: wizardStep === step ? 600 : 400,
-                    color: wizardStep >= step ? 'var(--primary)' : 'var(--text-muted)',
-                  }}
-                >
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {addingState.status === 'launching' && (
+                <div style={{ textAlign: 'center', padding: '24px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ fontSize: '28px' }}>🚀</div>
+                  <div style={{ fontSize: '14px', fontWeight: 600 }}>Opening Dedicated Chrome Window...</div>
+                  <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
+                    Setting up isolated profile directory and launching browser.
+                  </div>
+                </div>
+              )}
+
+              {addingState.status === 'waiting' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                   <div
                     style={{
-                      width: '20px',
-                      height: '20px',
-                      borderRadius: '50%',
-                      backgroundColor: wizardStep > step
-                        ? 'var(--primary)'
-                        : wizardStep === step
-                          ? 'var(--primary)'
-                          : 'var(--border-color)',
-                      color: wizardStep >= step ? 'white' : 'var(--text-muted)',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '12px',
+                      padding: '14px 16px',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'rgba(99, 102, 241, 0.08)',
+                      border: '1px solid rgba(99, 102, 241, 0.25)',
+                    }}
+                  >
+                    <div style={{ fontSize: '22px' }}>🌐</div>
+                    <div style={{ fontSize: '13px', lineHeight: 1.5 }}>
+                      <strong style={{ color: 'var(--text-primary)' }}>Chrome window is open to Google Flow:</strong>
+                      <ol style={{ paddingLeft: '18px', margin: '6px 0 0 0', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <li>Sign into your Google Account in the Chrome window.</li>
+                        <li>Complete 2-factor authentication or CAPTCHA if prompted.</li>
+                        <li>Your account and cookies will be detected automatically.</li>
+                      </ol>
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '11px',
-                      fontWeight: 700,
-                      flexShrink: 0,
-                    }}
-                  >
-                    {wizardStep > step ? '✓' : step}
-                  </div>
-                  <span>{step === 1 ? 'Account Name' : step === 2 ? 'Email Hint' : 'Open Login'}</span>
-                  {step < 3 && <span style={{ marginLeft: '4px', color: 'var(--text-muted)' }}>›</span>}
-                </div>
-              ))}
-            </div>
-
-            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {/* Step 1: Account Name */}
-              {wizardStep === 1 && (
-                <>
-                  <p style={{ fontSize: '13px', lineHeight: '1.5' }}>
-                    Give this Flow account a name so you can identify it in the list.
-                  </p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label style={{ fontSize: '13px', fontWeight: 500 }}>Account Name *</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. AI Automation, Creator, Backup"
-                      value={newAccountName}
-                      onChange={(e) => setNewAccountName(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && newAccountName.trim() && handleWizardNext()}
-                      autoFocus
-                      required
-                    />
-                  </div>
-                </>
-              )}
-
-              {/* Step 2: Email Hint */}
-              {wizardStep === 2 && (
-                <>
-                  <p style={{ fontSize: '13px', lineHeight: '1.5' }}>
-                    Optionally enter the Google account email you will sign in with.
-                    This is a display label only — it helps you identify the account.
-                  </p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label style={{ fontSize: '13px', fontWeight: 500 }}>Google Account Email <em>(optional)</em></label>
-                    <input
-                      type="email"
-                      placeholder="e.g. aiautomation786786@gmail.com"
-                      value={newAccountEmail}
-                      onChange={(e) => setNewAccountEmail(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleWizardNext()}
-                      autoFocus
-                    />
-                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                      🔒 Password is never requested or stored. Credentials are never shared with this app.
-                    </span>
-                  </div>
-                </>
-              )}
-
-              {/* Step 3: Open Login */}
-              {wizardStep === 3 && (
-                <>
-                  <div
-                    style={{
+                      gap: '10px',
+                      padding: '10px 14px',
+                      borderRadius: 'var(--radius-sm)',
                       backgroundColor: 'var(--bg-subtle)',
                       border: '1px solid var(--border-color)',
-                      borderRadius: 'var(--radius-sm)',
-                      padding: '12px 14px',
-                      fontSize: '13px',
-                      lineHeight: '1.6',
+                      fontSize: '12.5px',
+                      color: 'var(--text-secondary)',
                     }}
                   >
-                    <strong>Ready to launch:</strong>
-                    <ul style={{ paddingLeft: '20px', marginTop: '8px', marginBottom: 0 }}>
-                      <li>Account: <strong>{newAccountName}</strong></li>
-                      {newAccountEmail && <li>Email hint: {newAccountEmail}</li>}
-                      <li>A dedicated Chrome window will open to Google Flow.</li>
-                      <li>Sign into Google manually in that window.</li>
-                      <li>Your existing Chrome windows stay untouched.</li>
-                      <li>Click <strong>Verify Account</strong> after signing in.</li>
-                    </ul>
+                    <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#6366f1' }} />
+                    <span>{addingState.message || 'Waiting for Google Flow sign-in in Chrome…'}</span>
                   </div>
 
-                  {wizardStatus && (
-                    <div
-                      style={{
-                        fontSize: '12px',
-                        fontWeight: 500,
-                        padding: '8px 12px',
-                        borderRadius: 'var(--radius-sm)',
-                        backgroundColor: wizardStatus.isError ? 'var(--danger-subtle)' : 'var(--bg-subtle)',
-                        color: wizardStatus.isError ? 'var(--danger)' : 'var(--primary)',
-                        border: `1px solid ${wizardStatus.isError ? 'var(--danger)' : 'var(--border-color)'}`,
-                      }}
-                    >
-                      {wizardStatus.text}
-                    </div>
-                  )}
-                </>
+                  <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                    🔒 Dedicated profile isolation: passwords are never seen or stored by Infinity Flow. Session cookies remain safely inside your local Chrome profile.
+                  </div>
+                </div>
+              )}
+
+              {addingState.status === 'verified' && (
+                <div style={{ textAlign: 'center', padding: '20px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ fontSize: '32px' }}>✅</div>
+                  <div style={{ fontSize: '15px', fontWeight: 700, color: '#10b981' }}>Account Verified & Ready!</div>
+                  <div style={{ fontSize: '13px', color: 'var(--text-primary)' }}>
+                    {addingState.detectedEmail ? `Signed in as ${addingState.detectedEmail}` : 'Google Account authenticated'}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    This window will close automatically. Chrome may be kept open or closed.
+                  </div>
+                </div>
+              )}
+
+              {addingState.status === 'failed' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'rgba(239, 68, 68, 0.10)',
+                      border: '1px solid rgba(239, 68, 68, 0.25)',
+                      color: 'var(--danger, #ef4444)',
+                      fontSize: '12.5px',
+                    }}
+                  >
+                    {addingState.message}
+                  </div>
+                </div>
               )}
             </div>
 
             <div className="modal-footer" style={{ justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                {wizardStep > 1 && (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={handleCancelAdd}
+              >
+                {addingState.status === 'verified' ? 'Close' : 'Cancel'}
+              </button>
+
+              {addingState.status === 'waiting' && (
+                <div style={{ display: 'flex', gap: '8px' }}>
                   <button
                     type="button"
                     className="btn-secondary"
-                    onClick={handleWizardBack}
-                    disabled={isWizardBusy}
+                    onClick={handleReopenChrome}
+                    title="Re-open Chrome if it was closed"
                   >
-                    ← Back
+                    Re-open Chrome
                   </button>
-                )}
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={handleManualVerify}
+                  >
+                    Verify & Complete
+                  </button>
+                </div>
+              )}
+
+              {addingState.status === 'verified' && (
                 <button
                   type="button"
-                  className="btn-secondary"
-                  onClick={handleAddModalClose}
-                  disabled={isWizardBusy}
+                  className="btn-primary"
+                  onClick={() => setAddingState(null)}
                 >
-                  Cancel
+                  Done
                 </button>
-              </div>
+              )}
 
-              <div>
-                {wizardStep < 3 && (
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    onClick={handleWizardNext}
-                    disabled={wizardStep === 1 && !newAccountName.trim()}
-                  >
-                    Next →
-                  </button>
-                )}
-                {wizardStep === 3 && (
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    onClick={handleWizardOpenLogin}
-                    disabled={isWizardBusy}
-                  >
-                    {isWizardBusy ? 'Launching…' : '🚀 Open Login'}
-                  </button>
-                )}
-              </div>
+              {addingState.status === 'failed' && (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleReopenChrome}
+                >
+                  Try Again
+                </button>
+              )}
             </div>
           </div>
         </div>

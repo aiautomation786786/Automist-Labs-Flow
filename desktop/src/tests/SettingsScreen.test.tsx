@@ -11,7 +11,6 @@ describe('SettingsScreen', () => {
   const mockSettings: AppSettings = {
     appDataDir: 'C:/UserData/FlowDesktop',
     defaultImageRatio: '16:9',
-    defaultProcessingOrder: 'images_first',
     maxRetries: 2,
     logLevel: 'INFO',
     defaultImageDownloadQuality: 'original',
@@ -51,6 +50,19 @@ describe('SettingsScreen', () => {
       onJobFailed: vi.fn().mockReturnValue(() => {}),
       launchLoginBrowser: vi.fn().mockResolvedValue({ success: true, pid: 99999, cdpPort: 9222, userDataDir: 'C:\\test', message: 'Chrome opened' }),
       onWorkerStatus: vi.fn().mockReturnValue(() => {}),
+      listGeminiKeys: vi.fn().mockResolvedValue([
+        { id: 'key_1', masked: '••••••••••••1234', status: 'healthy', cooldownUntil: null, lastUsedAt: null, failureCount: 0 }
+      ]),
+      addGeminiKey: vi.fn().mockResolvedValue({
+        success: true,
+        keys: [
+          { id: 'key_1', masked: '••••••••••••1234', status: 'healthy', cooldownUntil: null, lastUsedAt: null, failureCount: 0 },
+          { id: 'key_2', masked: '••••••••••••5678', status: 'healthy', cooldownUntil: null, lastUsedAt: null, failureCount: 0 },
+        ],
+      }),
+      removeGeminiKey: vi.fn().mockResolvedValue({ success: true, keys: [] }),
+      revealGeminiKey: vi.fn().mockResolvedValue({ success: true, fullKey: 'AIzaSySecretPlaintextKey1234' }),
+      testScriptAiConnection: vi.fn().mockResolvedValue({ success: true, model: 'gemini-2.5-flash', isMock: false }),
     };
   });
 
@@ -82,25 +94,18 @@ describe('SettingsScreen', () => {
     );
   });
 
-  it('supports updating processing order, retries, download quality, and log level', async () => {
+  it('confirms mixed processing order is removed and supports updating download quality and log level', async () => {
     render(<SettingsScreen />);
 
     await act(async () => {
       await Promise.resolve();
     });
 
-    // Change processing order to Videos First
-    const videosFirstBtn = screen.getByRole('button', { name: /Videos First/i });
-    await act(async () => {
-      fireEvent.click(videosFirstBtn);
-      await Promise.resolve();
-    });
-
-    expect(window.flowApi?.updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        defaultProcessingOrder: 'videos_first',
-      })
-    );
+    // Verify "Default Mixed Processing Order" is NOT rendered anywhere
+    expect(screen.queryByText(/Default Mixed Processing Order/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Videos First/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Images First/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Automatic \(FIFO\)/i })).toBeNull();
 
     // Change log level to DEBUG
     const debugBtn = screen.getByRole('button', { name: /DEBUG/i });
@@ -140,6 +145,52 @@ describe('SettingsScreen', () => {
         defaultVideoDownloadQuality: '1080p',
       })
     );
+  });
+
+  it('renders and manages multi-key Gemini API keys correctly', async () => {
+    render(<SettingsScreen />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Verify Gemini API Keys section is rendered
+    expect(screen.getAllByText(/Gemini API Keys/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/safeStorage/i).length).toBeGreaterThan(0);
+
+    // Verify initial key appears masked
+    expect(screen.getByText('••••••••••••1234')).toBeDefined();
+    expect(screen.getByText('Healthy')).toBeDefined();
+
+    // Add a new key
+    const input = screen.getByPlaceholderText(/Paste Gemini API key/i);
+    const addBtn = screen.getByRole('button', { name: /\+ Add Key/i });
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'AIzaSyNewKey999999' } });
+      fireEvent.click(addBtn);
+      await Promise.resolve();
+    });
+
+    expect(window.flowApi?.addGeminiKey).toHaveBeenCalledWith('AIzaSyNewKey999999');
+
+    // Test Show key toggle
+    const showBtns = screen.getAllByRole('button', { name: /Show/i });
+    await act(async () => {
+      fireEvent.click(showBtns[0]);
+      await Promise.resolve();
+    });
+
+    expect(window.flowApi?.revealGeminiKey).toHaveBeenCalledWith('key_1');
+
+    // Test Connection button
+    const testBtn = screen.getByRole('button', { name: /Test Connection/i });
+    await act(async () => {
+      fireEvent.click(testBtn);
+      await Promise.resolve();
+    });
+
+    expect(window.flowApi?.testScriptAiConnection).toHaveBeenCalled();
   });
 
   it('displays error banner when updateSettings fails', async () => {

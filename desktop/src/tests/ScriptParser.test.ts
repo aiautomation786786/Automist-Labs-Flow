@@ -229,4 +229,48 @@ IMAGE: ${complexPrompt}
     const result = ScriptParser.parse(raw);
     expect(result.scenes[0]!.imagePrompt).toBe(complexPrompt);
   });
+
+  it('13. parseSeparateFiles: ZBot Golden Rule #2 - prompts count is authoritative for scene count', () => {
+    const prompts = `
+Prompt 1: Wide angle establishing shot of cyberpunk metropolis at night
+Prompt 2: Close up on neon sign reflecting in puddles of rain
+Prompt 3: A detective in a trench coat lighting a cigarette under streetlamp
+`;
+    const narration = `
+The city never truly slept under the eternal neon haze. Rain poured constantly through the smog. Detective Miller waited alone in the shadows. His contact was already twenty minutes late. The briefcase in his car was too heavy to carry.
+`;
+
+    const result = ScriptParser.parseSeparateFiles({
+      promptsText: prompts,
+      narrationText: narration,
+      title: 'Neon Noir Detective',
+    });
+
+    // 3 prompts => exactly 3 scenes
+    expect(result.scenes).toHaveLength(3);
+    expect(result.title).toBe('Neon Noir Detective');
+    expect(result.scenes[0]!.imagePrompt).toContain('cyberpunk metropolis');
+    expect(result.scenes[1]!.imagePrompt).toContain('neon sign');
+    expect(result.scenes[2]!.imagePrompt).toContain('trench coat');
+    // Narration sentences should be distributed across the 3 scenes
+    expect(result.scenes[0]!.narration.length).toBeGreaterThan(0);
+    expect(result.scenes[1]!.narration.length).toBeGreaterThan(0);
+    expect(result.scenes[2]!.narration.length).toBeGreaterThan(0);
+  });
+
+  it('14. parseSeparateFiles: captures thumbnail prompt when provided', () => {
+    const prompts = `1. Scene one visual prompt\n2. Scene two visual prompt`;
+    const narration = `First sentence. Second sentence.`;
+    const thumbnail = `Dramatic YouTube thumbnail with bold text and glowing eyes`;
+
+    const result = ScriptParser.parseSeparateFiles({
+      promptsText: prompts,
+      narrationText: narration,
+      thumbnailText: thumbnail,
+      title: 'Thumbnail Test',
+    });
+
+    expect(result.scenes).toHaveLength(2);
+    expect(result.thumbnailPrompt).toBe(thumbnail.trim());
+  });
 });

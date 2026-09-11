@@ -44,6 +44,7 @@ import { ChannelHistoryRepository } from '../storage/ChannelHistoryRepository';
 import { ChannelDeliveryService } from '../channel/ChannelDeliveryService';
 import { SkillRepository } from '../storage/SkillRepository';
 import { ScriptAiService } from '../ai/ScriptAiService';
+import { GeminiApiKeyManager } from '../ai/GeminiApiKeyManager';
 import { VideoFactoryPipelineManager } from '../pipeline/VideoFactoryPipelineManager';
 import type {
   VideoFactoryConfig,
@@ -88,6 +89,9 @@ export class IpcHandlers {
   static register(ipcMain: IpcMainLike, deps: IpcDependencies): void {
     const { scheduler, sessionManager, getWebContents } = deps;
     VideoFactoryPipelineManager.setScheduler(scheduler);
+    GeminiApiKeyManager.getInstance().initialize().catch((err) => {
+      logger.warn('ipc', 'Failed to initialize GeminiApiKeyManager', { error: err.message });
+    });
 
     // -------------------------------------------------------------------------
     // Projects API
@@ -727,6 +731,36 @@ export class IpcHandlers {
       return await ScriptAiService.testConnection();
     });
 
+    ipcMain.handle('geminiKeys:list', async () => {
+      const manager = GeminiApiKeyManager.getInstance();
+      await manager.initialize();
+      return manager.listKeys();
+    });
+
+    ipcMain.handle('geminiKeys:add', async (_event, keyRaw: unknown) => {
+      if (typeof keyRaw !== 'string') throw new Error('Invalid API key input');
+      const manager = GeminiApiKeyManager.getInstance();
+      await manager.initialize();
+      const res = await manager.addKey(keyRaw);
+      return { ...res, keys: manager.listKeys() };
+    });
+
+    ipcMain.handle('geminiKeys:remove', async (_event, idRaw: unknown) => {
+      if (typeof idRaw !== 'string') throw new Error('Invalid key ID');
+      const manager = GeminiApiKeyManager.getInstance();
+      await manager.initialize();
+      const res = await manager.removeKey(idRaw);
+      return { ...res, keys: manager.listKeys() };
+    });
+
+    ipcMain.handle('geminiKeys:reveal', async (_event, idRaw: unknown) => {
+      if (typeof idRaw !== 'string') throw new Error('Invalid key ID');
+      const manager = GeminiApiKeyManager.getInstance();
+      await manager.initialize();
+      const key = manager.revealKey(idRaw);
+      return { success: Boolean(key), fullKey: key || undefined };
+    });
+
     ipcMain.handle('script:parseSeparateFiles', async (_event, inputRaw: unknown) => {
       return ScriptParser.parseSeparateFiles(inputRaw as SeparateFilesInput);
     });
@@ -876,6 +910,34 @@ export class IpcHandlers {
         }
       } catch (err) {
         logger.warn('ipc', 'Failed to open music file dialog', { error: (err as Error).message });
+      }
+      return null;
+    });
+
+    ipcMain.handle('system:selectScriptFile', async () => {
+      try {
+        const electron = require('electron');
+        if (electron?.dialog?.showOpenDialog) {
+          const result = await electron.dialog.showOpenDialog({
+            title: 'Select Video Script File',
+            properties: ['openFile'],
+            filters: [
+              { name: 'Script Files (*.md, *.txt, *.json)', extensions: ['md', 'txt', 'json'] },
+              { name: 'All Files (*.*)', extensions: ['*'] },
+            ],
+          });
+          if (!result.canceled && result.filePaths.length > 0) {
+            const filePath = result.filePaths[0];
+            const content = fs.readFileSync(filePath, 'utf-8');
+            return {
+              filePath,
+              fileName: path.basename(filePath),
+              content,
+            };
+          }
+        }
+      } catch (err) {
+        logger.warn('ipc', 'Failed to open script file dialog', { error: (err as Error).message });
       }
       return null;
     });

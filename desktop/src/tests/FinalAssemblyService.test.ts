@@ -257,4 +257,28 @@ describe('FinalAssemblyService (Real FFmpeg Execution)', () => {
       })
     ).rejects.toThrow('cancelled');
   });
+
+  it('scales assembled video to 1080p when outputResolution is 1080p', async () => {
+    const outputVideoPath = path.join(tempDir, 'output_1080p.mp4');
+    const outputThumbnailPath = path.join(tempDir, 'thumb_1080p.jpg');
+    const outputPosterPath = path.join(tempDir, 'poster_1080p.jpg');
+
+    const result = await FinalAssemblyService.assembleFinalVideo({
+      projectId: 'proj_test_1080p',
+      sceneClips,
+      outputVideoPath,
+      outputThumbnailPath,
+      outputPosterPath,
+      options: {
+        transitionStyle: 'hard_cut',
+        outputResolution: '1080p',
+        aspectRatio: '16:9',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(fs.existsSync(outputVideoPath)).toBe(true);
+    expect(result.width).toBe(1920);
+    expect(result.height).toBe(1080);
+  }, 35000);
 });

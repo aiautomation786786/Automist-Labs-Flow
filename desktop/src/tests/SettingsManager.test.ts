@@ -38,7 +38,6 @@ describe('SettingsManager Unit & Safety Tests', () => {
 
     expect(settings).toBeDefined();
     expect(settings.defaultImageRatio).toBe('16:9');
-    expect(settings.defaultProcessingOrder).toBe('images_first');
     expect(settings.maxRetries).toBe(2);
     expect(settings.logLevel).toBe('INFO');
     expect(settings.defaultImageDownloadQuality).toBe('original');
@@ -64,7 +63,6 @@ describe('SettingsManager Unit & Safety Tests', () => {
     expect(settings.maxRetries).toBe(3);
     expect(settings.logLevel).toBe('DEBUG');
     // Defaults filled in for missing keys
-    expect(settings.defaultProcessingOrder).toBe('images_first');
     expect(settings.defaultImageDownloadQuality).toBe('original');
   });
 
@@ -141,7 +139,7 @@ describe('SettingsManager Unit & Safety Tests', () => {
       SettingsManager.updateSettings({ defaultImageRatio: '9:16' }),
       SettingsManager.updateSettings({ maxRetries: 3 }),
       SettingsManager.updateSettings({ logLevel: 'WARN' }),
-      SettingsManager.updateSettings({ defaultProcessingOrder: 'videos_first' }),
+      SettingsManager.updateSettings({ defaultImageDownloadQuality: '2k' }),
     ];
 
     await Promise.all(promises);
@@ -150,16 +148,12 @@ describe('SettingsManager Unit & Safety Tests', () => {
     expect(finalSettings.defaultImageRatio).toBe('9:16');
     expect(finalSettings.maxRetries).toBe(3);
     expect(finalSettings.logLevel).toBe('WARN');
-    expect(finalSettings.defaultProcessingOrder).toBe('videos_first');
+    expect(finalSettings.defaultImageDownloadQuality).toBe('2k');
   });
 
   it('9. Validation: rejects invalid enum and boundary values', () => {
     expect(() => {
       SettingsManager.validatePatch({ defaultImageRatio: '4:3' as any });
-    }).toThrow(SettingsValidationError);
-
-    expect(() => {
-      SettingsManager.validatePatch({ defaultProcessingOrder: 'random' as any });
     }).toThrow(SettingsValidationError);
 
     expect(() => {

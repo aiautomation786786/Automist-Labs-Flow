@@ -588,6 +588,29 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
     });
 
     if (!isPidAlive && !isPortActive && session.status !== 'ready' && session.status !== 'connected' && session.status !== 'browser_open') {
+      // Check if credentials exist on disk from previous login
+      const localEmail = LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
+        config.userDataDir,
+        config.chromeProfileName || 'Default'
+      );
+      if (localEmail) {
+        try {
+          appLogger.info('session_manager', `verifyAccount: Starting background session for ${profileId} (${localEmail}) to verify Flow authentication`);
+          await session.start({ headless: false, background: true });
+          if (session.isReady || (session.status as string) === 'ready') {
+            this.emit('session:status', session.getSnapshot());
+            this.emit('session:ready', profileId);
+            return {
+              success: true,
+              status: 'ready',
+              detectedEmail: session.getSnapshot().detectedEmail || localEmail,
+            };
+          }
+        } catch (err) {
+          appLogger.warn('session_manager', `verifyAccount: Background check notice for ${profileId}: ${(err as Error).message}`);
+        }
+      }
+
       return {
         success: false,
         status: session.status,
@@ -596,7 +619,7 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       };
     }
 
-    // 3. Connect to running browser & verify auth with defensive 12s timeout
+    // 3. Connect to running browser & verify auth with defensive timeout
     try {
       const verifyPromise = session.verifyAuth();
       const timeoutPromise = new Promise<never>((_, reject) =>
@@ -653,10 +676,15 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
           }
         }
 
-        ProfileConfigManager.update(profileId, {
+        const patch: Record<string, any> = {
           ...(safeEmailToPersist ? { detectedEmail: safeEmailToPersist } : {}),
           ...(authResult.locale ? { flowUrlLocale: `/fx/${authResult.locale}/tools/flow` } : {}),
-        });
+        };
+        // Auto-update display name if default generated name was used
+        if (safeEmailToPersist && config.displayName && /^Flow Account( \d+)?$/i.test(config.displayName.trim())) {
+          patch.displayName = safeEmailToPersist;
+        }
+        ProfileConfigManager.update(profileId, patch);
       }
 
       this.emit('session:status', session.getSnapshot());

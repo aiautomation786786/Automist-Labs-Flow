@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { ProjectsScreen } from '../screens/ProjectsScreen';
 import { NewProjectScreen } from '../screens/NewProjectScreen';
 import { GenerationStudioScreen, type GenerationMode } from '../screens/GenerationStudioScreen';
-import { GeminiStatusScreen } from '../screens/GeminiStatusScreen';
 import { WorkspaceScreen } from '../screens/WorkspaceScreen';
 import { ProfilesScreen } from '../screens/ProfilesScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
@@ -31,7 +30,6 @@ type View =
   | { type: 'bulk_video' }
   | { type: 'image_to_video' }
   | { type: 'bulk_image_to_video' }
-  | { type: 'gemini_video' }
   | { type: 'new_generation'; initialMode?: GenerationMode }
   | { type: 'new_project' }
   | { type: 'workspace'; projectId: string }
@@ -141,9 +139,6 @@ export const AppShell: React.FC = () => {
           id: 'create_video',
           label: 'Create Video',
           icon: <SparklesIcon size={16} />,
-          badge: 'New',
-          badgeColor: '#a855f7',
-          badgeBg: 'rgba(168, 85, 247, 0.15)',
           isActive: currentView.type === 'create_video',
           onClick: () => setCurrentView({ type: 'create_video' }),
         },
@@ -151,9 +146,6 @@ export const AppShell: React.FC = () => {
           id: 'channels',
           label: 'Channels',
           icon: <TvIcon size={16} />,
-          badge: 'Phase 7',
-          badgeColor: '#3b82f6',
-          badgeBg: 'rgba(59, 130, 246, 0.15)',
           isActive: currentView.type === 'channels',
           onClick: () => setCurrentView({ type: 'channels' }),
         },
@@ -161,9 +153,6 @@ export const AppShell: React.FC = () => {
           id: 'skills',
           label: 'Skills',
           icon: <SparklesIcon size={16} />,
-          badge: 'Phase 8',
-          badgeColor: '#10b981',
-          badgeBg: 'rgba(16, 185, 129, 0.15)',
           isActive: currentView.type === 'skills',
           onClick: () => setCurrentView({ type: 'skills' }),
         },
@@ -176,9 +165,6 @@ export const AppShell: React.FC = () => {
           id: 'single_image',
           label: 'Single Image',
           icon: <ImageIcon size={16} />,
-          badge: 'Nano 2',
-          badgeColor: 'var(--info-image)',
-          badgeBg: 'var(--info-image-bg)',
           isActive: currentView.type === 'single_image' || (currentView.type === 'new_generation' && currentView.initialMode === 'single_image'),
           onClick: () => setCurrentView({ type: 'single_image' }),
         },
@@ -186,9 +172,6 @@ export const AppShell: React.FC = () => {
           id: 'single_video',
           label: 'Single Video',
           icon: <VideoIcon size={16} />,
-          badge: 'Flow + Gemini',
-          badgeColor: 'var(--info-video)',
-          badgeBg: 'var(--info-video-bg)',
           isActive: currentView.type === 'single_video' || (currentView.type === 'new_generation' && currentView.initialMode === 'single_video'),
           onClick: () => setCurrentView({ type: 'single_video' }),
         },
@@ -196,9 +179,6 @@ export const AppShell: React.FC = () => {
           id: 'bulk_image',
           label: 'Bulk Image',
           icon: <LayersIcon size={16} />,
-          badge: 'Parallel',
-          badgeColor: '#10b981',
-          badgeBg: 'rgba(16, 185, 129, 0.15)',
           isActive: currentView.type === 'bulk_image' || (currentView.type === 'new_generation' && currentView.initialMode === 'bulk_image'),
           onClick: () => setCurrentView({ type: 'bulk_image' }),
         },
@@ -206,9 +186,6 @@ export const AppShell: React.FC = () => {
           id: 'bulk_video',
           label: 'Bulk Video',
           icon: <ClapperboardIcon size={16} />,
-          badge: 'Flow + Gemini',
-          badgeColor: '#10b981',
-          badgeBg: 'rgba(16, 185, 129, 0.15)',
           isActive: currentView.type === 'bulk_video' || (currentView.type === 'new_generation' && currentView.initialMode === 'bulk_video'),
           onClick: () => setCurrentView({ type: 'bulk_video' }),
         },
@@ -216,9 +193,6 @@ export const AppShell: React.FC = () => {
           id: 'image_to_video',
           label: 'Image to Video',
           icon: <VideoIcon size={16} />,
-          badge: 'Omni Flash',
-          badgeColor: '#06b6d4',
-          badgeBg: 'rgba(6, 182, 212, 0.15)',
           isActive: currentView.type === 'image_to_video' || (currentView.type === 'new_generation' && currentView.initialMode === 'image_to_video'),
           onClick: () => setCurrentView({ type: 'image_to_video' }),
         },
@@ -226,26 +200,8 @@ export const AppShell: React.FC = () => {
           id: 'bulk_image_to_video',
           label: 'Bulk Image to Video',
           icon: <ClapperboardIcon size={16} />,
-          badge: 'Parallel',
-          badgeColor: '#8b5cf6',
-          badgeBg: 'rgba(139, 92, 246, 0.15)',
           isActive: currentView.type === 'bulk_image_to_video' || (currentView.type === 'new_generation' && currentView.initialMode === 'bulk_image_to_video'),
           onClick: () => setCurrentView({ type: 'bulk_image_to_video' }),
-        },
-      ],
-    },
-    {
-      title: 'GEMINI',
-      items: [
-        {
-          id: 'gemini_video',
-          label: 'Gemini Status',
-          icon: <SparklesIcon size={16} />,
-          badge: 'Diagnostics',
-          badgeColor: '#60a5fa',
-          badgeBg: 'rgba(59, 130, 246, 0.15)',
-          isActive: currentView.type === 'gemini_video',
-          onClick: () => setCurrentView({ type: 'gemini_video' }),
         },
       ],
     },
@@ -534,23 +490,6 @@ export const AppShell: React.FC = () => {
               onProjectCreated={(projectId) => setCurrentView({ type: 'workspace', projectId })}
               onCancel={() => setCurrentView({ type: 'projects' })}
               onNavigateProfiles={() => setCurrentView({ type: 'profiles' })}
-            />
-          </div>
-        )}
-
-        {visitedViews.has('gemini_video') && (
-          <div
-            data-testid="view-container-gemini-video"
-            style={{
-              display: currentView.type === 'gemini_video' ? 'flex' : 'none',
-              width: '100%',
-              height: '100%',
-              flexDirection: 'column',
-              overflow: 'hidden',
-            }}
-          >
-            <GeminiStatusScreen
-              onNavigateMode={(mode) => setCurrentView({ type: mode })}
             />
           </div>
         )}

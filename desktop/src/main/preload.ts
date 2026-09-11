@@ -60,6 +60,7 @@ import type {
   AnalyzeAlignResult,
   SeparateFilesInput,
   SystemMetrics,
+  GeminiKeySummary,
 } from '../shared/types';
 
 const flowApi: FlowApi = {
@@ -186,6 +187,8 @@ const flowApi: FlowApi = {
     ipcRenderer.invoke('factory:getFinalRenderManifest', projectId),
   selectMusicFile: (): Promise<string | null> =>
     ipcRenderer.invoke('system:selectMusicFile'),
+  selectScriptFile: (): Promise<{ filePath: string; fileName: string; content: string } | null> =>
+    ipcRenderer.invoke('system:selectScriptFile'),
 
   // Unified Video Factory Pipeline (Phase 2)
   startPipeline: (projectId: string, mode?: VideoFactoryMode): Promise<VideoFactoryPipelineState> =>
@@ -237,6 +240,14 @@ const flowApi: FlowApi = {
     ipcRenderer.invoke('scriptAi:reReadScript', params),
   testScriptAiConnection: (): Promise<{ success: boolean; error?: string; model?: string; isMock?: boolean }> =>
     ipcRenderer.invoke('scriptAi:testConnection'),
+  listGeminiKeys: (): Promise<GeminiKeySummary[]> =>
+    ipcRenderer.invoke('geminiKeys:list'),
+  addGeminiKey: (key: string): Promise<{ success: boolean; keys: GeminiKeySummary[]; error?: string }> =>
+    ipcRenderer.invoke('geminiKeys:add', key),
+  removeGeminiKey: (id: string): Promise<{ success: boolean; keys: GeminiKeySummary[] }> =>
+    ipcRenderer.invoke('geminiKeys:remove', id),
+  revealGeminiKey: (id: string): Promise<{ success: boolean; fullKey?: string; error?: string }> =>
+    ipcRenderer.invoke('geminiKeys:reveal', id),
 
   // Events
   onJobProgress: (callback: (event: JobProgressEvent) => void) => {

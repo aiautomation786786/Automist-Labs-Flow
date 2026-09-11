@@ -90,6 +90,7 @@ const KNOWN_SECRET_KEYS = new Set<string>([
   'ai33Key',
   'famespeakKey',
   'geminiApiKey',
+  'geminiApiKeys',
 ]);
 
 export class SettingsManager {
@@ -137,7 +138,6 @@ export class SettingsManager {
     return {
       appDataDir: getAppDataDir(),
       defaultImageRatio: '16:9',
-      defaultProcessingOrder: 'images_first',
       maxRetries: 2,
       logLevel: 'INFO',
       defaultImageDownloadQuality: 'original',
@@ -174,12 +174,6 @@ export class SettingsManager {
       if (key === 'defaultImageRatio') {
         if (value !== '16:9' && value !== '9:16') {
           errors.push(`defaultImageRatio must be '16:9' or '9:16', got '${String(value)}'`);
-        } else {
-          sanitized[key] = value;
-        }
-      } else if (key === 'defaultProcessingOrder') {
-        if (value !== 'images_first' && value !== 'videos_first' && value !== 'automatic') {
-          errors.push(`defaultProcessingOrder must be 'images_first', 'videos_first', or 'automatic', got '${String(value)}'`);
         } else {
           sanitized[key] = value;
         }
@@ -372,21 +366,23 @@ export class SettingsManager {
   static getScriptAiKeys(): string[] {
     const keys: string[] = [];
 
-    const multiRaw = this.getSecret('scriptAiKeys');
-    if (multiRaw) {
-      try {
-        const parsed = JSON.parse(multiRaw);
-        if (Array.isArray(parsed)) {
-          for (const k of parsed) {
-            if (typeof k === 'string' && k.trim() && !keys.includes(k.trim())) {
-              keys.push(k.trim());
+    for (const secretField of ['scriptAiKeys', 'geminiApiKeys']) {
+      const multiRaw = this.getSecret(secretField);
+      if (multiRaw) {
+        try {
+          const parsed = JSON.parse(multiRaw);
+          if (Array.isArray(parsed)) {
+            for (const k of parsed) {
+              if (typeof k === 'string' && k.trim() && !keys.includes(k.trim())) {
+                keys.push(k.trim());
+              }
             }
           }
-        }
-      } catch {
-        for (const k of multiRaw.split(/[\r\n]+/)) {
-          if (k.trim() && !keys.includes(k.trim())) {
-            keys.push(k.trim());
+        } catch {
+          for (const k of multiRaw.split(/[\r\n]+/)) {
+            if (k.trim() && !keys.includes(k.trim())) {
+              keys.push(k.trim());
+            }
           }
         }
       }
@@ -408,6 +404,17 @@ export class SettingsManager {
     }
 
     return keys;
+  }
+
+  /**
+   * Securely saves the centralized list of Gemini API keys encrypted at rest.
+   */
+  static async saveScriptAiKeys(keys: string[]): Promise<AppSettings> {
+    const cleanKeys = Array.from(new Set(keys.map((k) => (typeof k === 'string' ? k.trim() : '')).filter(Boolean)));
+    return await this.updateSettings({
+      scriptAiKeys: cleanKeys,
+      geminiApiKeys: cleanKeys,
+    });
   }
 
   /**

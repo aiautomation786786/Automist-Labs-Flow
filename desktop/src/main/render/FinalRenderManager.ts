@@ -214,11 +214,13 @@ export class FinalRenderManager {
         const assemblyOptions: FinalAssemblyOptions = {
           ...options,
           transitionStyle,
+          outputResolution: options.outputResolution ?? factoryConfig?.outputResolution ?? 'source',
+          aspectRatio: options.aspectRatio ?? factoryConfig?.aspectRatio ?? '16:9',
           musicPath: projectMusicPath,
           musicEnabled: Boolean(projectMusicPath && options.musicEnabled !== false),
-          musicVolume: typeof options.musicVolume === 'number' ? options.musicVolume : 0.20,
-          duckingEnabled: options.duckingEnabled !== false,
-          crossfadeDuration: options.crossfadeDuration ?? 0.75,
+          musicVolume: typeof options.musicVolume === 'number' ? options.musicVolume : (factoryConfig?.musicVolume ?? 0.20),
+          duckingEnabled: options.duckingEnabled !== false && (factoryConfig?.duckingEnabled !== undefined ? factoryConfig.duckingEnabled : true),
+          crossfadeDuration: options.crossfadeDuration ?? factoryConfig?.crossfadeDuration ?? 0.75,
         };
 
         // 4. Call FinalAssemblyService

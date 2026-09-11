@@ -381,6 +381,22 @@ export class FinalAssemblyService {
     // Append audio filter parts
     filterComplexParts.push(...audioMixResult.filterComplexParts);
 
+    // Resolution scaling (4K or 1080p local FFmpeg assembly)
+    let assembledVideoPad = finalVideoPad;
+    if (options.outputResolution === '4k' || options.outputResolution === '1080p') {
+      const isPortrait = options.aspectRatio === '9:16';
+      const targetW = options.outputResolution === '4k'
+        ? (isPortrait ? 2160 : 3840)
+        : (isPortrait ? 1080 : 1920);
+      const targetH = options.outputResolution === '4k'
+        ? (isPortrait ? 3840 : 2160)
+        : (isPortrait ? 1920 : 1080);
+
+      const scaleFilter = `scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease,pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
+      filterComplexParts.push(`${assembledVideoPad}${scaleFilter}[v_scaled]`);
+      assembledVideoPad = '[v_scaled]';
+    }
+
     const fullFilterComplex = filterComplexParts.join(';');
     const finalAudioPad = audioMixResult.outputAudioPad;
 
@@ -397,7 +413,7 @@ export class FinalAssemblyService {
       '-filter_complex',
       fullFilterComplex,
       '-map',
-      finalVideoPad,
+      assembledVideoPad,
       '-map',
       finalAudioPad,
       '-c:v',

@@ -449,22 +449,55 @@ if ($targetPids.Count -gt 0) {
       }
     });
 
-    // Watch for unexpected exit
-    chromeProcess.once('exit', (code, signal) => {
-      if (
-        this._status !== 'stopping' &&
-        this._status !== 'stopped' &&
-        this._status !== 'created'
-      ) {
-        this.log.warn('chrome_crash', 'Chrome exited unexpectedly after login launch', { code, signal, pid });
-        if (this._status !== 'error') {
-          this.errorMessage = `Chrome exited unexpectedly (code=${code}, signal=${signal})`;
-          this.setStatus('error');
-          this.emit('crash', this.profileId);
-        }
-        this.cleanupPlaywrightObjects();
-      }
+    // Watch for Chrome exit after login launch
+    chromeProcess.once('exit', async (code, signal) => {
+      this.stopPostLoginWatcher();
+      this.cleanupPlaywrightObjects();
       this.chromeProcess = null;
+
+      if (
+        this._status === 'stopping' ||
+        this._status === 'stopped' ||
+        this._status === 'created'
+      ) {
+        return;
+      }
+
+      if (this._status === 'ready') {
+        this.log.info('chrome_exit', 'Chrome login window closed; profile already authenticated and ready', { code, signal, pid });
+        // Automatically restart in background/offscreen mode so session is ready for automation immediately
+        try {
+          await this.start({ headless: false, background: true });
+        } catch (err) {
+          this.log.warn('chrome_exit', `Background reconnect notice: ${(err as Error).message}`);
+        }
+        return;
+      }
+
+      // Check if user authenticated Google credentials on disk before closing Chrome
+      const localEmail = LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
+        this.config.userDataDir,
+        this.config.chromeProfileName || 'Default'
+      );
+
+      if (localEmail) {
+        this.log.info('chrome_exit', `Chrome closed with authenticated credentials on disk (${localEmail}). Verifying Flow in background...`);
+        this.detectedEmail = localEmail;
+        try {
+          // Launch background session to verify Flow authentication against labs.google
+          await this.start({ headless: false, background: true });
+        } catch (err) {
+          this.log.warn('chrome_exit', `Background verification notice: ${(err as Error).message}`);
+          this.setStatus('auth_required');
+          this.emit('status_change', this.getSnapshot());
+        }
+      } else {
+        // User closed Chrome without signing in
+        this.log.info('chrome_exit', 'Chrome login window closed without completed credentials', { code, signal, pid });
+        this.setStatus('auth_required');
+        this.errorMessage = null;
+        this.emit('status_change', this.getSnapshot());
+      }
     });
 
     this.startPostLoginWatcher();

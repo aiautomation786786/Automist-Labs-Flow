@@ -58,7 +58,6 @@ describe('SkillsScreen React UI Component Tests', () => {
     });
 
     expect(await screen.findByText('Skills Library')).toBeTruthy();
-    expect(screen.getByText('Phase 8')).toBeTruthy();
     expect(screen.getByText('Cinematic Documentary')).toBeTruthy();
     expect(screen.getByText('Viral Explainer / Shorts')).toBeTruthy();
     expect(screen.getByText(/2 skills available/i)).toBeTruthy();

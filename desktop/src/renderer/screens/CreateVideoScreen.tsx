@@ -5,6 +5,8 @@ import type {
   VideoFactoryConfig,
   SceneEntity,
   SupportedAspectRatio,
+  FinalOutputResolution,
+  SubtitleConfig,
   MotionStyle,
   TransitionStyle,
   TtsProviderId,
@@ -146,8 +148,38 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
   const [scenes, setScenes] = useState<SceneEntity[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [aspectRatio, setAspectRatio] = useState<SupportedAspectRatio>('16:9');
+  const [outputResolution, setOutputResolution] = useState<FinalOutputResolution>('source');
   const [subtitlesEnabled, setSubtitlesEnabled] = useState<boolean>(true);
   const [subtitleStyle, setSubtitleStyle] = useState<string>('bottom_glass');
+  const [subtitleConfig, setSubtitleConfig] = useState<SubtitleConfig>({
+    enabled: true,
+    preset: 'bottom_glass',
+    position: 'bottom',
+    fontFamily: 'Arial',
+    fontSize: 32,
+    textColor: '#FFFFFF',
+    backgroundColor: '#1A1917',
+    boxEnabled: true,
+    outlineWidth: 3,
+    shadowDepth: 0,
+  });
+  const [showSubtitleAdvanced, setShowSubtitleAdvanced] = useState<boolean>(false);
+
+  // Script Input Tab: 'paste' | 'one_file' | 'separate_files'
+  const [scriptInputMode, setScriptInputMode] = useState<'paste' | 'one_file' | 'separate_files'>('paste');
+  const [oneFile, setOneFile] = useState<{ filePath: string; fileName: string; content: string } | null>(null);
+  const [narrationFile, setNarrationFile] = useState<{ filePath: string; fileName: string; content: string } | null>(null);
+  const [promptsFile, setPromptsFile] = useState<{ filePath: string; fileName: string; content: string } | null>(null);
+  const [thumbnailFile, setThumbnailFile] = useState<{ filePath: string; fileName: string; content: string } | null>(null);
+  const [separateFilesMismatchNotice, setSeparateFilesMismatchNotice] = useState<string | null>(null);
+
+  // Background Music state (ZBot Audio Card)
+  const [musicEnabled, setMusicEnabled] = useState<boolean>(false);
+  const [musicPath, setMusicPath] = useState<string>('');
+  const [musicVolume, setMusicVolume] = useState<number>(0.20);
+  const [duckingEnabled, setDuckingEnabled] = useState<boolean>(true);
+  const [crossfadeDuration, setCrossfadeDuration] = useState<number>(0.75);
+
   const [motionEnabled, setMotionEnabled] = useState<boolean>(true);
   const [motionStyle, setMotionStyle] = useState<MotionStyle>('breathe');
   const [motionTierFilter, setMotionTierFilter] = useState<'all' | 'smart' | 'pro' | 'ultra'>('all');
@@ -204,6 +236,8 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
 
   // AI Re-Read State
   const [isReReading, setIsReReading] = useState<boolean>(false);
+  const [showParsedScenesPreview, setShowParsedScenesPreview] = useState<boolean>(false);
+  const [isDraggingFile, setIsDraggingFile] = useState<boolean>(false);
 
   // UI status
   const [loadingDraft, setLoadingDraft] = useState<boolean>(true);
@@ -284,19 +318,28 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
         const draft = await window.flowApi.getFactoryDraft();
         if (mounted && draft) {
           if (draft.title) setTitle(draft.title);
-          if (draft.rawScript) {
-            setRawScript(draft.rawScript);
+          if (draft.rawScript) setRawScript(draft.rawScript);
+          if (draft.scenes && Array.isArray(draft.scenes) && draft.scenes.length > 0) {
+            setScenes(draft.scenes);
+          } else if (draft.rawScript) {
             const parsed = ScriptParser.parse(draft.rawScript);
             setScenes(parsed.scenes);
             setWarnings(parsed.warnings);
           }
           if (draft.step) setStep(draft.step);
           if (draft.aspectRatio) setAspectRatio(draft.aspectRatio);
+          if (draft.outputResolution) setOutputResolution(draft.outputResolution);
           if (typeof draft.subtitlesEnabled === 'boolean') setSubtitlesEnabled(draft.subtitlesEnabled);
           if (draft.subtitleStyle) setSubtitleStyle(draft.subtitleStyle);
+          if (draft.subtitleConfig) setSubtitleConfig(draft.subtitleConfig);
+          if (typeof draft.musicEnabled === 'boolean') setMusicEnabled(draft.musicEnabled);
+          if (draft.musicPath) setMusicPath(draft.musicPath);
+          if (typeof draft.musicVolume === 'number') setMusicVolume(draft.musicVolume);
+          if (typeof draft.duckingEnabled === 'boolean') setDuckingEnabled(draft.duckingEnabled);
           if (typeof draft.motionEnabled === 'boolean') setMotionEnabled(draft.motionEnabled);
           if (draft.motionStyle) setMotionStyle(draft.motionStyle);
           if (draft.transitionStyle) setTransitionStyle(draft.transitionStyle);
+          if (typeof draft.crossfadeDuration === 'number') setCrossfadeDuration(draft.crossfadeDuration);
           if (draft.voiceEngine) setVoiceEngine(draft.voiceEngine);
           if (draft.voiceId) setVoiceId(draft.voiceId);
           if (draft.activeMode && !initialMode) setActiveMode(draft.activeMode);
@@ -365,6 +408,13 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
   const handleLoadSample = (sampleKey: 'documentary' | 'space') => {
     const sample = SAMPLE_SCRIPTS[sampleKey];
     if (sample) {
+      if (scriptInputMode === 'one_file') {
+        setOneFile({
+          fileName: sampleKey === 'documentary' ? 'ocean_documentary_sample.md' : 'deep_space_sample.md',
+          filePath: `samples/${sampleKey}.md`,
+          content: sample,
+        });
+      }
       handleScriptChange(sample);
     }
   };
@@ -451,6 +501,28 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
     persistDraft({ rawScript: exported, scenes, title });
   };
 
+  const handleDropOneFile = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDraggingFile(false);
+    if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        try {
+          const content = await file.text();
+          const fileInfo = {
+            filePath: (file as any).path || file.name,
+            fileName: file.name,
+            content,
+          };
+          setOneFile(fileInfo);
+          handleScriptChange(content);
+        } catch (err: any) {
+          setErrorMsg(`Failed to read dropped file: ${err.message}`);
+        }
+      }
+    }
+  };
+
   const handleImportFileClick = () => {
     fileInputRef.current?.click();
   };
@@ -517,6 +589,88 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
     });
 
     if (e.target) e.target.value = '';
+  };
+
+  const handleSelectScriptFile = async (target: 'one' | 'narration' | 'prompts' | 'thumbnail') => {
+    try {
+      if (window.flowApi?.selectScriptFile) {
+        const fileInfo = await window.flowApi.selectScriptFile();
+        if (!fileInfo) return;
+        if (target === 'one') {
+          setOneFile(fileInfo);
+          handleScriptChange(fileInfo.content);
+        } else if (target === 'narration') {
+          setNarrationFile(fileInfo);
+        } else if (target === 'prompts') {
+          setPromptsFile(fileInfo);
+        } else if (target === 'thumbnail') {
+          setThumbnailFile(fileInfo);
+        }
+      } else {
+        handleImportFileClick();
+      }
+    } catch (err: any) {
+      setErrorMsg(`Failed to load file: ${err.message}`);
+    }
+  };
+
+  const handleParseSeparateFiles = () => {
+    if (!promptsFile?.content.trim()) {
+      setErrorMsg('Image Prompts file is required as authoritative scene count for Separate Files.');
+      return;
+    }
+    setErrorMsg(null);
+    const narrationText = narrationFile?.content || '';
+    const promptsText = promptsFile.content;
+    const thumbnailText = thumbnailFile?.content || '';
+    const detectedTitle =
+      title.trim() && title !== 'New Faceless Video'
+        ? title
+        : promptsFile.fileName.replace(/\.[^/.]+$/, '') || 'New Faceless Video';
+
+    const result = ScriptParser.parseSeparateFiles({
+      narrationText,
+      promptsText,
+      thumbnailText,
+      title: detectedTitle,
+    });
+
+    if (result.title) setTitle(result.title);
+    setScenes(result.scenes);
+    setWarnings(result.warnings);
+
+    const marked = ScriptParser.toMarkedScript({
+      title: result.title || detectedTitle,
+      scenes: result.scenes,
+      thumbnailPrompt: result.thumbnailPrompt,
+    });
+    setRawScript(marked);
+    persistDraft({
+      rawScript: marked,
+      title: result.title || detectedTitle,
+      scenes: result.scenes,
+    });
+
+    const promptCount = promptsText.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).length;
+    setSeparateFilesMismatchNotice(
+      `Parsed ${result.scenes.length} scene(s) based on authoritative prompt count (${promptCount} prompts). Narration distributed across scenes.`
+    );
+    setEditorTab('structured');
+  };
+
+  const handleSelectMusicFile = async () => {
+    try {
+      if (window.flowApi?.selectMusicFile) {
+        const selected = await window.flowApi.selectMusicFile();
+        if (selected) {
+          setMusicPath(selected);
+          setMusicEnabled(true);
+          persistDraft({ musicPath: selected, musicEnabled: true });
+        }
+      }
+    } catch (err: any) {
+      setErrorMsg(`Failed to select music file: ${err.message}`);
+    }
   };
 
   // Phase 8 Script AI & Refinement Handlers
@@ -649,7 +803,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
       }
     }
     setErrorMsg(null);
-    const nextStep = Math.min(5, step + 1);
+    const nextStep = Math.min(6, step + 1);
     setStep(nextStep);
     persistDraft({ step: nextStep });
   };
@@ -725,15 +879,26 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
           updatedAt: new Date().toISOString(),
         },
         aspectRatio,
+        outputResolution,
         subtitlesEnabled,
         subtitleStyle,
+        subtitleConfig: {
+          ...subtitleConfig,
+          enabled: subtitlesEnabled,
+          preset: subtitleStyle,
+        },
         motionEnabled,
         motionStyle,
         transitionStyle,
+        crossfadeDuration,
         voiceEngine,
         voiceId,
         channelId,
         channelName,
+        musicEnabled,
+        musicPath: musicPath.trim() || undefined,
+        musicVolume,
+        duckingEnabled,
         stage: 'assets_queued',
       };
 
@@ -1048,7 +1213,8 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                 { s: 2, name: '2. Format' },
                 { s: 3, name: '3. Subtitles' },
                 { s: 4, name: '4. Motion' },
-                { s: 5, name: '5. Voice' },
+                { s: 5, name: '5. Voice & Music' },
+                { s: 6, name: '6. Review & Launch' },
               ].map((st) => {
                 const isActive = step === st.s;
                 const isPassed = step > st.s;
@@ -1345,142 +1511,666 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                 >
                   {/* Mode Bar & Action Controls */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                    <div style={{ display: 'flex', gap: '4px', backgroundColor: 'var(--bg-subtle)', padding: '3px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (editorTab === 'structured') handleSyncToRawScript();
-                          setEditorTab('raw');
-                        }}
-                        style={{
-                          padding: '5px 12px',
-                          borderRadius: 'var(--radius-xs)',
-                          border: 'none',
-                          backgroundColor: editorTab === 'raw' ? 'rgba(168, 85, 247, 0.2)' : 'transparent',
-                          color: editorTab === 'raw' ? '#c084fc' : 'var(--text-secondary)',
-                          fontSize: '12px',
-                          fontWeight: editorTab === 'raw' ? 700 : 500,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Script Text
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditorTab('structured')}
-                        style={{
-                          padding: '5px 12px',
-                          borderRadius: 'var(--radius-xs)',
-                          border: 'none',
-                          backgroundColor: editorTab === 'structured' ? 'rgba(168, 85, 247, 0.2)' : 'transparent',
-                          color: editorTab === 'structured' ? '#c084fc' : 'var(--text-secondary)',
-                          fontSize: '12px',
-                          fontWeight: editorTab === 'structured' ? 700 : 500,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Scene Cards ({scenes.length})
-                      </button>
-                    </div>
+                    {editorTab === 'raw' ? (
+                      <div style={{ display: 'flex', gap: '4px', backgroundColor: 'var(--bg-subtle)', padding: '3px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                        {[
+                          { id: 'one_file', label: 'One File', ariaLabel: 'One File' },
+                          { id: 'separate_files', label: 'Separate Files', ariaLabel: 'Separate Files' },
+                          { id: 'paste', label: 'Paste Text', ariaLabel: 'Paste Text (Paste Script)' },
+                        ].map((sub) => {
+                          const isSel = scriptInputMode === sub.id;
+                          return (
+                            <button
+                              key={sub.id}
+                              type="button"
+                              aria-label={sub.ariaLabel}
+                              onClick={() => setScriptInputMode(sub.id as any)}
+                              style={{
+                                padding: '6px 14px',
+                                borderRadius: 'var(--radius-xs)',
+                                border: 'none',
+                                backgroundColor: isSel ? 'rgba(168, 85, 247, 0.2)' : 'transparent',
+                                color: isSel ? '#c084fc' : 'var(--text-secondary)',
+                                fontSize: '12px',
+                                fontWeight: isSel ? 700 : 500,
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              {sub.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <button
+                          type="button"
+                          aria-label="Script Text"
+                          onClick={() => {
+                            handleSyncToRawScript();
+                            setEditorTab('raw');
+                            setScriptInputMode('paste');
+                          }}
+                          className="btn-secondary"
+                          style={{
+                            padding: '6px 14px',
+                            borderRadius: 'var(--radius-xs)',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                          }}
+                        >
+                          ← Script Text
+                        </button>
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                          Structured Scene Cards View
+                        </span>
+                      </div>
+                    )}
 
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <button
-                        type="button"
-                        onClick={handleImportFileClick}
-                        className="btn-secondary"
-                        style={{ padding: '5px 10px', fontSize: '11.5px', display: 'flex', alignItems: 'center', gap: '5px' }}
-                      >
-                        <UploadIcon size={12} /> Import File
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLoadSample('documentary')}
-                        className="btn-secondary"
-                        style={{ padding: '5px 10px', fontSize: '11.5px' }}
-                      >
-                        Sample: Ocean
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLoadSample('space')}
-                        className="btn-secondary"
-                        style={{ padding: '5px 10px', fontSize: '11.5px' }}
-                      >
-                        Sample: Space
-                      </button>
+                      {editorTab === 'raw' ? (
+                        <button
+                          type="button"
+                          onClick={() => setEditorTab('structured')}
+                          style={{
+                            padding: '6px 14px',
+                            borderRadius: 'var(--radius-xs)',
+                            border: '1px solid rgba(168, 85, 247, 0.4)',
+                            backgroundColor: 'rgba(168, 85, 247, 0.12)',
+                            color: '#c084fc',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                          }}
+                        >
+                          Scene Cards ({scenes.length}) →
+                        </button>
+                      ) : (
+                        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>
+                          {scenes.length} {scenes.length === 1 ? 'Scene' : 'Scenes'}
+                        </span>
+                      )}
                     </div>
                   </div>
 
-                  {/* TAB 1: RAW SCRIPT VIEW */}
+                  {/* TAB 1: SCRIPT INPUT VIEW */}
                   {editorTab === 'raw' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
-                        Enter or paste your script below. Supports ## SCENE 1 markers with NARRATION:, IMAGE:, and MOOD: tags, or numbered asset blocks.
-                      </p>
-                      <textarea
-                        rows={12}
-                        value={rawScript}
-                        onChange={(e) => handleScriptChange(e.target.value)}
-                        placeholder="Enter or paste your script here...&#10;&#10;Example:&#10;## SCENE 1&#10;NARRATION: Beneath the surface lies a mystery...&#10;IMAGE: Glowing deep sea trench with neon jellyfish&#10;&#10;## SCENE 2&#10;NARRATION: Submersibles discover new life...&#10;IMAGE: Research submarine illuminating hydrothermal vents"
-                        style={{
-                          backgroundColor: 'var(--bg-subtle)',
-                          color: 'var(--text-primary)',
-                          border: '1px solid var(--border-color)',
-                          padding: '12px',
-                          borderRadius: 'var(--radius-sm)',
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: '12px',
-                          lineHeight: 1.5,
-                          resize: 'vertical',
-                          width: '100%',
-                        }}
-                      />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      {/* SUBMODE 1: ONE FILE */}
+                      {scriptInputMode === 'one_file' && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
+                            Import a single unified script file (.md, .txt, or .json) containing narration, image prompts, and optional title/thumbnail.
+                          </p>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span
+                          <div
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              setIsDraggingFile(true);
+                            }}
+                            onDragLeave={() => setIsDraggingFile(false)}
+                            onDrop={handleDropOneFile}
                             style={{
-                              fontSize: '12px',
-                              fontWeight: 600,
-                              padding: '3px 10px',
-                              borderRadius: 'var(--radius-sm)',
-                              backgroundColor: scenes.length > 0 ? 'rgba(16, 185, 129, 0.12)' : 'var(--bg-subtle)',
-                              color: scenes.length > 0 ? 'var(--success)' : 'var(--text-muted)',
-                              border: '1px solid var(--border-color)',
+                              border: isDraggingFile ? '2px dashed #a855f7' : '2px dashed var(--border-color)',
+                              borderRadius: 'var(--radius-md)',
+                              padding: '28px 20px',
+                              textAlign: 'center',
+                              backgroundColor: isDraggingFile ? 'rgba(168, 85, 247, 0.08)' : 'var(--bg-subtle)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              gap: '12px',
+                              transition: 'all 0.2s ease',
                             }}
                           >
-                            {scenes.length} Scenes Detected
-                          </span>
-                          {scenes.length > 0 && (
-                            <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
-                              ~{validation.estimatedDurationSeconds}s voiceover · {validation.totalWords} words
-                            </span>
+                            <UploadIcon size={28} />
+
+                            {oneFile ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                  📄 {oneFile.fileName}
+                                </span>
+                                <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                                  {oneFile.filePath} · {oneFile.content.length} characters
+                                </span>
+                                <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectScriptFile('one')}
+                                    className="btn-secondary"
+                                    style={{ padding: '5px 14px', fontSize: '11.5px' }}
+                                  >
+                                    Replace File
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOneFile(null);
+                                      handleScriptChange('');
+                                    }}
+                                    className="btn-secondary"
+                                    style={{ padding: '5px 14px', fontSize: '11.5px', color: 'var(--danger)' }}
+                                  >
+                                    Clear File
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)' }}>
+                                    Drag and drop your script file here, or browse from disk
+                                  </span>
+                                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                                    Supported formats: Markdown (.md), Plain Text (.txt), JSON Story (.json)
+                                  </span>
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '2px' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectScriptFile('one')}
+                                    className="btn-primary"
+                                    style={{ padding: '7px 18px', fontSize: '12px' }}
+                                  >
+                                    Browse Files...
+                                  </button>
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+                                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Or quick test:</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleLoadSample('documentary')}
+                                    className="btn-secondary"
+                                    style={{ padding: '3px 10px', fontSize: '11px' }}
+                                  >
+                                    Sample: Ocean
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleLoadSample('space')}
+                                    className="btn-secondary"
+                                    style={{ padding: '3px 10px', fontSize: '11px' }}
+                                  >
+                                    Sample: Space
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* SUBMODE 2: SEPARATE FILES */}
+                      {scriptInputMode === 'separate_files' && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                          <div
+                            style={{
+                              padding: '10px 14px',
+                              borderRadius: 'var(--radius-sm)',
+                              backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                              border: '1px solid rgba(59, 130, 246, 0.25)',
+                              fontSize: '12px',
+                              color: '#60a5fa',
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            <strong>ZBot Separate Files Workflow:</strong> Select separate Narration and Image Prompts files. The Image Prompts file is <em>authoritative</em> for scene count (Golden Rule #2); narration is automatically distributed across scenes.
+                          </div>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            {/* Row 1: Narration File */}
+                            <div
+                              style={{
+                                padding: '12px 16px',
+                                borderRadius: 'var(--radius-md)',
+                                backgroundColor: 'var(--bg-subtle)',
+                                border: '1px solid var(--border-color)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: '12px',
+                              }}
+                            >
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                    1. Narration File (.txt, .md)
+                                  </span>
+                                  <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#f87171', fontWeight: 600 }}>
+                                    Required
+                                  </span>
+                                  {narrationFile && (
+                                    <span style={{ fontSize: '11px', color: '#10b981', fontWeight: 600 }}>✓ Ready</span>
+                                  )}
+                                </div>
+                                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                                  Voiceover script paragraphs or sentences
+                                </span>
+                              </div>
+
+                              {narrationFile ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '11.5px', color: 'var(--text-primary)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    📄 {narrationFile.fileName}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectScriptFile('narration')}
+                                    className="btn-secondary"
+                                    style={{ padding: '3px 8px', fontSize: '11px' }}
+                                  >
+                                    Replace
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setNarrationFile(null)}
+                                    style={{ border: 'none', background: 'transparent', color: 'var(--danger)', cursor: 'pointer', fontSize: '13px' }}
+                                    title="Remove file"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSelectScriptFile('narration')}
+                                  className="btn-secondary"
+                                  style={{ padding: '6px 14px', fontSize: '11.5px' }}
+                                >
+                                  Browse Narration File...
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Row 2: Image Prompts File (Authoritative) */}
+                            <div
+                              style={{
+                                padding: '12px 16px',
+                                borderRadius: 'var(--radius-md)',
+                                backgroundColor: 'var(--bg-subtle)',
+                                border: '1px solid var(--border-color)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: '12px',
+                              }}
+                            >
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                    2. Image Prompts File (.txt, .md)
+                                  </span>
+                                  <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(168, 85, 247, 0.15)', color: '#c084fc', fontWeight: 700 }}>
+                                    GOLDEN RULE #2
+                                  </span>
+                                  {promptsFile && (
+                                    <span style={{ fontSize: '11px', color: '#10b981', fontWeight: 600 }}>✓ Ready</span>
+                                  )}
+                                </div>
+                                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                                  Number of prompts strictly dictates scene count
+                                </span>
+                              </div>
+
+                              {promptsFile ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '11.5px', color: 'var(--text-primary)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    🎨 {promptsFile.fileName}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectScriptFile('prompts')}
+                                    className="btn-secondary"
+                                    style={{ padding: '3px 8px', fontSize: '11px' }}
+                                  >
+                                    Replace
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setPromptsFile(null)}
+                                    style={{ border: 'none', background: 'transparent', color: 'var(--danger)', cursor: 'pointer', fontSize: '13px' }}
+                                    title="Remove file"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSelectScriptFile('prompts')}
+                                  className="btn-secondary"
+                                  style={{ padding: '6px 14px', fontSize: '11.5px' }}
+                                >
+                                  Browse Prompts File...
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Row 3: Optional Thumbnail File */}
+                            <div
+                              style={{
+                                padding: '12px 16px',
+                                borderRadius: 'var(--radius-md)',
+                                backgroundColor: 'var(--bg-subtle)',
+                                border: '1px solid var(--border-color)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: '12px',
+                              }}
+                            >
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                    3. Thumbnail Prompt File (.txt, .md)
+                                  </span>
+                                  <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '3px', backgroundColor: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border-color)' }}>
+                                    Optional
+                                  </span>
+                                  {thumbnailFile && (
+                                    <span style={{ fontSize: '11px', color: '#10b981', fontWeight: 600 }}>✓ Ready</span>
+                                  )}
+                                </div>
+                                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                                  Dedicated prompt for YouTube/Shorts cover artwork
+                                </span>
+                              </div>
+
+                              {thumbnailFile ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '11.5px', color: 'var(--text-primary)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    🖼️ {thumbnailFile.fileName}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectScriptFile('thumbnail')}
+                                    className="btn-secondary"
+                                    style={{ padding: '3px 8px', fontSize: '11px' }}
+                                  >
+                                    Replace
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setThumbnailFile(null)}
+                                    style={{ border: 'none', background: 'transparent', color: 'var(--danger)', cursor: 'pointer', fontSize: '13px' }}
+                                    title="Remove file"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSelectScriptFile('thumbnail')}
+                                  className="btn-secondary"
+                                  style={{ padding: '6px 14px', fontSize: '11.5px' }}
+                                >
+                                  Browse Thumbnail Prompt...
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Action Button & Mismatch Notice */}
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', alignItems: 'center', marginTop: '4px' }}>
+                            <button
+                              type="button"
+                              disabled={!promptsFile}
+                              onClick={handleParseSeparateFiles}
+                              className="btn-primary"
+                              style={{ padding: '8px 22px', fontSize: '12.5px', fontWeight: 600 }}
+                            >
+                              Parse & Match Scenes
+                            </button>
+                          </div>
+
+                          {separateFilesMismatchNotice && (
+                            <div
+                              style={{
+                                padding: '10px 14px',
+                                borderRadius: 'var(--radius-sm)',
+                                backgroundColor: 'rgba(16, 185, 129, 0.08)',
+                                border: '1px solid rgba(16, 185, 129, 0.25)',
+                                fontSize: '11.5px',
+                                color: '#10b981',
+                              }}
+                            >
+                              {separateFilesMismatchNotice}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* SUBMODE 3: PASTE TEXT */}
+                      {scriptInputMode === 'paste' && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
+                              Paste script text in any format: Marked (## SCENE, NARRATION:, IMAGE:), Asset Blocks (IMG 1, ASSET 1), Sectioned (=== NARRATION ===), JSON Story, or Plain Text.
+                            </p>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <button
+                                type="button"
+                                onClick={() => handleLoadSample('documentary')}
+                                className="btn-secondary"
+                                style={{ padding: '4px 10px', fontSize: '11px' }}
+                              >
+                                Sample: Ocean
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleLoadSample('space')}
+                                className="btn-secondary"
+                                style={{ padding: '4px 10px', fontSize: '11px' }}
+                              >
+                                Sample: Space
+                              </button>
+                            </div>
+                          </div>
+
+                          <textarea
+                            rows={12}
+                            value={rawScript}
+                            onChange={(e) => handleScriptChange(e.target.value)}
+                            placeholder="Enter or paste your script here...&#10;&#10;Example:&#10;## SCENE 1&#10;NARRATION: Beneath the surface lies a mystery...&#10;IMAGE: Glowing deep sea trench with neon jellyfish&#10;&#10;## SCENE 2&#10;NARRATION: Submersibles discover new life...&#10;IMAGE: Research submarine illuminating hydrothermal vents"
+                            style={{
+                              backgroundColor: 'var(--bg-subtle)',
+                              color: 'var(--text-primary)',
+                              border: '1px solid var(--border-color)',
+                              padding: '14px',
+                              borderRadius: 'var(--radius-sm)',
+                              fontFamily: 'var(--font-mono)',
+                              fontSize: '12px',
+                              lineHeight: 1.5,
+                              resize: 'vertical',
+                              minHeight: '200px',
+                              width: '100%',
+                            }}
+                          />
+
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', alignItems: 'center' }}>
+                            <button
+                              type="button"
+                              onClick={() => handleScriptChange(rawScript)}
+                              className="btn-secondary"
+                              style={{ padding: '5px 14px', fontSize: '11.5px' }}
+                            >
+                              Parse Script
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* UNIFIED RESULT BAR & PREVIEW (Directly below active input method) */}
+                      {scenes.length > 0 && (
+                        <div
+                          style={{
+                            marginTop: '8px',
+                            padding: '12px 16px',
+                            borderRadius: 'var(--radius-md)',
+                            backgroundColor: 'rgba(16, 185, 129, 0.05)',
+                            border: '1px solid rgba(16, 185, 129, 0.25)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '12px',
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              flexWrap: 'wrap',
+                              gap: '10px',
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                              <span
+                                style={{
+                                  fontSize: '12px',
+                                  fontWeight: 700,
+                                  padding: '4px 10px',
+                                  borderRadius: 'var(--radius-sm)',
+                                  backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                                  color: '#10b981',
+                                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '5px',
+                                }}
+                              >
+                                ✓ {scenes.length} Scenes Loaded
+                              </span>
+
+                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                ~{validation.estimatedDurationSeconds}s voiceover · {validation.totalWords} words
+                              </span>
+
+                              <button
+                                type="button"
+                                disabled={isReReading || !rawScript.trim()}
+                                onClick={handleAiReRead}
+                                className="btn-secondary"
+                                style={{
+                                  padding: '3px 10px',
+                                  fontSize: '11px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  color: '#10b981',
+                                }}
+                              >
+                                <SparklesIcon size={12} />
+                                {isReReading ? 'Re-reading lines...' : 'Wrong count? Re-read with AI'}
+                              </button>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <button
+                                type="button"
+                                onClick={() => setShowParsedScenesPreview(!showParsedScenesPreview)}
+                                className="btn-secondary"
+                                style={{ padding: '4px 10px', fontSize: '11.5px' }}
+                              >
+                                {showParsedScenesPreview ? 'Hide Preview' : 'Preview Scenes'}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => setEditorTab('structured')}
+                                style={{
+                                  padding: '4px 12px',
+                                  fontSize: '11.5px',
+                                  borderRadius: 'var(--radius-xs)',
+                                  backgroundColor: 'rgba(168, 85, 247, 0.2)',
+                                  color: '#c084fc',
+                                  border: '1px solid rgba(168, 85, 247, 0.35)',
+                                  cursor: 'pointer',
+                                  fontWeight: 600,
+                                }}
+                              >
+                                Scene Cards ({scenes.length}) →
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Collapsible Preview Cards */}
+                          {showParsedScenesPreview && (
+                            <div
+                              style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '8px',
+                                borderTop: '1px solid rgba(16, 185, 129, 0.2)',
+                                paddingTop: '10px',
+                                maxHeight: '320px',
+                                overflowY: 'auto',
+                              }}
+                            >
+                              {scenes.map((sc) => (
+                                <div
+                                  key={sc.sceneNumber}
+                                  style={{
+                                    backgroundColor: 'var(--bg-surface)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: 'var(--radius-md)',
+                                    padding: '10px 14px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '4px',
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#c084fc' }}>
+                                      Scene {sc.sceneNumber}
+                                    </span>
+                                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                      <span style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>
+                                        ~{sc.durationSeconds || 3}s · {sc.wordCount || 0} words
+                                      </span>
+                                      {sc.mood && (
+                                        <span
+                                          style={{
+                                            fontSize: '10px',
+                                            padding: '1px 6px',
+                                            borderRadius: '4px',
+                                            backgroundColor: 'var(--bg-subtle)',
+                                            color: 'var(--text-secondary)',
+                                          }}
+                                        >
+                                          Mood: {sc.mood}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
+                                    <strong>Narration:</strong> {sc.narration}
+                                  </div>
+                                  <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+                                    <strong>Prompt:</strong> {sc.imagePrompt}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           )}
 
-                          <button
-                            type="button"
-                            disabled={isReReading || !rawScript.trim()}
-                            onClick={handleAiReRead}
-                            className="btn-secondary"
-                            style={{
-                              padding: '3px 10px',
-                              fontSize: '11px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              color: '#10b981',
-                            }}
-                          >
-                            <SparklesIcon size={12} />
-                            {isReReading ? 'Re-reading lines...' : 'Wrong count? Re-read with AI'}
-                          </button>
+                          {warnings.length > 0 && (
+                            <span style={{ fontSize: '11.5px', color: '#f59e0b' }}>
+                              ⚠️ {warnings[0]}
+                            </span>
+                          )}
                         </div>
-                        {warnings.length > 0 && (
-                          <span style={{ fontSize: '11.5px', color: '#f59e0b' }}>
-                            {warnings[0]}
-                          </span>
-                        )}
-                      </div>
+                      )}
                     </div>
                   )}
 
@@ -1854,62 +2544,6 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                   </div>
                 )}
 
-                {/* Parsed Scenes Preview (Always visible in Raw Script view if scenes exist) */}
-                {editorTab === 'raw' && scenes.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <label style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
-                        Live Parsed Scenes ({scenes.length})
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setEditorTab('structured')}
-                        className="btn-secondary"
-                        style={{ padding: '3px 8px', fontSize: '11px' }}
-                      >
-                        Open in Scene Cards Editor →
-                      </button>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {scenes.map((sc) => (
-                        <div
-                          key={sc.sceneNumber}
-                          style={{
-                            backgroundColor: 'var(--bg-surface)',
-                            border: '1px solid var(--border-color)',
-                            borderRadius: 'var(--radius-md)',
-                            padding: '12px 16px',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '6px',
-                          }}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: '12px', fontWeight: 700, color: '#c084fc' }}>
-                              Scene {sc.sceneNumber}
-                            </span>
-                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                              <span style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>
-                                ~{sc.durationSeconds || 3}s · {sc.wordCount || 0} words
-                              </span>
-                              {sc.mood && (
-                                <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '4px', backgroundColor: 'var(--bg-subtle)', color: 'var(--text-secondary)' }}>
-                                  Mood: {sc.mood}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <div style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
-                            <strong>Narration:</strong> {sc.narration}
-                          </div>
-                          <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
-                            <strong>Prompt:</strong> {sc.imagePrompt}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 
@@ -2068,6 +2702,97 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                     );
                   })}
                 </div>
+
+                {/* Local Final-Render Output Resolution (User-Requested Enhancement) */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div>
+                    <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Local Final-Render Output Resolution
+                    </label>
+                    <p style={{ fontSize: '11.5px', color: 'var(--text-muted)', margin: '2px 0 0 0' }}>
+                      Controls the output canvas resolution generated during local FFmpeg broadcast video assembly.
+                    </p>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                    {[
+                      {
+                        id: 'source' as FinalOutputResolution,
+                        name: 'Source / Original',
+                        badge: 'NATIVE',
+                        desc: aspectRatio === '9:16' ? 'Native generation (720x1280)' : 'Native generation (1280x720)',
+                      },
+                      {
+                        id: '1080p' as FinalOutputResolution,
+                        name: '1080p Full HD',
+                        badge: 'POPULAR',
+                        desc: aspectRatio === '9:16' ? '1080x1920 (Vertical HD)' : '1920x1080 (Full HD Widescreen)',
+                      },
+                      {
+                        id: '4k' as FinalOutputResolution,
+                        name: '4K Ultra HD',
+                        badge: 'ULTRA RES',
+                        desc: aspectRatio === '9:16' ? '2160x3840 (4K Vertical)' : '3840x2160 (4K UHD Widescreen)',
+                      },
+                    ].map((res) => {
+                      const isSel = outputResolution === res.id;
+                      return (
+                        <div
+                          key={res.id}
+                          onClick={() => {
+                            setOutputResolution(res.id);
+                            persistDraft({ outputResolution: res.id });
+                          }}
+                          style={{
+                            padding: '12px 14px',
+                            borderRadius: 'var(--radius-sm)',
+                            border: isSel ? '2px solid #a855f7' : '1px solid var(--border-color)',
+                            backgroundColor: isSel ? 'rgba(168, 85, 247, 0.12)' : 'var(--bg-subtle)',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '4px',
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '12.5px', fontWeight: 600, color: isSel ? '#c084fc' : 'var(--text-primary)' }}>
+                              {res.name}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: '9px',
+                                fontWeight: 700,
+                                padding: '1px 5px',
+                                borderRadius: '3px',
+                                backgroundColor: isSel ? 'rgba(168, 85, 247, 0.2)' : 'var(--bg-surface)',
+                                color: isSel ? '#a855f7' : 'var(--text-muted)',
+                              }}
+                            >
+                              {res.badge}
+                            </span>
+                          </div>
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                            {res.desc}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div
+                    style={{
+                      padding: '10px 14px',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                      border: '1px solid rgba(59, 130, 246, 0.25)',
+                      fontSize: '11.5px',
+                      color: '#60a5fa',
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    <strong>Resolution Architecture:</strong> Native Google Flow and Gemini assets generate at provider resolutions. Infinity Flow's local FFmpeg final assembly engine scales and pads video streams to 4K Ultra HD ({aspectRatio === '9:16' ? '2160x3840' : '3840x2160'}) or 1080p Full HD using high-fidelity lanczos/bicubic resampling.
+                  </div>
+                </div>
               </div>
             )}
 
@@ -2134,10 +2859,70 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                   </label>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
                     {[
-                      { id: 'bottom_glass', name: 'Bottom Glass', desc: 'Frosted lower bar' },
-                      { id: 'bottom_bar', name: 'Solid Bar', desc: 'High-contrast strip' },
-                      { id: 'neon_punch', name: 'Neon Punch', desc: 'Vibrant punchy titles' },
-                      { id: 'cinema_yellow', name: 'Cinema Yellow', desc: 'Classic cinematic' },
+                      {
+                        id: 'bottom_glass',
+                        name: 'Bottom Glass',
+                        desc: 'Frosted lower bar',
+                        cfg: {
+                          preset: 'bottom_glass',
+                          fontFamily: 'Arial',
+                          fontSize: 32,
+                          textColor: '#FFFFFF',
+                          backgroundColor: '#1A1917',
+                          boxEnabled: true,
+                          outlineWidth: 3,
+                          shadowDepth: 0,
+                          position: 'bottom' as const,
+                        },
+                      },
+                      {
+                        id: 'solid_bar',
+                        name: 'Solid Bar',
+                        desc: 'High-contrast strip',
+                        cfg: {
+                          preset: 'solid_bar',
+                          fontFamily: 'Arial',
+                          fontSize: 32,
+                          textColor: '#FFFFFF',
+                          backgroundColor: '#000000',
+                          boxEnabled: true,
+                          outlineWidth: 4,
+                          shadowDepth: 0,
+                          position: 'bottom' as const,
+                        },
+                      },
+                      {
+                        id: 'neon_punch',
+                        name: 'Neon Punch',
+                        desc: 'Vibrant punchy titles',
+                        cfg: {
+                          preset: 'neon_punch',
+                          fontFamily: 'Arial',
+                          fontSize: 34,
+                          textColor: '#00FFFF',
+                          backgroundColor: '#101010',
+                          boxEnabled: false,
+                          outlineWidth: 3,
+                          shadowDepth: 2,
+                          position: 'bottom' as const,
+                        },
+                      },
+                      {
+                        id: 'cinema_yellow',
+                        name: 'Cinema Yellow',
+                        desc: 'Classic cinematic',
+                        cfg: {
+                          preset: 'cinema_yellow',
+                          fontFamily: 'Arial',
+                          fontSize: 34,
+                          textColor: '#FFE500',
+                          backgroundColor: '#000000',
+                          boxEnabled: false,
+                          outlineWidth: 3,
+                          shadowDepth: 2,
+                          position: 'bottom' as const,
+                        },
+                      },
                     ].map((st) => {
                       const isSel = subtitleStyle === st.id;
                       return (
@@ -2146,7 +2931,19 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                           onClick={() => {
                             if (subtitlesEnabled) {
                               setSubtitleStyle(st.id);
-                              persistDraft({ subtitleStyle: st.id });
+                              setSubtitleConfig((prev) => ({
+                                ...prev,
+                                ...st.cfg,
+                                enabled: true,
+                              }));
+                              persistDraft({
+                                subtitleStyle: st.id,
+                                subtitleConfig: {
+                                  ...subtitleConfig,
+                                  ...st.cfg,
+                                  enabled: true,
+                                },
+                              });
                             }
                           }}
                           style={{
@@ -2167,9 +2964,274 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                   </div>
                 </div>
 
-                {/* Phase Status */}
+                {/* Live Interactive Subtitle Preview Canvas */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Live Subtitle Interactive Preview
+                    </label>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      Canvas preview ({aspectRatio})
+                    </span>
+                  </div>
+
+                  <div
+                    style={{
+                      position: 'relative',
+                      width: '100%',
+                      maxWidth: aspectRatio === '9:16' ? '280px' : '520px',
+                      height: aspectRatio === '9:16' ? '240px' : '160px',
+                      margin: '0 auto',
+                      borderRadius: 'var(--radius-md)',
+                      background: 'radial-gradient(circle at center, #1e1b4b 0%, #09090b 100%)',
+                      border: '1px solid var(--border-color)',
+                      overflow: 'hidden',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      boxShadow: 'inset 0 0 20px rgba(0,0,0,0.5)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: '8px',
+                        left: '10px',
+                        fontSize: '9.5px',
+                        color: 'rgba(255,255,255,0.4)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                      }}
+                    >
+                      Preview Frame
+                    </div>
+
+                    {subtitlesEnabled ? (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: '50%',
+                          transform: 'translateX(-50%)',
+                          ...(subtitleConfig.position === 'top'
+                            ? { top: '14px' }
+                            : subtitleConfig.position === 'center'
+                            ? { top: '50%', transform: 'translate(-50%, -50%)' }
+                            : { bottom: '14px' }),
+                          fontFamily: subtitleConfig.fontFamily || 'Arial',
+                          fontSize: `${Math.round((subtitleConfig.fontSize || 32) * 0.42)}px`,
+                          color: subtitleConfig.textColor || '#FFFFFF',
+                          backgroundColor: subtitleConfig.boxEnabled
+                            ? subtitleConfig.backgroundColor || 'rgba(0,0,0,0.7)'
+                            : 'transparent',
+                          padding: subtitleConfig.boxEnabled ? '4px 10px' : '0',
+                          borderRadius: '4px',
+                          textAlign: 'center',
+                          maxWidth: '85%',
+                          fontWeight: 700,
+                          lineHeight: 1.3,
+                          textShadow:
+                            !subtitleConfig.boxEnabled && (subtitleConfig.outlineWidth || subtitleConfig.shadowDepth)
+                              ? '0 2px 4px rgba(0,0,0,0.9), 0 0 2px #000'
+                              : 'none',
+                          boxShadow: subtitleConfig.boxEnabled ? '0 2px 8px rgba(0,0,0,0.4)' : 'none',
+                          border: subtitleConfig.boxEnabled ? '1px solid rgba(255,255,255,0.1)' : 'none',
+                        }}
+                      >
+                        Bioluminescent creatures illuminate the oceanic abyss.
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                        (Subtitles Disabled)
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Collapsible / Expandable Typography & Appearance Settings */}
+                <div
+                  style={{
+                    backgroundColor: 'var(--bg-subtle)',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-color)',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setShowSubtitleAdvanced((prev) => !prev)}
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      backgroundColor: 'transparent',
+                      border: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      cursor: 'pointer',
+                      color: 'var(--text-primary)',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <span>Typography & Appearance Controls</span>
+                    <span style={{ fontSize: '11px', color: '#c084fc' }}>
+                      {showSubtitleAdvanced ? '▲ Collapse' : '▼ Customize Font, Colors, Position'}
+                    </span>
+                  </button>
+
+                  {showSubtitleAdvanced && (
+                    <div style={{ padding: '16px', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                      {/* Position Selector */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          Screen Position:
+                        </label>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          {(['bottom', 'center', 'top'] as const).map((pos) => {
+                            const isSel = (subtitleConfig.position || 'bottom') === pos;
+                            return (
+                              <button
+                                key={pos}
+                                type="button"
+                                onClick={() => {
+                                  setSubtitleConfig((prev) => ({ ...prev, position: pos }));
+                                  persistDraft({ subtitleConfig: { ...subtitleConfig, position: pos } });
+                                }}
+                                style={{
+                                  padding: '4px 12px',
+                                  fontSize: '11px',
+                                  borderRadius: '4px',
+                                  border: isSel ? '1px solid #a855f7' : '1px solid var(--border-color)',
+                                  backgroundColor: isSel ? 'rgba(168, 85, 247, 0.2)' : 'var(--bg-surface)',
+                                  color: isSel ? '#c084fc' : 'var(--text-secondary)',
+                                  cursor: 'pointer',
+                                  textTransform: 'capitalize',
+                                }}
+                              >
+                                {pos}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Font Family */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          Font Family:
+                        </label>
+                        <select
+                          value={subtitleConfig.fontFamily || 'Arial'}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSubtitleConfig((prev) => ({ ...prev, fontFamily: val }));
+                            persistDraft({ subtitleConfig: { ...subtitleConfig, fontFamily: val } });
+                          }}
+                          style={{
+                            padding: '4px 10px',
+                            borderRadius: '4px',
+                            backgroundColor: 'var(--bg-surface)',
+                            border: '1px solid var(--border-color)',
+                            color: 'var(--text-primary)',
+                            fontSize: '12px',
+                          }}
+                        >
+                          {['Arial', 'Impact', 'Montserrat', 'Roboto', 'Helvetica', 'Georgia'].map((f) => (
+                            <option key={f} value={f}>{f}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Font Size */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          Font Size: {subtitleConfig.fontSize || 32}px
+                        </label>
+                        <input
+                          type="range"
+                          min="20"
+                          max="48"
+                          step="2"
+                          value={subtitleConfig.fontSize || 32}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10);
+                            setSubtitleConfig((prev) => ({ ...prev, fontSize: val }));
+                            persistDraft({ subtitleConfig: { ...subtitleConfig, fontSize: val } });
+                          }}
+                          style={{ flex: 1, maxWidth: '200px' }}
+                        />
+                      </div>
+
+                      {/* Text Color */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          Text Color:
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <input
+                            type="color"
+                            value={subtitleConfig.textColor || '#FFFFFF'}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setSubtitleConfig((prev) => ({ ...prev, textColor: val }));
+                              persistDraft({ subtitleConfig: { ...subtitleConfig, textColor: val } });
+                            }}
+                            style={{ width: '28px', height: '28px', padding: 0, border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                          />
+                          <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+                            {subtitleConfig.textColor || '#FFFFFF'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Background Box */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          Background Box:
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = !subtitleConfig.boxEnabled;
+                            setSubtitleConfig((prev) => ({ ...prev, boxEnabled: next }));
+                            persistDraft({ subtitleConfig: { ...subtitleConfig, boxEnabled: next } });
+                          }}
+                          className={subtitleConfig.boxEnabled ? 'btn-primary' : 'btn-secondary'}
+                          style={{ padding: '3px 12px', fontSize: '11px' }}
+                        >
+                          {subtitleConfig.boxEnabled ? 'Box Enabled' : 'No Box (Outline)'}
+                        </button>
+                      </div>
+
+                      {subtitleConfig.boxEnabled && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                            Box Background Color:
+                          </label>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <input
+                              type="color"
+                              value={subtitleConfig.backgroundColor || '#1A1917'}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setSubtitleConfig((prev) => ({ ...prev, backgroundColor: val }));
+                                persistDraft({ subtitleConfig: { ...subtitleConfig, backgroundColor: val } });
+                              }}
+                              style={{ width: '28px', height: '28px', padding: 0, border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                            />
+                            <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+                              {subtitleConfig.backgroundColor || '#1A1917'}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Subtitles Status */}
                 <div style={{ padding: '10px 14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', fontSize: '11.5px', color: '#10b981' }}>
-                  <strong>Phase 5 Active:</strong> Synchronized word-level subtitles are burned into per-scene MP4 clips via local FFmpeg libass rendering.
+                  <strong>Subtitles Pipeline:</strong> Synchronized word-level subtitles are compiled to ASS V4+ events and burned into per-scene MP4 clips via local FFmpeg libass rendering with exact typography parameters.
                 </div>
               </div>
             )}
@@ -2372,11 +3434,34 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                       );
                     })}
                   </div>
+                  {transitionStyle === 'cross_fade' && (
+                    <div style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <label style={{ fontSize: '12px', color: 'var(--text-secondary)', minWidth: '130px' }}>
+                        Crossfade Duration:
+                      </label>
+                      <input
+                        type="range"
+                        min="0.3"
+                        max="2.0"
+                        step="0.05"
+                        value={crossfadeDuration}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value);
+                          setCrossfadeDuration(val);
+                          persistDraft({ crossfadeDuration: val });
+                        }}
+                        style={{ flex: 1, accentColor: 'var(--accent-color)' }}
+                      />
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', minWidth: '45px' }}>
+                        {crossfadeDuration.toFixed(2)}s
+                      </span>
+                    </div>
+                  )}
                 </div>
 
-                {/* Phase Status */}
+                {/* Motion Status */}
                 <div style={{ padding: '10px 14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', fontSize: '11.5px', color: '#10b981' }}>
-                  <strong>Phase 5 Active:</strong> Camera motion filters (zoompan) and transitions are actively rendered into video clips via local FFmpeg.
+                  <strong>Motion:</strong> Camera motion filters (zoompan) and transitions are actively rendered into video clips via local FFmpeg.
                 </div>
               </div>
             )}
@@ -2590,6 +3675,120 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                     })}
                   </div>
 
+                  {/* Background Music Card (ZBot Parity §7 & Audio Architecture) */}
+                  <div
+                    style={{
+                      padding: '16px 18px',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'var(--bg-subtle)',
+                      border: '1px solid var(--border-color)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                          Background Music & Audio Mixing
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                          Optional background soundtrack layered beneath spoken narration with automatic ducking.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = !musicEnabled;
+                          setMusicEnabled(next);
+                          persistDraft({ musicEnabled: next });
+                        }}
+                        className={musicEnabled ? 'btn-primary' : 'btn-secondary'}
+                        style={{ padding: '6px 16px', fontSize: '12px' }}
+                      >
+                        {musicEnabled ? 'Music ON' : 'Music OFF'}
+                      </button>
+                    </div>
+
+                    {musicEnabled && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', paddingTop: '6px' }}>
+                        {/* Audio File Selection */}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                            <button
+                              type="button"
+                              onClick={handleSelectMusicFile}
+                              className="btn-secondary"
+                              style={{ padding: '6px 12px', fontSize: '11.5px', flexShrink: 0 }}
+                            >
+                              Browse Audio File...
+                            </button>
+                            <span style={{ fontSize: '12px', color: musicPath ? 'var(--text-primary)' : 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {musicPath ? `🎵 ${musicPath.split(/[/\\]/).pop()}` : 'No audio file selected'}
+                            </span>
+                          </div>
+                          {musicPath && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMusicPath('');
+                                persistDraft({ musicPath: '' });
+                              }}
+                              style={{ border: 'none', background: 'transparent', color: 'var(--danger)', cursor: 'pointer', fontSize: '11px', flexShrink: 0 }}
+                            >
+                              Remove Track
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Volume and Ducking Row */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', flexShrink: 0 }}>
+                              Music Volume: {Math.round(musicVolume * 100)}%
+                            </label>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.05"
+                              value={musicVolume}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                setMusicVolume(val);
+                                persistDraft({ musicVolume: val });
+                              }}
+                              style={{ flex: 1 }}
+                            />
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '10px' }}>
+                            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                              Sidechain Ducking:
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = !duckingEnabled;
+                                setDuckingEnabled(next);
+                                persistDraft({ duckingEnabled: next });
+                              }}
+                              className={duckingEnabled ? 'btn-primary' : 'btn-secondary'}
+                              style={{ padding: '4px 12px', fontSize: '11px' }}
+                            >
+                              {duckingEnabled ? 'Ducking ON' : 'Ducking OFF'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* FinalAudioMixer Architecture Notice */}
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                          <strong>Audio Engine:</strong> FinalAudioMixer loops the soundtrack indefinitely, automatically attenuates volume during spoken words via sidechain compression, normalizes overall loudness to broadcast -14 LUFS, and cleanly fades out audio over the final 1.5 seconds.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {/* ZBot Fallback Architecture Banner */}
                   <div
                     style={{
@@ -2608,8 +3807,123 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
               );
             })()}
 
+            {/* STEP 6: REVIEW & LAUNCH (Infinity Flow Summary Layer) */}
+            {step === 6 && (
+              <div
+                style={{
+                  backgroundColor: 'var(--bg-surface)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 'var(--radius-lg)',
+                  padding: '24px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '20px',
+                }}
+              >
+                <div>
+                  <h2 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+                    Review Project & Production Pipeline
+                  </h2>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+                    Confirm your faceless video production settings before launching autonomous asset generation and rendering.
+                  </p>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '14px' }}>
+                  {/* Card 1: Project Story */}
+                  <div style={{ padding: '14px', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Project & Script</span>
+                    <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>{title || 'Untitled Project'}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      {scenes.length} Scenes · ~{validation.estimatedDurationSeconds}s voiceover · {validation.totalWords} words
+                    </span>
+                  </div>
+
+                  {/* Card 2: Video Format & Resolution */}
+                  <div style={{ padding: '14px', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Format & Resolution</span>
+                    <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      {aspectRatio === '9:16' ? '9:16 Vertical (Shorts/Reels)' : '16:9 Landscape (Widescreen)'}
+                    </span>
+                    <span style={{ fontSize: '12px', color: '#c084fc', fontWeight: 600 }}>
+                      Output Resolution: {outputResolution === '4k' ? '4K Ultra HD (Local Assembly)' : outputResolution === '1080p' ? '1080p Full HD' : 'Source / Original'}
+                    </span>
+                  </div>
+
+                  {/* Card 3: Subtitles */}
+                  <div style={{ padding: '14px', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Subtitles</span>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {subtitlesEnabled ? `Enabled · ${subtitleStyle} (${subtitleConfig.fontFamily || 'Arial'})` : 'Disabled'}
+                    </span>
+                    <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                      Position: {subtitleConfig.position || 'bottom'} · Size: {subtitleConfig.fontSize || 32}px {subtitleConfig.boxEnabled ? '· Box' : '· Outline'}
+                    </span>
+                  </div>
+
+                  {/* Card 4: Camera Motion */}
+                  <div style={{ padding: '14px', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Motion & Transitions</span>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {motionEnabled ? `Motion ON · ${motionStyle}` : 'Motion OFF (Static Frames)'}
+                    </span>
+                    <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                      Transition: {transitionStyle === 'cross_fade' ? `Cross Fade (${crossfadeDuration}s)` : 'Hard Cut'}
+                    </span>
+                  </div>
+
+                  {/* Card 5: Voice & Engine */}
+                  <div style={{ padding: '14px', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Voice & TTS Narrator</span>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Engine: {voiceEngine}
+                    </span>
+                    <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                      Voice ID: {voiceId}
+                    </span>
+                  </div>
+
+                  {/* Card 6: Background Music */}
+                  <div style={{ padding: '14px', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Background Music</span>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {musicEnabled && musicPath ? `Active (${Math.round(musicVolume * 100)}% vol)` : 'No Background Music'}
+                    </span>
+                    <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {musicEnabled && musicPath ? `${musicPath.split(/[/\\]/).pop()} ${duckingEnabled ? '· Ducking ON' : ''}` : 'Voiceover only'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Readiness Banner */}
+                <div style={{ padding: '12px 16px', borderRadius: 'var(--radius-sm)', backgroundColor: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', fontSize: '12px', color: '#10b981', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <CheckIcon size={16} />
+                  <span>
+                    <strong>Production Ready:</strong> All configuration parameters validated. Launch the autonomous multi-stage rendering pipeline below.
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Stepper Navigation Actions */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px' }}>
+            <div
+              style={{
+                position: 'sticky',
+                bottom: 0,
+                backgroundColor: 'rgba(15, 17, 23, 0.95)',
+                backdropFilter: 'blur(12px)',
+                borderTop: '1px solid var(--border-color)',
+                padding: '14px 20px',
+                borderRadius: 'var(--radius-lg)',
+                marginTop: '16px',
+                marginBottom: '8px',
+                zIndex: 20,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                boxShadow: '0 -4px 16px rgba(0, 0, 0, 0.45)',
+              }}
+            >
               <div>
                 {step > 1 && (
                   <button type="button" onClick={handlePrevStep} className="btn-secondary" style={{ padding: '8px 18px', fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -2618,10 +3932,29 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                 )}
               </div>
 
-              <div>
-                {step < 5 ? (
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                {step === 5 && (
+                  <button
+                    type="button"
+                    disabled={isSubmitting || scenes.length === 0}
+                    onClick={handleCreateFullVideoProject}
+                    className="btn-secondary"
+                    style={{
+                      padding: '8px 16px',
+                      fontSize: '12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    <SparklesIcon size={13} />
+                    {isSubmitting ? 'Creating Project...' : 'Create Video Project'}
+                  </button>
+                )}
+
+                {step < 6 ? (
                   <button type="button" onClick={handleNextStep} className="btn-primary" style={{ padding: '8px 22px', fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    Next Step <ArrowRightIcon size={14} />
+                    {step === 5 ? 'Next: Review & Launch' : 'Next Step'} <ArrowRightIcon size={14} />
                   </button>
                 ) : (
                   <button
@@ -2767,18 +4100,6 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                   <h2 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
                     From Skill Workflow
                   </h2>
-                  <span
-                    style={{
-                      fontSize: '11px',
-                      fontWeight: 700,
-                      padding: '2px 8px',
-                      borderRadius: '12px',
-                      backgroundColor: 'rgba(16, 185, 129, 0.15)',
-                      color: '#10b981',
-                    }}
-                  >
-                    Phase 8 Active
-                  </span>
                 </div>
                 <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
                   Combine a Channel Rulebook with a specialized Skill to autonomously create structured scenes with synchronized visual prompts and narration.
@@ -3080,9 +4401,6 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                   <h2 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
                     Audio Only Workflow (Standalone Narration Studio)
                   </h2>
-                  <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', padding: '2px 6px', borderRadius: 'var(--radius-sm)', backgroundColor: 'rgba(168, 85, 247, 0.12)', color: 'rgb(168, 85, 247)' }}>
-                    Phase 4 Studio
-                  </span>
                 </div>
                 <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
                   Synthesize multi-scene or standalone voiceovers with ZBot fallback, concatenate with FFmpeg into broadcast master audio, and export.

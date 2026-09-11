@@ -603,7 +603,7 @@ export type AppLogLevel = 'INFO' | 'WARN' | 'DEBUG' | 'ERROR';
 export interface AppSettings {
     appDataDir: string;
     defaultImageRatio: SupportedAspectRatio;
-    defaultProcessingOrder: ProcessingOrder;
+    defaultProcessingOrder?: ProcessingOrder;
     maxRetries: number;
     logLevel: AppLogLevel;
     defaultImageDownloadQuality?: 'original' | '2k';
@@ -621,11 +621,23 @@ export interface AppSettings {
     scriptAiModel?: string;
     scriptAiKey?: string;
     scriptAiKeys?: string[];
+    geminiApiKey?: string;
+    geminiApiKeys?: string[];
     azureSpeechKey?: string;
     azureSpeechRegion?: string;
     ai33Key?: string;
     famespeakKey?: string;
     [key: string]: unknown;
+}
+export type GeminiKeyStatus = 'healthy' | 'temporarily_unavailable' | 'quota_limited' | 'invalid';
+
+export interface GeminiKeySummary {
+    id: string;
+    masked: string;
+    status: GeminiKeyStatus;
+    cooldownUntil?: number | null;
+    lastUsedAt?: number | null;
+    failureCount?: number;
 }
 export type VideoFactoryMode = 'full_video' | 'from_skill' | 'images_only' | 'audio_only';
 
@@ -804,19 +816,41 @@ export interface PipelineProgressEvent {
   stages?: Record<VideoFactoryStage, StageState>;
 }
 
+export type FinalOutputResolution = 'source' | '1080p' | '4k';
+
+export interface SubtitleConfig {
+    enabled?: boolean;
+    preset?: string;
+    position?: 'bottom' | 'center' | 'top';
+    fontFamily?: string;
+    fontSize?: number;
+    textColor?: string;
+    backgroundColor?: string;
+    boxEnabled?: boolean;
+    outlineWidth?: number;
+    shadowDepth?: number;
+}
+
 export interface VideoFactoryConfig {
     mode: VideoFactoryMode;
     story: StoryEntity;
     aspectRatio: SupportedAspectRatio;
+    outputResolution?: FinalOutputResolution;
     subtitlesEnabled: boolean;
     subtitleStyle?: string;
+    subtitleConfig?: SubtitleConfig;
     motionEnabled: boolean;
     motionStyle: MotionStyle;
     transitionStyle: TransitionStyle;
+    crossfadeDuration?: number;
     voiceEngine: string;
     voiceId: string;
     channelId?: string;
     channelName?: string;
+    musicEnabled?: boolean;
+    musicPath?: string;
+    musicVolume?: number;
+    duckingEnabled?: boolean;
     shortsThumbnailOverlay?: boolean;
     stage: 'draft' | 'script_ready' | 'assets_queued' | 'rendering_pending' | VideoFactoryStage;
 }
@@ -918,6 +952,8 @@ export interface RenderManifest {
 }
 export type FinalRenderStatus = 'queued' | 'preparing' | 'assembling' | 'mixing_audio' | 'muxing' | 'validating' | 'generating_thumbnail' | 'completed' | 'failed' | 'cancelled';
 export interface FinalAssemblyOptions {
+    outputResolution?: FinalOutputResolution;
+    aspectRatio?: SupportedAspectRatio;
     musicPath?: string;
     musicEnabled?: boolean;
     musicVolume?: number;
@@ -1188,15 +1224,22 @@ export interface VideoFactoryDraft {
     rawScript: string;
     scenes: SceneEntity[];
     aspectRatio: SupportedAspectRatio;
+    outputResolution?: FinalOutputResolution;
     subtitlesEnabled: boolean;
     subtitleStyle?: string;
+    subtitleConfig?: SubtitleConfig;
     motionEnabled: boolean;
     motionStyle: MotionStyle;
     transitionStyle: TransitionStyle;
+    crossfadeDuration?: number;
     voiceEngine: string;
     voiceId: string;
     channelId?: string;
     channelName?: string;
+    musicEnabled?: boolean;
+    musicPath?: string;
+    musicVolume?: number;
+    duckingEnabled?: boolean;
     skillId?: string;
     lastSaved: string;
 }
@@ -1443,6 +1486,10 @@ export interface FlowApi {
         model?: string;
         isMock?: boolean;
     }>;
+    listGeminiKeys?: () => Promise<GeminiKeySummary[]>;
+    addGeminiKey?: (key: string) => Promise<{ success: boolean; keys: GeminiKeySummary[]; error?: string }>;
+    removeGeminiKey?: (id: string) => Promise<{ success: boolean; keys: GeminiKeySummary[] }>;
+    revealGeminiKey?: (id: string) => Promise<{ success: boolean; fullKey?: string; error?: string }>;
     onJobProgress: (callback: (event: JobProgressEvent) => void) => () => void;
     onSlotUpdated: (callback: (event: SlotUpdatedEvent) => void) => () => void;
     onJobCompleted: (callback: (job: GenerationJobEntity) => void) => () => void;
@@ -1464,6 +1511,7 @@ export interface FlowApi {
     onPipelineProgress?: (callback: (event: PipelineProgressEvent) => void) => () => void;
     getSystemMetrics?: () => Promise<SystemMetrics>;
     parseSeparateFiles?: (input: SeparateFilesInput) => Promise<ScriptParseResult>;
+    selectScriptFile?: () => Promise<{ filePath: string; fileName: string; content: string } | null>;
 }
 export interface DiscoveredLocalProfile {
     profileDirectory: string;

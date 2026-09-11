@@ -128,4 +128,61 @@ describe('SubtitleGenerator', () => {
     expect(content).toContain('PlayResX: 720');
     expect(content).toContain('PlayResY: 1280');
   });
+
+  it('9. Supports custom SubtitleConfig with box enabled, custom colors, and top alignment', async () => {
+    const outPath = path.join(tempDir, 'test_custom_box.ass');
+    await SubtitleGenerator.generateAssFile({
+      narrationText: 'Custom subtitle config with box styling',
+      durationSeconds: 2.5,
+      subtitleStyle: {
+        enabled: true,
+        fontFamily: 'Montserrat',
+        fontSize: 36,
+        textColor: '#FF0000', // Red in hex -> ASS &H000000FF
+        boxEnabled: true,
+        boxColor: '#00FF00', // Green in hex -> ASS &H0000FF00
+        position: 'top',
+        outlineWidth: 3,
+        shadowDepth: 2,
+      },
+      aspectRatio: '16:9',
+      outputPath: outPath,
+    });
+
+    const content = fs.readFileSync(outPath, 'utf8');
+    expect(content).toContain('Montserrat');
+    expect(content).toContain('36');
+    // BorderStyle 3 indicates box/opaque background in ASS
+    expect(content).toContain(',3,');
+    // Alignment 8 is Top Center in ASS numpad notation
+    expect(content).toContain(',8,');
+  });
+
+  it('10. Supports custom SubtitleConfig with outline/shadow and center alignment', async () => {
+    const outPath = path.join(tempDir, 'test_custom_center.ass');
+    await SubtitleGenerator.generateAssFile({
+      narrationText: 'Custom subtitle config with center position',
+      durationSeconds: 2.0,
+      subtitleStyle: {
+        enabled: true,
+        fontFamily: 'Roboto',
+        fontSize: 28,
+        textColor: '#FFFFFF',
+        boxEnabled: false,
+        position: 'center',
+        outlineWidth: 4,
+        shadowDepth: 3,
+      },
+      aspectRatio: '16:9',
+      outputPath: outPath,
+    });
+
+    const content = fs.readFileSync(outPath, 'utf8');
+    expect(content).toContain('Roboto');
+    expect(content).toContain('28');
+    // BorderStyle 1 indicates outline + drop shadow in ASS
+    expect(content).toContain(',1,');
+    // Alignment 5 is Middle Center in ASS numpad notation
+    expect(content).toContain(',5,');
+  });
 });

@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import type {
   AppSettings,
   SupportedAspectRatio,
-  ProcessingOrder,
   AppLogLevel,
   TtsProviderId,
+  GeminiKeySummary,
 } from '../../shared/types';
 import { CheckIcon, SparklesIcon, AlertCircleIcon } from '../components/Icons';
 import { InfinityFlowLogo } from '../components/InfinityFlowLogo';
@@ -16,7 +16,13 @@ export const SettingsScreen: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copiedPath, setCopiedPath] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [apiKeyInput, setApiKeyInput] = useState('');
+
+  // Multi-Key Gemini State
+  const [geminiKeys, setGeminiKeys] = useState<GeminiKeySummary[]>([]);
+  const [revealedKeys, setRevealedKeys] = useState<Record<string, string>>({});
+  const [newKeyInput, setNewKeyInput] = useState('');
+  const [addingKey, setAddingKey] = useState(false);
+  const [keyActionMsg, setKeyActionMsg] = useState<{ success: boolean; message: string } | null>(null);
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [testKeyResult, setTestKeyResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -28,17 +34,64 @@ export const SettingsScreen: React.FC = () => {
   const [testingEngine, setTestingEngine] = useState<string | null>(null);
   const [engineTestResults, setEngineTestResults] = useState<Record<string, { success: boolean; message: string }>>({});
 
-  const handleSaveApiKey = async () => {
-    if (!apiKeyInput.trim()) return;
-    await handleUpdate({ scriptAiKey: apiKeyInput.trim() });
-    setApiKeyInput('');
-    setTestKeyResult(null);
+  const handleAddGeminiKey = async () => {
+    if (!newKeyInput.trim() || !window.flowApi?.addGeminiKey) return;
+    setAddingKey(true);
+    setKeyActionMsg(null);
+    try {
+      const res = await window.flowApi.addGeminiKey(newKeyInput.trim());
+      if (res.success) {
+        setGeminiKeys(res.keys);
+        setNewKeyInput('');
+        setKeyActionMsg({ success: true, message: 'Gemini API key added & secured.' });
+      } else {
+        setKeyActionMsg({ success: false, message: res.error || 'Failed to add key.' });
+      }
+    } catch (err: any) {
+      setKeyActionMsg({ success: false, message: err.message || 'Failed to add key.' });
+    } finally {
+      setAddingKey(false);
+      setTimeout(() => setKeyActionMsg(null), 4000);
+    }
   };
 
-  const handleClearApiKey = async () => {
-    await handleUpdate({ scriptAiKey: '' });
-    setApiKeyInput('');
-    setTestKeyResult(null);
+  const handleRemoveGeminiKey = async (id: string) => {
+    if (!window.flowApi?.removeGeminiKey) return;
+    try {
+      const res = await window.flowApi.removeGeminiKey(id);
+      if (res.success) {
+        setGeminiKeys(res.keys);
+        setRevealedKeys((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+      }
+    } catch (err: any) {
+      setKeyActionMsg({ success: false, message: err.message || 'Failed to remove key.' });
+      setTimeout(() => setKeyActionMsg(null), 4000);
+    }
+  };
+
+  const handleToggleRevealKey = async (id: string) => {
+    if (revealedKeys[id]) {
+      setRevealedKeys((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      return;
+    }
+
+    if (!window.flowApi?.revealGeminiKey) return;
+    try {
+      const res = await window.flowApi.revealGeminiKey(id);
+      if (res.success && res.fullKey) {
+        setRevealedKeys((prev) => ({ ...prev, [id]: res.fullKey! }));
+      }
+    } catch (err) {
+      console.error('Failed to reveal key', err);
+    }
   };
 
   const handleSaveAzure = async () => {
@@ -133,12 +186,16 @@ export const SettingsScreen: React.FC = () => {
       if (!window.flowApi) return;
       try {
         setLoading(true);
-        const [s, info] = await Promise.all([
+        const [s, info, gKeys] = await Promise.all([
           window.flowApi.getSettings(),
           window.flowApi.getAppInfo(),
+          window.flowApi.listGeminiKeys ? window.flowApi.listGeminiKeys() : Promise.resolve([]),
         ]);
         setSettings(s);
         setAppInfo(info);
+        if (gKeys && Array.isArray(gKeys)) {
+          setGeminiKeys(gKeys);
+        }
       } catch (err) {
         console.error('Failed to load settings', err);
         setErrorMsg('Failed to load settings from storage.');
@@ -182,7 +239,7 @@ export const SettingsScreen: React.FC = () => {
   }
 
   return (
-    <div style={{ padding: '28px 36px', maxWidth: '760px', height: '100%', overflowY: 'auto' }}>
+    <div style={{ padding: '28px 36px', width: '100%', height: '100%', overflowY: 'auto', boxSizing: 'border-box' }}>
       {/* Header */}
       <div
         style={{
@@ -192,6 +249,8 @@ export const SettingsScreen: React.FC = () => {
           marginBottom: '24px',
           borderBottom: '1px solid var(--border-color)',
           paddingBottom: '16px',
+          maxWidth: '1400px',
+          margin: '0 auto 24px auto',
         }}
       >
         <div>
@@ -239,7 +298,18 @@ export const SettingsScreen: React.FC = () => {
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(480px, 1fr))',
+          gap: '24px',
+          alignItems: 'start',
+          maxWidth: '1400px',
+          margin: '0 auto',
+        }}
+      >
+        {/* Column 1: Core System Defaults & Automation */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
         {/* ============================================================ */}
         {/* SECTION: GENERAL PREFERENCES                                 */}
         {/* ============================================================ */}
@@ -463,42 +533,8 @@ export const SettingsScreen: React.FC = () => {
               gap: '16px',
             }}
           >
-            {/* Mixed Processing Order */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                Default Mixed Processing Order
-              </label>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
-                Queue scheduling priority when a bulk project contains both image and video prompts.
-              </p>
-              <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-                {[
-                  { id: 'images_first', label: 'Images First' },
-                  { id: 'videos_first', label: 'Videos First' },
-                  { id: 'automatic', label: 'Automatic (FIFO)' },
-                ].map((po) => {
-                  const isSel = settings.defaultProcessingOrder === po.id;
-                  return (
-                    <button
-                      key={po.id}
-                      type="button"
-                      className={isSel ? 'btn-primary' : 'btn-secondary'}
-                      onClick={() => handleUpdate({ defaultProcessingOrder: po.id as ProcessingOrder })}
-                      style={{
-                        padding: '8px 16px',
-                        fontSize: '12.5px',
-                        fontWeight: isSel ? 600 : 500,
-                      }}
-                    >
-                      {po.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
             {/* Default Video Download Quality */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', borderTop: '1px solid var(--border-color)', paddingTop: '14px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
                 Default Video Download Quality
               </label>
@@ -589,6 +625,47 @@ export const SettingsScreen: React.FC = () => {
         </div>
 
         {/* ============================================================ */}
+        {/* SECTION: ABOUT & SYSTEM DIAGNOSTICS                          */}
+        {/* ============================================================ */}
+        <div
+          style={{
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '20px 22px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+            fontSize: '12px',
+            color: 'var(--text-secondary)',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingBottom: '8px',
+              borderBottom: '1px solid var(--border-color)',
+            }}
+          >
+            <InfinityFlowLogo height={24} showSubtitle={false} />
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Release Build</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '2px' }}>
+            <div>Version: {appInfo?.version ?? '1.0.0'}</div>
+            <div>Platform: {appInfo?.platform === 'win32' ? 'Windows 10 / 11 (x64)' : appInfo?.platform ?? 'Windows'}</div>
+            <div>Application Identifier: com.automistlabs.googleflow</div>
+          </div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '11px', lineHeight: 1.45, marginTop: '2px' }}>
+            Infinity Flow is a high-throughput AI Video Generation Automation Platform orchestrating parallel multi-profile generation pipelines across Google Flow and Gemini.
+          </div>
+        </div>
+      </div>
+
+      {/* Column 2: AI & Cloud Speech Engine */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        {/* ============================================================ */}
         {/* SECTION: SCRIPT AI & SKILLS (GOOGLE GEMINI)                  */}
         {/* ============================================================ */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -600,24 +677,9 @@ export const SettingsScreen: React.FC = () => {
               textTransform: 'uppercase',
               color: 'var(--text-muted)',
               paddingLeft: '2px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
             }}
           >
-            <span>Script AI & Skills (Google Gemini)</span>
-            <span
-              style={{
-                fontSize: '10px',
-                fontWeight: 700,
-                padding: '1px 6px',
-                borderRadius: '4px',
-                backgroundColor: 'rgba(16, 185, 129, 0.15)',
-                color: '#10b981',
-              }}
-            >
-              Phase 8
-            </span>
+            Script AI & Skills (Google Gemini)
           </div>
 
           <div
@@ -665,27 +727,30 @@ export const SettingsScreen: React.FC = () => {
               </div>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {/* Multi-Key Gemini API Key Manager */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  Gemini API Key
+                  Gemini API Keys
                 </label>
-                {settings.scriptAiKey && (
+                {geminiKeys.length > 0 && (
                   <span style={{ fontSize: '11.5px', color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <CheckIcon size={12} /> Key Configured & Secured (safeStorage)
+                    <CheckIcon size={12} /> {geminiKeys.length} {geminiKeys.length === 1 ? 'Key' : 'Keys'} Configured & Secured (safeStorage)
                   </span>
                 )}
               </div>
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
-                API key for Google Gemini OpenAI-compatible completions. Encrypted at rest via Electron safeStorage and never exposed in logs or plaintext files.
+                Manage unlimited Google Gemini API keys. Infinity Flow rotates and load-balances across configured healthy keys automatically with intelligent failover on rate limits (429) or transient errors. Encrypted at rest via safeStorage.
               </p>
 
+              {/* Add Key Row */}
               <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
                 <input
                   type="password"
-                  value={apiKeyInput}
-                  onChange={(e) => setApiKeyInput(e.target.value)}
-                  placeholder={settings.scriptAiKey ? '•••••••••••••••• (Key saved, enter new key to replace)' : 'Paste Gemini API key (AQ.... / AIza...)'}
+                  value={newKeyInput}
+                  onChange={(e) => setNewKeyInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleAddGeminiKey(); }}
+                  placeholder="Paste Gemini API key (AQ.... / AIza...)"
                   style={{
                     flex: 1,
                     padding: '8px 12px',
@@ -694,48 +759,191 @@ export const SettingsScreen: React.FC = () => {
                     backgroundColor: 'var(--bg-input)',
                     color: 'var(--text-primary)',
                     fontSize: '13px',
-                    fontFamily: apiKeyInput ? 'var(--font-mono)' : 'inherit',
+                    fontFamily: newKeyInput ? 'var(--font-mono)' : 'inherit',
                   }}
                 />
                 <button
                   type="button"
-                  disabled={!apiKeyInput.trim()}
-                  onClick={handleSaveApiKey}
+                  disabled={!newKeyInput.trim() || addingKey}
+                  onClick={handleAddGeminiKey}
                   className="btn-primary"
                   style={{
                     padding: '8px 16px',
                     fontSize: '12.5px',
                     backgroundColor: '#10b981',
                     borderColor: '#10b981',
+                    whiteSpace: 'nowrap',
                   }}
                 >
-                  Save Key
+                  {addingKey ? 'Adding...' : '+ Add Key'}
                 </button>
-                {settings.scriptAiKey && (
-                  <button
-                    type="button"
-                    onClick={handleClearApiKey}
-                    className="btn-secondary"
-                    style={{ padding: '8px 14px', fontSize: '12px', color: 'var(--danger, #ef4444)' }}
+              </div>
+
+              {/* Action feedback message */}
+              {keyActionMsg && (
+                <div
+                  style={{
+                    fontSize: '12px',
+                    color: keyActionMsg.success ? '#10b981' : 'var(--danger, #ef4444)',
+                    backgroundColor: keyActionMsg.success ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                    padding: '6px 10px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: `1px solid ${keyActionMsg.success ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                  }}
+                >
+                  {keyActionMsg.message}
+                </div>
+              )}
+
+              {/* Keys List */}
+              <div
+                style={{
+                  marginTop: '4px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                  maxHeight: '260px',
+                  overflowY: 'auto',
+                  paddingRight: geminiKeys.length > 3 ? '4px' : '0',
+                }}
+              >
+                {geminiKeys.length === 0 ? (
+                  <div
+                    style={{
+                      padding: '14px',
+                      backgroundColor: 'var(--bg-subtle)',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px dashed var(--border-color)',
+                      color: 'var(--text-muted)',
+                      fontSize: '12px',
+                      textAlign: 'center',
+                    }}
                   >
-                    Clear
-                  </button>
+                    No Gemini API keys configured. Paste and add a key above to enable AI scriptwriting and skills.
+                  </div>
+                ) : (
+                  geminiKeys.map((k, index) => {
+                    const isRevealed = Boolean(revealedKeys[k.id]);
+                    const displayValue = isRevealed ? revealedKeys[k.id] : k.masked;
+                    const isHealthy = k.status === 'healthy';
+                    const isQuota = k.status === 'quota_limited';
+                    const isUnavailable = k.status === 'temporarily_unavailable';
+                    const isInvalid = k.status === 'invalid';
+
+                    return (
+                      <div
+                        key={k.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '8px 12px',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: 'var(--bg-subtle)',
+                          border: '1px solid var(--border-color)',
+                          gap: '10px',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
+                          <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', width: '60px', flexShrink: 0 }}>
+                            API Key {index + 1}
+                          </span>
+                          <span
+                            style={{
+                              fontFamily: 'var(--font-mono)',
+                              fontSize: '12px',
+                              color: 'var(--text-primary)',
+                              letterSpacing: isRevealed ? 'normal' : '0.05em',
+                              wordBreak: 'break-all',
+                              userSelect: isRevealed ? 'all' : 'none',
+                            }}
+                          >
+                            {displayValue}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: '10.5px',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontWeight: 600,
+                              flexShrink: 0,
+                              backgroundColor: isHealthy
+                                ? 'rgba(16, 185, 129, 0.12)'
+                                : isInvalid
+                                ? 'rgba(239, 68, 68, 0.12)'
+                                : 'rgba(245, 158, 11, 0.12)',
+                              color: isHealthy
+                                ? '#10b981'
+                                : isInvalid
+                                ? 'var(--danger, #ef4444)'
+                                : '#f59e0b',
+                              border: `1px solid ${
+                                isHealthy
+                                  ? 'rgba(16, 185, 129, 0.3)'
+                                  : isInvalid
+                                  ? 'rgba(239, 68, 68, 0.3)'
+                                  : 'rgba(245, 158, 11, 0.3)'
+                              }`,
+                            }}
+                          >
+                            {isHealthy
+                              ? 'Healthy'
+                              : isQuota
+                              ? 'Cooldown (429)'
+                              : isUnavailable
+                              ? 'Cooldown'
+                              : 'Invalid'}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleRevealKey(k.id)}
+                            className="btn-secondary"
+                            style={{ padding: '4px 10px', fontSize: '11px' }}
+                            title={isRevealed ? 'Hide API key' : 'Show full API key'}
+                          >
+                            {isRevealed ? 'Hide' : 'Show'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveGeminiKey(k.id)}
+                            className="btn-secondary"
+                            style={{ padding: '4px 10px', fontSize: '11px', color: 'var(--danger, #ef4444)' }}
+                            title="Remove this key"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
                 )}
+              </div>
+
+              {/* Bottom Test Connection Button */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px' }}>
                 <button
                   type="button"
-                  disabled={isTestingKey}
+                  disabled={isTestingKey || geminiKeys.length === 0}
                   onClick={handleTestKey}
                   className="btn-secondary"
-                  style={{ padding: '8px 14px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '5px' }}
+                  style={{ padding: '7px 14px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '5px' }}
                 >
-                  <SparklesIcon size={13} /> {isTestingKey ? 'Testing...' : 'Test Connection'}
+                  <SparklesIcon size={13} /> {isTestingKey ? 'Testing Connection...' : 'Test Connection'}
                 </button>
+                {geminiKeys.length > 0 && (
+                  <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                    Tests next healthy key in pool
+                  </span>
+                )}
               </div>
 
               {testKeyResult && (
                 <div
                   style={{
-                    marginTop: '8px',
+                    marginTop: '4px',
                     padding: '8px 12px',
                     borderRadius: 'var(--radius-sm)',
                     backgroundColor: testKeyResult.success ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
@@ -1092,42 +1300,6 @@ export const SettingsScreen: React.FC = () => {
           </div>
         </div>
 
-        {/* ============================================================ */}
-        {/* SECTION: ABOUT & SYSTEM DIAGNOSTICS                          */}
-        {/* ============================================================ */}
-        <div
-          style={{
-            backgroundColor: 'var(--bg-surface)',
-            border: '1px solid var(--border-color)',
-            borderRadius: 'var(--radius-lg)',
-            padding: '20px 22px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '10px',
-            fontSize: '12px',
-            color: 'var(--text-secondary)',
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingBottom: '8px',
-              borderBottom: '1px solid var(--border-color)',
-            }}
-          >
-            <InfinityFlowLogo height={24} showSubtitle={false} />
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Release Build</span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '2px' }}>
-            <div>Version: {appInfo?.version ?? '1.0.0'}</div>
-            <div>Platform: {appInfo?.platform === 'win32' ? 'Windows 10 / 11 (x64)' : appInfo?.platform ?? 'Windows'}</div>
-            <div>Application Identifier: com.automistlabs.googleflow</div>
-          </div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '11px', lineHeight: 1.45, marginTop: '2px' }}>
-            Infinity Flow is a high-throughput AI Video Generation Automation Platform orchestrating parallel multi-profile generation pipelines across Google Flow and Gemini.
-          </div>
         </div>
       </div>
     </div>

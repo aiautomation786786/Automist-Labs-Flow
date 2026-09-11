@@ -242,19 +242,6 @@ export const ChannelsScreen: React.FC<ChannelsScreenProps> = ({
             <h1 style={{ fontSize: '24px', fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>
               Channels & Automation
             </h1>
-            <span
-              style={{
-                fontSize: '11px',
-                fontWeight: 700,
-                padding: '2px 8px',
-                borderRadius: '10px',
-                backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                color: '#60a5fa',
-                border: '1px solid rgba(59, 130, 246, 0.3)',
-              }}
-            >
-              Phase 7 Active
-            </span>
           </div>
           <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary, #94a3b8)' }}>
             Reusable channel identities, rulebook presets, project assignment, and automated output delivery.
