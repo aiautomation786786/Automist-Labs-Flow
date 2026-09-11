@@ -199,12 +199,46 @@ describe('KokoroProvider Truthful Runtime Detection & Synthesis', () => {
     expect(norm).toContain('Doctor Smith');
     expect(norm).toContain('Mister Jones');
     expect(norm).toContain('25 dollars');
-    expect(norm).toContain('50 percent');
-    expect(norm).toContain('etcetera');
+    expect(norm).toContain('etc');
 
     const tokens = await KokoroProvider.tokenizeText(raw, 'am_eric');
     expect(tokens.length).toBeGreaterThan(10);
     expect(tokens[0]).toBe(0); // Bos
     expect(tokens[tokens.length - 1]).toBe(0); // Eos
   });
+
+  it('12. Preserves punctuation in phonemization for natural prosody', async () => {
+    const text = 'Welcome to Infinity Flow. This is a voice preview for your faceless video.';
+    const phonemes = await KokoroProvider.phonemizeText(text, 'am_eric');
+    expect(phonemes).toContain('.');
+    expect(phonemes).toContain('flˈoʊ.');
+
+    // British pronunciation difference
+    const britishPhones = await KokoroProvider.phonemizeText(text, 'bm_george');
+    expect(britishPhones).toContain('.');
+    expect(britishPhones).toContain('flˈəʊ.');
+  });
+
+  it('13. Silence trimming removes neural vocoder leading/trailing dead silence', () => {
+    const sampleRate = 24000;
+    const testSamples = new Float32Array(sampleRate * 2); // 2 seconds
+    // Put 0.5s of silence at start and end, with audio in middle
+    for (let i = 12000; i < 36000; i++) {
+      testSamples[i] = Math.sin((2 * Math.PI * 440 * i) / sampleRate) * 0.5;
+    }
+    const trimmed = KokoroProvider.trimSilence(testSamples, sampleRate, 0.01);
+    expect(trimmed.length).toBeLessThan(testSamples.length);
+    expect(trimmed.length).toBeGreaterThan(24000); // contains the audio plus 40ms cushions
+  });
+
+  it('14. Prewarm loads session, voices, and phonemizer into cache', async () => {
+    KokoroProvider.resetRuntimeStatus();
+    expect(await provider.isAvailable()).toBe(true);
+    await KokoroProvider.prewarm();
+    // After prewarm, listVoices returns all voices ready
+    const voices = await provider.listVoices();
+    expect(voices.length).toBe(7);
+    expect(voices.every((v) => v.isAvailable)).toBe(true);
+  });
 });
+

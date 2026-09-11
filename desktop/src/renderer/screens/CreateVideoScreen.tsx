@@ -324,6 +324,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [previewingVoiceId, setPreviewingVoiceId] = useState<string | null>(null);
+  const [generatingVoiceId, setGeneratingVoiceId] = useState<string | null>(null);
   const [activeAudio, setActiveAudio] = useState<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -1152,21 +1153,32 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
     persistDraft({ step: prevStep });
   };
 
+  // Prewarm Kokoro speech synthesis in the background when reaching Voice & Music step or selecting Kokoro
+  useEffect(() => {
+    if (selectedEngineTab === 'kokoro' || step === 3) {
+      if (typeof window.flowApi?.testTtsConnection === 'function') {
+        window.flowApi.testTtsConnection('kokoro').catch(() => {});
+      }
+    }
+  }, [selectedEngineTab, step]);
+
   const handlePreviewVoice = async (vProvider: TtsProviderId, vId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (previewingVoiceId === vId) {
+    if (previewingVoiceId === vId || generatingVoiceId === vId) {
       if (activeAudio) {
         activeAudio.pause();
         activeAudio.currentTime = 0;
       }
       setPreviewingVoiceId(null);
+      setGeneratingVoiceId(null);
       return;
     }
     if (activeAudio) {
       activeAudio.pause();
       activeAudio.currentTime = 0;
     }
-    setPreviewingVoiceId(vId);
+    setPreviewingVoiceId(null);
+    setGeneratingVoiceId(vId);
     try {
       if (!window.flowApi?.previewVoice) {
         throw new Error('TTS Voice Preview is not supported in this build.');
@@ -1182,14 +1194,19 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
       const audio = new Audio(res.audioDataUri);
       audio.onended = () => {
         setPreviewingVoiceId(null);
+        setGeneratingVoiceId(null);
       };
       audio.onerror = () => {
         setPreviewingVoiceId(null);
+        setGeneratingVoiceId(null);
       };
       setActiveAudio(audio);
+      setGeneratingVoiceId(null);
+      setPreviewingVoiceId(vId);
       await audio.play();
     } catch (err: any) {
       setPreviewingVoiceId(null);
+      setGeneratingVoiceId(null);
       setErrorMsg(err.message || 'Voice preview failed.');
     }
   };
@@ -4084,7 +4101,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                         flexShrink: 0,
                       }}
                     >
-                      {isSelectedVoicePlaying ? '⏹ Stop Preview' : '▶ Preview Voice'}
+                      {generatingVoiceId === voiceId ? '⏳ Generating preview...' : isSelectedVoicePlaying ? '⏹ Stop Preview' : '▶ Preview Voice'}
                     </button>
                   </div>
 
@@ -4206,7 +4223,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                                 className="btn-secondary"
                                 style={{ padding: '3px 9px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                               >
-                                {isPlaying ? '⏹ Stop' : '▶ Preview'}
+                                {generatingVoiceId === v.id ? '⏳ Generating...' : isPlaying ? '⏹ Stop' : '▶ Preview'}
                               </button>
                             </div>
                           </div>
@@ -5575,7 +5592,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                     className="btn-secondary"
                     style={{ padding: '8px 14px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}
                   >
-                    {previewingVoiceId === voiceId ? '⏹ Stop' : '▶ Preview Voice'}
+                    {generatingVoiceId === voiceId ? '⏳ Generating...' : previewingVoiceId === voiceId ? '⏹ Stop' : '▶ Preview Voice'}
                   </button>
                 </div>
               </div>

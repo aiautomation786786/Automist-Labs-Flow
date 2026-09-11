@@ -376,9 +376,41 @@ export class KokoroProvider implements ITtsProvider {
     return null;
   }
 
+  private static isPrewarming = false;
+
+  /**
+   * Prewarms the ONNX session, phonemizer, and default voice styles in the background.
+   */
+  static async prewarm(): Promise<void> {
+    if (this.session) return;
+    try {
+      await this.getInferenceSession();
+      const phonemizer = this.getPhonemizerModule();
+      if (phonemizer && typeof phonemizer.phonemize === 'function') {
+        await phonemizer.phonemize('welcome', 'en-us');
+      }
+      for (const v of ['am_eric', 'af_heart', 'af_bella', 'bm_george']) {
+        try {
+          this.getVoiceStyleVector(v, 20);
+        } catch {}
+      }
+      logger.info('kokoro_tts', 'Kokoro session, phonemizer, and voice styles successfully prewarmed.');
+    } catch (err: any) {
+      logger.warn('kokoro_tts', `Kokoro prewarm background task encountered: ${err.message}`);
+    }
+  }
+
   async listVoices(): Promise<VoiceInfo[]> {
     const available = await this.isAvailable();
     const reason = this.getUnavailableReason() || undefined;
+
+    // Trigger background prewarming if available and not yet loaded
+    if (available && !KokoroProvider.session && !KokoroProvider.isPrewarming && !KokoroProvider.testInferenceSession) {
+      KokoroProvider.isPrewarming = true;
+      KokoroProvider.prewarm().finally(() => {
+        KokoroProvider.isPrewarming = false;
+      });
+    }
 
     return KokoroProvider.VOICES.map((v) => ({
       ...v,
@@ -417,9 +449,11 @@ export class KokoroProvider implements ITtsProvider {
       const sessionOptions = {
         executionProviders: ['cpu'],
         graphOptimizationLevel: 'all',
+        intraOpNumThreads: 1, // Single high-performance thread eliminates Windows hybrid P/E core thrashing
+        interOpNumThreads: 1,
       };
 
-      logger.info('kokoro_tts', `Loading authentic Kokoro ONNX model from ${modelPath}`);
+      logger.info('kokoro_tts', `Loading authentic Kokoro ONNX model from ${modelPath} (intraOpNumThreads: 1)`);
       this.session = await ort.InferenceSession.create(modelPath, sessionOptions);
       return this.session;
     } catch (err: any) {
@@ -433,71 +467,152 @@ export class KokoroProvider implements ITtsProvider {
   // ---------------------------------------------------------------------------
 
   /**
-   * Normalizes abbreviations, numbers, and punctuation for natural speech.
+   * Normalizes abbreviations, numbers, currency, times, and punctuation for natural speech.
    */
   static normalizeText(text: string): string {
+    function expandNumberOrTime(e: string): string {
+      if (e.includes('.')) return e;
+      if (e.includes(':')) {
+        const [h, m] = e.split(':').map(Number);
+        return m === 0 ? `${h} o'clock` : m < 10 ? `${h} oh ${m}` : `${h} ${m}`;
+      }
+      const n = parseInt(e.slice(0, 4), 10);
+      if (n < 1100 || n % 1000 < 10) return e;
+      const t = e.slice(0, 2);
+      const r = parseInt(e.slice(2, 4), 10);
+      const s = e.endsWith('s') ? 's' : '';
+      if (n % 1000 >= 100 && n % 1000 <= 999) {
+        if (r === 0) return `${t} hundred${s}`;
+        if (r < 10) return `${t} oh ${r}${s}`;
+      }
+      return `${t} ${r}${s}`;
+    }
+
+    function expandCurrency(e: string): string {
+      const unit = e[0] === '$' ? 'dollar' : 'pound';
+      if (isNaN(Number(e.slice(1)))) return `${e.slice(1)} ${unit}s`;
+      if (!e.includes('.')) {
+        const plural = e.slice(1) === '1' ? '' : 's';
+        return `${e.slice(1)} ${unit}${plural}`;
+      }
+      const [intPart, decPart] = e.slice(1).split('.');
+      const cents = parseInt(decPart.padEnd(2, '0'), 10);
+      const intPlural = intPart === '1' ? '' : 's';
+      const subUnit = e[0] === '$' ? (cents === 1 ? 'cent' : 'cents') : (cents === 1 ? 'penny' : 'pence');
+      return `${intPart} ${unit}${intPlural} and ${cents} ${subUnit}`;
+    }
+
+    function expandDecimal(e: string): string {
+      const [a, t] = e.split('.');
+      return `${a} point ${t.split('').join(' ')}`;
+    }
+
     return text
-      .replace(/[‘’]/g, "'")
-      .replace(/[“”]/g, '"')
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/\u00ab/g, '"')
+      .replace(/\u00bb/g, '"')
+      .replace(/[\u201c\u201d]/g, '"')
+      .replace(/\(/g, '\u00ab')
+      .replace(/\)/g, '\u00bb')
+      .replace(/\u3001/g, ', ')
+      .replace(/\u3002/g, '. ')
+      .replace(/\uff01/g, '! ')
+      .replace(/\uff0c/g, ', ')
+      .replace(/\uff1a/g, ': ')
+      .replace(/\uff1b/g, '; ')
+      .replace(/\uff1f/g, '? ')
+      .replace(/[^\S \n]/g, ' ')
+      .replace(/  +/g, ' ')
+      .replace(/(?<=\n) +(?=\n)/g, '')
       .replace(/\bD[Rr]\.(?= [A-Z])/g, 'Doctor')
       .replace(/\b(?:Mr\.|MR\.(?= [A-Z]))/g, 'Mister')
       .replace(/\b(?:Ms\.|MS\.(?= [A-Z]))/g, 'Miss')
       .replace(/\b(?:Mrs\.|MRS\.(?= [A-Z]))/g, 'Mrs')
-      .replace(/\betc\.(?! [A-Z])/gi, 'etcetera')
-      .replace(/\b([0-9]+)\s*%/g, '$1 percent')
-      .replace(/\$([0-9]+(?:\.[0-9]{2})?)/g, '$1 dollars')
-      .replace(/\s+/g, ' ')
+      .replace(/\betc\.(?! [A-Z])/gi, 'etc')
+      .replace(/\b(y)eah?\b/gi, "$1e'a")
+      .replace(/\d*\.\d+|\b\d{4}s?\b|(?<!:)\b(?:[1-9]|1[0-2]):[0-5]\d\b(?!:)/g, expandNumberOrTime)
+      .replace(/(?<=\d),(?=\d)/g, '')
+      .replace(/[$£]\d+(?:\.\d+)?(?: hundred| thousand| (?:[bm]|tr)illion)*\b|[$£]\d+\.\d\d?\b/gi, expandCurrency)
+      .replace(/\d*\.\d+/g, expandDecimal)
+      .replace(/(?<=\d)-(?=\d)/g, ' to ')
+      .replace(/(?<=\d)S/g, ' S')
+      .replace(/(?<=[BCDFGHJ-NP-TV-Z])'?s\b/g, "'S")
+      .replace(/(?<=X')S\b/g, 's')
+      .replace(/(?:[A-Za-z]\.){2,} [a-z]/g, (e => e.replace(/\./g, '-')))
+      .replace(/(?<=[A-Z])\.(?=[A-Z])/gi, '-')
       .trim();
   }
 
   /**
-   * Converts plain English text into Kokoro IPA phonemes, applying Kokoro pronunciation rules.
+   * Converts plain English text into Kokoro IPA phonemes, preserving all punctuation
+   * to ensure natural prosody, inflection, and cadence as required by Kokoro-82M.
    */
   static async phonemizeText(text: string, voiceId = 'am_eric'): Promise<string> {
     const sanitized = this.normalizeText(text);
     if (!sanitized) return '';
 
-    const lang = voiceId.startsWith('b') ? 'en-gb' : 'en-us';
-    let phonemes = '';
+    const isBritish = voiceId.startsWith('b');
+    const lang = isBritish ? 'en' : 'en-us';
+    const voicePrefix = isBritish ? 'b' : 'a';
 
+    const puncPattern = ';:,.!?\u00a1\u00bf\u2014\u2026\"\u00ab\u00bb\u201c\u201d(){}[]';
+    const escaped = puncPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp('(\\s*[' + escaped + ']+\\s*)+', 'g');
+
+    const segments: Array<{ isPunc: boolean; text: string }> = [];
+    let lastIdx = 0;
+    for (const match of sanitized.matchAll(regex)) {
+      const matchedPunc = match[0];
+      if (lastIdx < match.index) {
+        segments.push({ isPunc: false, text: sanitized.slice(lastIdx, match.index) });
+      }
+      if (matchedPunc.length > 0) {
+        segments.push({ isPunc: true, text: matchedPunc });
+      }
+      lastIdx = match.index + matchedPunc.length;
+    }
+    if (lastIdx < sanitized.length) {
+      segments.push({ isPunc: false, text: sanitized.slice(lastIdx) });
+    }
+
+    let rawPhones = '';
     try {
       const phonemizer = this.getPhonemizerModule();
       if (phonemizer && typeof phonemizer.phonemize === 'function') {
-        const rawPhones: string[] = await phonemizer.phonemize(sanitized, lang);
-        phonemes = rawPhones.join(' ');
+        const parts = await Promise.all(
+          segments.map(async ({ isPunc, text: segText }) => {
+            if (isPunc) return segText;
+            const res = await phonemizer.phonemize(segText, lang);
+            return res.join(' ');
+          })
+        );
+        rawPhones = parts.join('');
       }
     } catch (err) {
       logger.warn('kokoro_tts', `Phonemizer execution warning: ${err}`);
     }
 
-    if (!phonemes) {
-      // Graceful fallback for basic Latin characters if phonemizer unavailable
-      phonemes = sanitized.toLowerCase()
-        .replace(/c[iey]/g, 's')
-        .replace(/c/g, 'k')
-        .replace(/ph/g, 'f')
-        .replace(/th/g, 'θ')
-        .replace(/sh/g, 'ʃ')
-        .replace(/ch/g, 'ʧ')
-        .replace(/ee/g, 'iː')
-        .replace(/oo/g, 'uː')
-        .replace(/r/g, 'ɹ');
-    } else {
-      // Official Kokoro phonetic adjustments
-      phonemes = phonemes
-        .replace(/kəkˈoːɹoʊ/g, 'kˈoʊkəɹoʊ')
-        .replace(/kəkˈɔːɹəʊ/g, 'kˈəʊkəɹəʊ')
-        .replace(/ʲ/g, 'j')
-        .replace(/r/g, 'ɹ')
-        .replace(/x/g, 'k')
-        .replace(/ɬ/g, 'l');
-
-      if (!voiceId.startsWith('b')) {
-        phonemes = phonemes.replace(/(?<=nˈaɪn)ti(?!ː)/g, 'di');
-      }
+    if (!rawPhones) {
+      // Fallback if phonemizer is unavailable
+      rawPhones = sanitized;
     }
 
-    return phonemes.trim();
+    // Official Kokoro phonetic adjustments
+    rawPhones = rawPhones
+      .replace(/kəkˈoːɹoʊ/g, 'kˈoʊkəɹoʊ')
+      .replace(/kəkˈɔːɹəʊ/g, 'kˈəʊkəɹəʊ')
+      .replace(/ʲ/g, 'j')
+      .replace(/r/g, 'ɹ')
+      .replace(/x/g, 'k')
+      .replace(/ɬ/g, 'l')
+      .replace(/(?<=[a-zɹː])(?=hˈʌndɹəd)/g, ' ')
+      .replace(/ z(?=[;:,.!?\u00a1\u00bf\u2014\u2026\"\u00ab\u00bb\u201c\u201d ]|$)/g, 'z');
+
+    if (voicePrefix === 'a') {
+      rawPhones = rawPhones.replace(/(?<=nˈaɪn)ti(?!ː)/g, 'di');
+    }
+
+    return rawPhones.trim();
   }
 
   /**
@@ -552,6 +667,26 @@ export class KokoroProvider implements ITtsProvider {
   }
 
   /**
+   * Trims leading and trailing model silence while preserving a natural 40ms audio cushion
+   * to eliminate stuttering and unnatural gaps without clipping initial/final phonemes.
+   */
+  static trimSilence(samples: Float32Array, sampleRate = 24000, threshold = 0.005): Float32Array {
+    let start = 0;
+    while (start < samples.length && Math.abs(samples[start]) < threshold) {
+      start++;
+    }
+    let end = samples.length - 1;
+    while (end > start && Math.abs(samples[end]) < threshold) {
+      end--;
+    }
+    // Retain a 40ms cushion for smooth, click-free audio transitions
+    const cushion = Math.round(sampleRate * 0.04);
+    const realStart = Math.max(0, start - cushion);
+    const realEnd = Math.min(samples.length - 1, end + cushion);
+    return samples.subarray(realStart, realEnd + 1);
+  }
+
+  /**
    * Encodes float32 PCM samples into a standard 16-bit 24kHz mono PCM WAV Buffer.
    */
   static encodeWav(floatSamples: Float32Array, sampleRate = 24000): Buffer {
@@ -595,12 +730,13 @@ export class KokoroProvider implements ITtsProvider {
 
   /**
    * Splits long narration text into natural sentence batches that fit comfortably within
-   * Kokoro's 512-token context window.
+   * Kokoro's 510-token context window. Normal short preview sentences (<= 350 characters)
+   * are synthesized as a single coherent pass to prevent artificial pauses.
    */
   static splitIntoSentences(text: string): string[] {
     const cleaned = text.trim();
     if (!cleaned) return [];
-    if (cleaned.length <= 180) return [cleaned];
+    if (cleaned.length <= 350) return [cleaned];
 
     const rawChunks = cleaned.match(/[^.!?\n]+[.!?\n]*/g) || [cleaned];
     const results: string[] = [];
@@ -609,7 +745,7 @@ export class KokoroProvider implements ITtsProvider {
     for (const chunk of rawChunks) {
       const trimmed = chunk.trim();
       if (!trimmed) continue;
-      if (current && current.length + trimmed.length > 180) {
+      if (current && current.length + trimmed.length > 300) {
         results.push(current.trim());
         current = trimmed;
       } else {
@@ -707,15 +843,12 @@ export class KokoroProvider implements ITtsProvider {
           chunkSamples = output.data as Float32Array;
         }
 
-        audioChunks.push(chunkSamples);
-
-        // Add 0.12s pause (2880 samples) between sentences if multi-sentence
-        if (sIdx < sentences.length - 1) {
-          audioChunks.push(new Float32Array(2880));
-        }
+        // Trim leading and trailing neural silence from this chunk
+        const trimmedChunk = KokoroProvider.trimSilence(chunkSamples);
+        audioChunks.push(trimmedChunk);
       }
 
-      // Merge chunks into single continuous audio sample array
+      // Merge chunks into single continuous audio sample array without artificial pauses
       let totalLength = 0;
       for (const c of audioChunks) totalLength += c.length;
       const combinedSamples = new Float32Array(totalLength);
@@ -759,6 +892,7 @@ export class KokoroProvider implements ITtsProvider {
     if (!isAvail) {
       return { success: false, message: this.getUnavailableReason() || 'Kokoro runtime or models missing.' };
     }
+    await KokoroProvider.getInferenceSession();
     return { success: true, message: 'Kokoro ONNX local runtime is ready.' };
   }
 }
