@@ -108,6 +108,31 @@ export class KokoroProvider implements ITtsProvider {
   // ---------------------------------------------------------------------------
 
   /**
+   * Safely loads onnxruntime-node, supporting standard require as well as
+   * unpacked Electron ASAR locations in packaged production builds.
+   */
+  static getOrtModule(): any {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      return require('onnxruntime-node');
+    } catch (requireErr) {
+      if (process.resourcesPath) {
+        const unpackedPath = path.join(
+          process.resourcesPath,
+          'app.asar.unpacked',
+          'node_modules',
+          'onnxruntime-node'
+        );
+        if (fs.existsSync(unpackedPath)) {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          return require(unpackedPath);
+        }
+      }
+      throw requireErr;
+    }
+  }
+
+  /**
    * Checks whether onnxruntime-node is resolvable in the environment.
    */
   static isRuntimeInstalled(): boolean {
@@ -115,7 +140,7 @@ export class KokoroProvider implements ITtsProvider {
       return this.testRuntimeAvailable;
     }
     try {
-      require.resolve('onnxruntime-node');
+      this.getOrtModule();
       return true;
     } catch {
       return false;
@@ -123,7 +148,8 @@ export class KokoroProvider implements ITtsProvider {
   }
 
   /**
-   * Discovers the Kokoro ONNX model file on disk.
+   * Discovers the Kokoro ONNX model file on disk across production resourcesPath,
+   * bundled assets, and user AppData storage.
    */
   static getModelPath(): string | null {
     if (this.testModelPath !== null) {
@@ -135,17 +161,42 @@ export class KokoroProvider implements ITtsProvider {
     }
 
     const appData = getAppDataDir();
-    const candidatePaths = [
-      path.join(appData, 'models', 'kokoro', 'kokoro-v0_19.onnx'),
-      path.join(appData, 'models', 'kokoro', 'kokoro-v1.0.onnx'),
-      path.join(appData, 'models', 'kokoro.onnx'),
-      path.join(process.cwd(), 'models', 'kokoro-v0_19.onnx'),
+    const candidatePaths: string[] = [];
+
+    // 1. Packaged extraResources in production Electron app
+    if (process.resourcesPath) {
+      candidatePaths.push(
+        path.join(process.resourcesPath, 'models', 'kokoro', 'kokoro-v1.0.onnx'),
+        path.join(process.resourcesPath, 'models', 'kokoro.onnx'),
+        path.join(process.resourcesPath, 'assets', 'models', 'kokoro', 'kokoro-v1.0.onnx'),
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'assets', 'models', 'kokoro', 'kokoro-v1.0.onnx')
+      );
+    }
+
+    // 2. Bundled assets relative to compiled output / source tree
+    candidatePaths.push(
+      path.join(__dirname, '..', '..', 'assets', 'models', 'kokoro', 'kokoro-v1.0.onnx'),
+      path.join(__dirname, '..', '..', '..', 'assets', 'models', 'kokoro', 'kokoro-v1.0.onnx'),
+      path.join(__dirname, '..', 'assets', 'models', 'kokoro', 'kokoro-v1.0.onnx'),
+      path.join(process.cwd(), 'assets', 'models', 'kokoro', 'kokoro-v1.0.onnx'),
       path.join(process.cwd(), 'models', 'kokoro-v1.0.onnx'),
-    ];
+      path.join(process.cwd(), 'models', 'kokoro-v0_19.onnx')
+    );
+
+    // 3. User AppData directory
+    candidatePaths.push(
+      path.join(appData, 'models', 'kokoro', 'kokoro-v1.0.onnx'),
+      path.join(appData, 'models', 'kokoro', 'kokoro-v0_19.onnx'),
+      path.join(appData, 'models', 'kokoro.onnx')
+    );
 
     for (const p of candidatePaths) {
-      if (fs.existsSync(p)) {
-        return p;
+      try {
+        if (fs.existsSync(p)) {
+          return p;
+        }
+      } catch {
+        // continue
       }
     }
 
@@ -204,8 +255,8 @@ export class KokoroProvider implements ITtsProvider {
     }
 
     const modelPath = KokoroProvider.getModelPath();
-    if (!modelPath) {
-      return `Kokoro model weights not found. Download kokoro-v1.0.onnx into ${path.join(getAppDataDir(), 'models', 'kokoro')} to enable offline local synthesis.`;
+    if (!modelPath || !fs.existsSync(modelPath)) {
+      return `Kokoro model weights not found. Ensure kokoro-v1.0.onnx is present in application resources or ${path.join(getAppDataDir(), 'models', 'kokoro')}.`;
     }
 
     return null;
@@ -248,8 +299,7 @@ export class KokoroProvider implements ITtsProvider {
     }
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const ort = require('onnxruntime-node');
+      const ort = KokoroProvider.getOrtModule();
       const sessionOptions = {
         executionProviders: ['cpu'],
         graphOptimizationLevel: 'all',
@@ -403,8 +453,7 @@ export class KokoroProvider implements ITtsProvider {
           }
         }
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const ort = require('onnxruntime-node');
+        const ort = KokoroProvider.getOrtModule();
         const tokenTensor = new ort.Tensor('int64', BigInt64Array.from(tokens.map(BigInt)), [1, tokens.length]);
         const styleTensor = new ort.Tensor('float32', style, [1, 256]);
         const speedTensor = new ort.Tensor('float32', new Float32Array([speed]), [1]);

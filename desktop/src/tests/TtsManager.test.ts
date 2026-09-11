@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { TtsManager } from '../main/tts/TtsManager';
+import { KokoroProvider } from '../main/tts/KokoroProvider';
 import { StoryRepository } from '../main/storage/StoryRepository';
 import { AssetManager } from '../main/storage/AssetManager';
 import type { StoryEntity, ITtsProvider } from '../main/tts/TtsTypes';
@@ -52,18 +53,30 @@ describe('TtsManager Central Orchestrator & Invariants', () => {
     expect(edgeVoices.length).toBeGreaterThan(0);
     expect(kokoroVoices.length).toBeGreaterThan(0);
 
-    // Kokoro voices truthfully flagged as unavailable in this environment
+    // Kokoro voices are available in this environment with ONNX runtime and models bundled
     for (const kv of kokoroVoices) {
-      expect(kv.isAvailable).toBe(false);
-      expect(kv.unavailableReason).toBeDefined();
+      expect(kv.isAvailable).toBe(true);
+      expect(kv.unavailableReason).toBeUndefined();
     }
   });
 
-  it('3. Preview voice returns failure when requested provider is unavailable', async () => {
+  it('3. Preview voice works when provider is available, and returns failure when provider is unavailable', async () => {
+    // Real Kokoro preview succeeds
     const res = await TtsManager.previewVoice('kokoro', 'am_eric');
-    expect(res.success).toBe(false);
-    expect(res.error).toBeDefined();
-    expect(res.error).toContain('onnxruntime-node');
+    expect(res.success).toBe(true);
+    expect(res.audioDataUri).toBeDefined();
+    expect(res.durationSeconds).toBeGreaterThan(0);
+
+    // When provider is simulated unavailable, fails truthfully
+    KokoroProvider.setRuntimeAvailableForTesting(false);
+    try {
+      const failRes = await TtsManager.previewVoice('kokoro', 'am_eric');
+      expect(failRes.success).toBe(false);
+      expect(failRes.error).toBeDefined();
+      expect(failRes.error).toContain('onnxruntime-node');
+    } finally {
+      KokoroProvider.resetRuntimeStatus();
+    }
   });
 
   it('4. Sequential per-scene narration synthesis and manifest generation', async () => {

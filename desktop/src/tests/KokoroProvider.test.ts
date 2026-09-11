@@ -19,9 +19,13 @@ describe('KokoroProvider Truthful Runtime Detection & Synthesis', () => {
     expect(provider.defaultVoiceId).toBe('am_eric');
   });
 
-  it('2. Detects missing onnxruntime-node truthfully in this environment', async () => {
+  it('2. Detects onnxruntime-node truthfully when present and when simulated missing', async () => {
+    // In this production environment, onnxruntime-node is installed
+    expect(KokoroProvider.isRuntimeInstalled()).toBe(true);
+
+    // When simulated missing, reports unavailable with clear instruction
+    KokoroProvider.setRuntimeAvailableForTesting(false);
     const isAvail = await provider.isAvailable();
-    // In this node environment, onnxruntime-node is not installed
     expect(isAvail).toBe(false);
 
     const reason = provider.getUnavailableReason();
@@ -29,19 +33,30 @@ describe('KokoroProvider Truthful Runtime Detection & Synthesis', () => {
     expect(reason).toContain('not installed');
   });
 
-  it('3. Marks all returned voices as isAvailable: false with explanation', async () => {
-    const voices = await provider.listVoices();
+  it('3. Marks all returned voices accurately based on runtime status', async () => {
+    // When simulated missing
+    KokoroProvider.setRuntimeAvailableForTesting(false);
+    let voices = await provider.listVoices();
     expect(voices.length).toBeGreaterThan(0);
-
     for (const v of voices) {
       expect(v.provider).toBe('kokoro');
       expect(v.isAvailable).toBe(false);
       expect(v.unavailableReason).toBeDefined();
       expect(v.unavailableReason).toContain('onnxruntime-node');
     }
+
+    // When runtime is present and model is loaded
+    KokoroProvider.resetRuntimeStatus();
+    voices = await provider.listVoices();
+    for (const v of voices) {
+      expect(v.provider).toBe('kokoro');
+      expect(v.isAvailable).toBe(true);
+      expect(v.unavailableReason).toBeUndefined();
+    }
   });
 
   it('4. Refuses to fake synthesis when runtime is missing and throws descriptive error', async () => {
+    KokoroProvider.setRuntimeAvailableForTesting(false);
     await expect(
       provider.synthesize({
         text: 'This should not fake synthesis.',
@@ -50,11 +65,11 @@ describe('KokoroProvider Truthful Runtime Detection & Synthesis', () => {
     ).rejects.toThrow(/onnxruntime-node.*not installed/i);
   });
 
-  it('5. Correctly reflects simulated available runtime status via test hook', async () => {
+  it('5. Correctly reflects missing model file when model is not found on disk', async () => {
     KokoroProvider.setRuntimeAvailableForTesting(true);
+    KokoroProvider.setTestModelPath('C:\\nonexistent\\kokoro-fake.onnx');
 
     const isAvail = await provider.isAvailable();
-    // runtime true, but model file is not present on disk
     expect(isAvail).toBe(false);
     expect(provider.getUnavailableReason()).toContain('model weights not found');
   });
@@ -135,5 +150,25 @@ describe('KokoroProvider Truthful Runtime Detection & Synthesis', () => {
     const testRes = await provider.testConnection();
     expect(testRes.success).toBe(true);
     expect(testRes.message).toContain('ready');
+  });
+
+  it('9. Real ONNX execution: synthesizes real WAV audio using actual onnxruntime-node and model', async () => {
+    KokoroProvider.resetRuntimeStatus();
+    expect(await provider.isAvailable()).toBe(true);
+
+    const result = await provider.synthesize({
+      text: 'Kokoro neural speech synthesis running locally on Windows with ONNX runtime.',
+      voiceId: 'am_eric',
+    });
+
+    expect(result.format).toBe('wav');
+    expect(result.providerUsed).toBe('kokoro');
+    expect(result.durationSeconds).toBeGreaterThan(0.5);
+    expect(result.sizeBytes).toBeGreaterThan(1000);
+    expect(result.audioBuffer.length).toBe(result.sizeBytes);
+    expect(result.audioBuffer.toString('ascii', 0, 4)).toBe('RIFF');
+    expect(result.audioBuffer.toString('ascii', 8, 12)).toBe('WAVE');
+    expect(result.audioBuffer.toString('ascii', 12, 16)).toBe('fmt ');
+    expect(result.audioBuffer.readUInt32LE(24)).toBe(24000); // 24kHz
   });
 });
