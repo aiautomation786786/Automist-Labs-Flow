@@ -12,6 +12,7 @@ import {
   TvIcon,
   AlertCircleIcon,
   CheckCircleIcon,
+  RefreshIcon,
 } from '../components/Icons';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { ChannelModal } from '../components/ChannelModal';
@@ -57,6 +58,8 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
     }
   }, [initialTab]);
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const loadData = async (silent = false) => {
     try {
       if (!silent && projects.length === 0 && channels.length === 0) {
@@ -74,6 +77,22 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
       console.error('Failed to load projects and channels', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await loadData(true);
+      if (activeChannelDetail && window.flowApi?.getChannelHistory) {
+        const hist = await window.flowApi.getChannelHistory({ channelId: activeChannelDetail.id, limit: 10 });
+        setChannelHistory(hist?.records || []);
+      }
+    } catch (err) {
+      console.error('Failed to refresh projects and channels', err);
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -387,6 +406,16 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <button
+            className="btn-secondary"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Refresh"
+            aria-label="Refresh projects and channels"
+          >
+            <RefreshIcon size={14} className={isRefreshing ? 'spin' : undefined} />
+          </button>
+
           {activeTab === 'projects' && selectedProjectIds.size > 0 && (
             <button
               className="btn-secondary btn-sm"

@@ -315,4 +315,31 @@ describe('ProjectsScreen', () => {
 
     expect(screen.getByTestId('create-new-channel-card')).toBeDefined();
   });
+
+  it('triggers real data reload when header Refresh button is clicked', async () => {
+    render(
+      <ProjectsScreen
+        onOpenProject={() => {}}
+        onNavigateNewProject={() => {}}
+      />
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(window.flowApi?.listProjects).toHaveBeenCalledTimes(1);
+    expect(window.flowApi?.listChannels).toHaveBeenCalledTimes(1);
+
+    const refreshBtn = screen.getByRole('button', { name: /Refresh projects and channels/i });
+    expect(refreshBtn).toBeDefined();
+
+    await act(async () => {
+      fireEvent.click(refreshBtn);
+      await Promise.resolve();
+    });
+
+    expect(window.flowApi?.listProjects).toHaveBeenCalledTimes(2);
+    expect(window.flowApi?.listChannels).toHaveBeenCalledTimes(2);
+  });
 });

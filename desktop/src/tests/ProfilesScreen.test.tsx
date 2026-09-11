@@ -74,16 +74,18 @@ describe('ProfilesScreen', () => {
     };
   });
 
-  it('renders profile list with isolation banner and action buttons', async () => {
+  it('renders profile list without technical explanation banners or architecture descriptions', async () => {
     render(<ProfilesScreen />);
 
     await act(async () => {
       await Promise.resolve();
     });
 
-    // Banner text is present
-    expect(screen.getByText(/Dedicated Flow Profiles/i)).toBeDefined();
-    // Profile names appear in cards
+    // Technical explanation banners and subtitles are removed
+    expect(screen.queryByText(/Dedicated Flow Profiles/i)).toBeNull();
+    expect(screen.queryByText(/Each account has its own isolated Chrome session/i)).toBeNull();
+
+    // Profile names appear in cards from real account snapshot
     expect(screen.getByText('Main Generation Profile')).toBeDefined();
     expect(screen.getByText('Secondary Profile')).toBeDefined();
     // Detected email shown
@@ -100,6 +102,26 @@ describe('ProfilesScreen', () => {
     });
 
     expect(window.flowApi?.launchLoginBrowser).toHaveBeenCalled();
+  });
+
+  it('triggers real data reload when header Refresh button is clicked', async () => {
+    render(<ProfilesScreen />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(window.flowApi?.listProfiles).toHaveBeenCalledTimes(1);
+
+    const refreshBtn = screen.getByRole('button', { name: /Refresh accounts/i });
+    expect(refreshBtn).toBeDefined();
+
+    await act(async () => {
+      fireEvent.click(refreshBtn);
+      await Promise.resolve();
+    });
+
+    expect(window.flowApi?.listProfiles).toHaveBeenCalledTimes(2);
   });
 
   it('Test CDP button is NOT visible on account cards', async () => {

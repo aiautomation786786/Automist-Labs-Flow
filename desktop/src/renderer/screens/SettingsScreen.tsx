@@ -6,7 +6,7 @@ import type {
   TtsProviderId,
   GeminiKeySummary,
 } from '../../shared/types';
-import { CheckIcon, SparklesIcon, AlertCircleIcon } from '../components/Icons';
+import { CheckIcon, SparklesIcon, AlertCircleIcon, RefreshIcon } from '../components/Icons';
 import { InfinityFlowLogo } from '../components/InfinityFlowLogo';
 
 export const SettingsScreen: React.FC = () => {
@@ -181,29 +181,42 @@ export const SettingsScreen: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    const fetchSettings = async () => {
-      if (!window.flowApi) return;
-      try {
-        setLoading(true);
-        const [s, info, gKeys] = await Promise.all([
-          window.flowApi.getSettings(),
-          window.flowApi.getAppInfo(),
-          window.flowApi.listGeminiKeys ? window.flowApi.listGeminiKeys() : Promise.resolve([]),
-        ]);
-        setSettings(s);
-        setAppInfo(info);
-        if (gKeys && Array.isArray(gKeys)) {
-          setGeminiKeys(gKeys);
-        }
-      } catch (err) {
-        console.error('Failed to load settings', err);
-        setErrorMsg('Failed to load settings from storage.');
-      } finally {
-        setLoading(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const fetchSettings = async (silent = false) => {
+    if (!window.flowApi) return;
+    try {
+      if (!silent) setLoading(true);
+      const [s, info, gKeys] = await Promise.all([
+        window.flowApi.getSettings(),
+        window.flowApi.getAppInfo(),
+        window.flowApi.listGeminiKeys ? window.flowApi.listGeminiKeys() : Promise.resolve([]),
+      ]);
+      setSettings(s);
+      setAppInfo(info);
+      if (gKeys && Array.isArray(gKeys)) {
+        setGeminiKeys(gKeys);
       }
-    };
-    fetchSettings();
+    } catch (err) {
+      console.error('Failed to load settings', err);
+      setErrorMsg('Failed to load settings from storage.');
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await fetchSettings(true);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSettings(false);
   }, []);
 
   const handleUpdate = async (patch: Partial<AppSettings>) => {
@@ -262,6 +275,17 @@ export const SettingsScreen: React.FC = () => {
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Refresh"
+            aria-label="Refresh settings"
+            style={{ height: '32px', padding: '0 10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <RefreshIcon size={14} className={isRefreshing ? 'spin' : undefined} />
+          </button>
           {savedMsg && (
             <span
               style={{

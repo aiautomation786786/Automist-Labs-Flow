@@ -128,6 +128,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
     };
   }, []);
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   // Load project initially
   const loadProject = useCallback(async () => {
     if (!window.flowApi) return;
@@ -735,8 +737,22 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
               Resume Generation
             </button>
           )}
-          <button className="btn-secondary" onClick={loadProject} title="Reload state">
-            <RefreshIcon size={14} />
+          <button
+            className="btn-secondary"
+            onClick={async () => {
+              if (isRefreshing) return;
+              setIsRefreshing(true);
+              try {
+                await loadProject();
+              } finally {
+                setIsRefreshing(false);
+              }
+            }}
+            disabled={isRefreshing}
+            title="Refresh"
+            aria-label="Refresh project state"
+          >
+            <RefreshIcon size={14} className={isRefreshing ? 'spin' : undefined} />
           </button>
         </div>
       </div>

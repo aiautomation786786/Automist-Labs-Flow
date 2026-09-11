@@ -10,6 +10,7 @@ import {
   UploadIcon,
   TrashIcon,
   AlertCircleIcon,
+  RefreshIcon,
 } from '../components/Icons';
 import { SegmentedControl } from '../components/SegmentedControl';
 
@@ -63,16 +64,32 @@ export const GeminiVideoStudioScreen: React.FC<GeminiVideoStudioScreenProps> = (
   const [selectedProfileId, setSelectedProfileId] = useState<string>('all');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+
+  const loadProfiles = async () => {
+    if (window.flowApi?.listProfiles) {
+      try {
+        const list = await window.flowApi.listProfiles();
+        setProfiles(list);
+      } catch (err) {
+        console.error('Failed to load profiles in Gemini studio', err);
+      }
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await loadProfiles();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // Load profiles
   useEffect(() => {
-    if (window.flowApi?.listProfiles) {
-      window.flowApi.listProfiles().then((list) => {
-        setProfiles(list);
-      }).catch((err) => {
-        console.error('Failed to load profiles in Gemini studio', err);
-      });
-    }
+    loadProfiles();
   }, []);
 
   // Default project name generator
@@ -313,8 +330,19 @@ export const GeminiVideoStudioScreen: React.FC<GeminiVideoStudioScreenProps> = (
           </div>
         </div>
 
-        {/* Profile Status Badge */}
+        {/* Profile Status Badge & Refresh */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Refresh"
+            aria-label="Refresh accounts"
+            style={{ padding: '6px 10px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <RefreshIcon size={14} className={isRefreshing ? 'spin' : undefined} />
+          </button>
           <div
             style={{
               display: 'flex',

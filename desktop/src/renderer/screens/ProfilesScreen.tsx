@@ -83,6 +83,8 @@ export const ProfilesScreen: React.FC = () => {
   const [isConnectingExisting, setIsConnectingExisting] = useState(false);
   const [connectExistingMsg, setConnectExistingMsg] = useState<{ text: string; isError?: boolean } | null>(null);
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   // ---- Data loading ----
   const loadProfiles = async (silent = false) => {
     if (!window.flowApi) return;
@@ -94,6 +96,16 @@ export const ProfilesScreen: React.FC = () => {
       console.error('Failed to load profiles', err);
     } finally {
       if (!silent) setLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await loadProfiles(true);
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -491,14 +503,17 @@ export const ProfilesScreen: React.FC = () => {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
-          <h1>Flow Accounts</h1>
-          <p style={{ marginTop: '4px', color: 'var(--text-secondary)' }}>
-            Each account has its own isolated Chrome session, CDP port, and job queue.
-          </p>
+          <h1 style={{ margin: 0 }}>Flow Accounts</h1>
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-          <button className="btn-secondary" onClick={() => { loadProfiles(true); }} title="Refresh">
-            <RefreshIcon size={14} />
+          <button
+            className="btn-secondary"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Refresh"
+            aria-label="Refresh accounts"
+          >
+            <RefreshIcon size={14} className={isRefreshing ? 'spin' : undefined} />
           </button>
           <button
             className="btn-primary"
@@ -507,30 +522,6 @@ export const ProfilesScreen: React.FC = () => {
             <PlusIcon size={16} />
             Add Flow Account
           </button>
-        </div>
-      </div>
-
-      {/* Safety Banner */}
-      <div
-        style={{
-          backgroundColor: 'var(--bg-surface)',
-          border: '1px solid var(--border-color)',
-          borderRadius: 'var(--radius-md)',
-          padding: '12px 16px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          fontSize: '13px',
-          color: 'var(--text-secondary)',
-          boxShadow: 'var(--shadow-sm)',
-        }}
-      >
-        <div style={{ fontSize: '18px', flexShrink: 0 }}>🛡️</div>
-        <div>
-          <strong style={{ color: 'var(--text-primary)' }}>Dedicated Flow Profiles:</strong>{' '}
-          Each Flow account uses its own Chrome user-data directory under{' '}
-          <code>%LOCALAPPDATA%\AutomistLabs\FlowProfiles</code>.
-          Your normal Chrome profiles are never touched.
         </div>
       </div>
 

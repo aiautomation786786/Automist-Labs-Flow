@@ -17,6 +17,7 @@ import {
   ClapperboardIcon,
   SparklesIcon,
   ClockIcon,
+  RefreshIcon,
 } from '../components/Icons';
 
 export type GenerationMode =
@@ -102,9 +103,12 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
   const [showLibraryModal, setShowLibraryModal] = useState<boolean>(false);
   const [libraryTargetIndex, setLibraryTargetIndex] = useState<number | null>(null);
 
-  useEffect(() => {
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+
+  const reloadLibrary = async () => {
     if (!window.flowApi?.listProjects) return;
-    window.flowApi.listProjects().then((projects) => {
+    try {
+      const projects = await window.flowApi.listProjects();
       const found: Array<{ path: string; name: string; projectId: string }> = [];
       for (const p of projects) {
         for (const s of p.slots) {
@@ -119,7 +123,24 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
         }
       }
       setLibraryImages(found);
-    }).catch(() => {});
+    } catch {
+      // Quiet fail
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await reloadLibrary();
+      setErrorMsg(null);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    reloadLibrary();
   }, []);
 
   const handlePickSingleImage = async () => {
@@ -557,7 +578,7 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
           </p>
         </div>
 
-        {/* Inline Project Name & Campaign Tag Input */}
+        {/* Inline Project Name, Campaign Tag Input & Refresh */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
             <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 500 }}>Project Name</span>
@@ -593,6 +614,17 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
               }}
             />
           </div>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Refresh"
+            aria-label="Refresh studio data"
+            style={{ alignSelf: 'flex-end', height: '32px', padding: '0 10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <RefreshIcon size={14} className={isRefreshing ? 'spin' : undefined} />
+          </button>
         </div>
       </div>
 

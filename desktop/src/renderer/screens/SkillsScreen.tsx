@@ -7,6 +7,7 @@ import {
   AlertCircleIcon,
   UploadIcon,
   SparklesIcon,
+  RefreshIcon,
 } from '../components/Icons';
 import { SkillModal } from '../components/SkillModal';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -28,8 +29,10 @@ export const SkillsScreen: React.FC<SkillsScreenProps> = ({
   const [skillToDelete, setSkillToDelete] = useState<SkillEntity | null>(null);
   const [notification, setNotification] = useState<{ message: string; isError?: boolean } | null>(null);
 
-  const loadSkills = async () => {
-    setLoading(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const loadSkills = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       if (window.flowApi?.listSkills) {
         const list = await window.flowApi.listSkills();
@@ -38,12 +41,22 @@ export const SkillsScreen: React.FC<SkillsScreenProps> = ({
     } catch (err) {
       console.error('Failed to load skills', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await loadSkills(true);
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
   useEffect(() => {
-    loadSkills();
+    loadSkills(false);
   }, []);
 
   const filteredSkills = useMemo(() => {
@@ -123,7 +136,18 @@ export const SkillsScreen: React.FC<SkillsScreenProps> = ({
             </p>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              title="Refresh"
+              aria-label="Refresh skills"
+              style={{ padding: '8px 12px', height: '34px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <RefreshIcon size={14} className={isRefreshing ? 'spin' : undefined} />
+            </button>
             <label
               className="btn-secondary"
               style={{

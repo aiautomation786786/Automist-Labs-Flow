@@ -11,6 +11,7 @@ import {
   CheckCircleIcon,
   AlertCircleIcon,
   TvIcon,
+  RefreshIcon,
 } from '../components/Icons';
 import { ChannelModal } from '../components/ChannelModal';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -39,9 +40,10 @@ export const ChannelsScreen: React.FC<ChannelsScreenProps> = ({
   const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<string>('all');
   const [deliveringProjectId, setDeliveringProjectId] = useState<string | null>(null);
   const [deliveryNotification, setDeliveryNotification] = useState<{ message: string; isError?: boolean } | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       if (window.flowApi) {
         const [chList, projList, histResult] = await Promise.all([
@@ -56,12 +58,22 @@ export const ChannelsScreen: React.FC<ChannelsScreenProps> = ({
     } catch (err) {
       console.error('Failed to load channel data', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await loadData(true);
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
   useEffect(() => {
-    loadData();
+    loadData(false);
   }, []);
 
   const totalDelivered = useMemo(() => {
@@ -248,26 +260,45 @@ export const ChannelsScreen: React.FC<ChannelsScreenProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={handleOpenCreateModal}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            backgroundColor: '#2563eb',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '8px',
-            padding: '10px 18px',
-            fontWeight: 600,
-            fontSize: '13px',
-            cursor: 'pointer',
-            boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)',
-          }}
-        >
-          <PlusIcon size={16} />
-          <span>New Channel</span>
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Refresh"
+            aria-label="Refresh channels"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '10px 14px',
+              height: '38px',
+            }}
+          >
+            <RefreshIcon size={14} className={isRefreshing ? 'spin' : undefined} />
+          </button>
+          <button
+            onClick={handleOpenCreateModal}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              backgroundColor: '#2563eb',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '10px 18px',
+              fontWeight: 600,
+              fontSize: '13px',
+              cursor: 'pointer',
+              boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)',
+            }}
+          >
+            <PlusIcon size={16} />
+            <span>New Channel</span>
+          </button>
+        </div>
       </div>
 
       {/* Quick Metrics Bar */}

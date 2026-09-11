@@ -32,6 +32,7 @@ import {
   ChevronDownIcon,
   UploadIcon,
   AlertCircleIcon,
+  RefreshIcon,
 } from '../components/Icons';
 
 interface CreateVideoScreenProps {
@@ -430,6 +431,51 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
 
     return { items, allReady, blockingIssues };
   }, [scenes, validation, aspectRatio, outputResolution, voiceId, voiceEngine, subtitlesEnabled, subtitleStyle, subtitleConfig, motionEnabled, motionStyle, transitionStyle, crossfadeDuration, musicEnabled, musicPath, musicVolume, allVoices]);
+
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const reloadData = async () => {
+    const promises: Promise<any>[] = [];
+    if (window.flowApi?.listChannels) {
+      promises.push(
+        window.flowApi.listChannels().then((chs) => {
+          if (chs) setAvailableChannels(chs);
+        }).catch(() => {})
+      );
+    }
+    if (window.flowApi?.listSkills) {
+      promises.push(
+        window.flowApi.listSkills().then((sks) => {
+          if (sks) setAvailableSkills(sks);
+        }).catch(() => {})
+      );
+    }
+    if (window.flowApi?.getTtsEngines) {
+      promises.push(
+        window.flowApi.getTtsEngines().then((engs) => {
+          if (engs) setTtsEngines(engs);
+        }).catch(() => {})
+      );
+    }
+    if (window.flowApi?.listVoices) {
+      promises.push(
+        window.flowApi.listVoices().then((vcs) => {
+          if (vcs) setAllVoices(vcs);
+        }).catch(() => {})
+      );
+    }
+    await Promise.all(promises);
+  };
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await reloadData();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // Load initial draft and channels from storage
   useEffect(() => {
@@ -1461,6 +1507,17 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
               <CheckIcon size={12} /> Auto-saved
             </span>
           )}
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Refresh"
+            aria-label="Refresh video factory data"
+            style={{ padding: '6px 10px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <RefreshIcon size={14} className={isRefreshing ? 'spin' : undefined} />
+          </button>
           <button type="button" onClick={onCancel} className="btn-secondary" style={{ padding: '6px 14px', fontSize: '12px' }}>
             Cancel
           </button>
