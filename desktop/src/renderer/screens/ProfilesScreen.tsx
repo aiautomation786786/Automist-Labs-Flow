@@ -59,7 +59,10 @@ export const ProfilesScreen: React.FC = () => {
   const [actionFeedback, setActionFeedback] = useState<Record<string, { msg: string; isError?: boolean }>>({});
   const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
 
-  // ---- Simplified 1-Click Add Flow Account State ----
+  // ---- Add Flow Account: choice modal ----
+  const [isAddChoiceModalOpen, setIsAddChoiceModalOpen] = useState(false);
+
+  // ---- Sign in with Google onboarding state ----
   const [addingState, setAddingState] = useState<{
     profileId: string;
     displayName: string;
@@ -68,7 +71,7 @@ export const ProfilesScreen: React.FC = () => {
     message?: string;
   } | null>(null);
 
-  // ---- Connect Existing Profile Modal (advanced, de-emphasised) ----
+  // ---- Connect Existing Profile Modal ----
   const [isExistingModalOpen, setIsExistingModalOpen] = useState(false);
   const [detectedLocalProfiles, setDetectedLocalProfiles] = useState<
     Array<DiscoveredLocalProfile & { isOpen: boolean; isAttachable: boolean; cdpPort?: number }>
@@ -254,29 +257,21 @@ export const ProfilesScreen: React.FC = () => {
     }
   };
 
-  const handleTestConnection = async (profileId: string) => {
-    if (!window.flowApi) return;
-    try {
-      setActionLoading((prev) => ({ ...prev, [profileId]: true }));
-      const res = await window.flowApi.testConnection(profileId);
-      if (res.responsive) {
-        setFeedback(profileId, `Connection OK (CDP port ${res.port}, status: ${res.status})`);
-      } else {
-        setFeedback(profileId, `CDP port ${res.port} not responding (status: ${res.status})`, true);
-      }
-    } catch (err) {
-      setFeedback(profileId, `Connection test error: ${(err as Error).message}`, true);
-    } finally {
-      setActionLoading((prev) => ({ ...prev, [profileId]: false }));
-    }
-  };
+
 
   // ---- Simplified 1-Click Flow Account Onboarding ----
 
-  const handleAddFlowAccount = async () => {
+  const handleAddFlowAccount = () => {
+    // Open choice modal instead of immediately launching Chrome
+    setIsAddChoiceModalOpen(true);
+  };
+
+  // ---- Called when user picks "Sign in with Google" in the choice modal ----
+  const handleSignInWithGoogle = async () => {
     if (!window.flowApi) return;
+    setIsAddChoiceModalOpen(false);
     try {
-      // 1. Auto-generate next unique Flow Account name without forcing user to type
+      // 1. Auto-generate next unique Flow Account name
       let count = profiles.length + 1;
       let defaultName = `Flow Account ${count}`;
       while (profiles.some((p) => p.displayName.toLowerCase() === defaultName.toLowerCase())) {
@@ -296,7 +291,7 @@ export const ProfilesScreen: React.FC = () => {
         message: 'Launching dedicated Chrome window…',
       });
 
-      // 3. Immediately launch dedicated visible Chrome window to Google Flow
+      // 3. Launch dedicated visible Chrome window to Google Flow
       await window.flowApi.launchLoginBrowser(created.profileId);
 
       setAddingState({
@@ -405,6 +400,7 @@ export const ProfilesScreen: React.FC = () => {
   // ---- Connect Existing Profile modal (advanced) ----
 
   const handleOpenConnectExistingModal = async () => {
+    setIsAddChoiceModalOpen(false);
     setIsExistingModalOpen(true);
     setConnectExistingMsg(null);
     if (!window.flowApi?.detectLocalChromeProfiles) return;
@@ -534,21 +530,7 @@ export const ProfilesScreen: React.FC = () => {
           <strong style={{ color: 'var(--text-primary)' }}>Dedicated Flow Profiles:</strong>{' '}
           Each Flow account uses its own Chrome user-data directory under{' '}
           <code>%LOCALAPPDATA%\AutomistLabs\FlowProfiles</code>.
-          Your normal Chrome profiles are never touched.{' '}
-          <button
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--primary)',
-              cursor: 'pointer',
-              fontSize: '12px',
-              padding: '0 2px',
-              textDecoration: 'underline',
-            }}
-            onClick={handleOpenConnectExistingModal}
-          >
-            Advanced: Connect existing Chrome profile
-          </button>
+          Your normal Chrome profiles are never touched.
         </div>
       </div>
 
@@ -754,16 +736,6 @@ export const ProfilesScreen: React.FC = () => {
                       </button>
                     )}
 
-                    {/* Test Connection (developer detail, de-emphasised) */}
-                    <button
-                      className="btn-secondary btn-sm"
-                      onClick={() => handleTestConnection(p.profileId)}
-                      disabled={busy}
-                      title="Test CDP port responsiveness"
-                      style={{ opacity: 0.6, fontSize: '11px' }}
-                    >
-                      Test CDP
-                    </button>
 
                     {/* Remove */}
                     <button
@@ -811,6 +783,128 @@ export const ProfilesScreen: React.FC = () => {
         onConfirm={handleDeleteConfirm}
         onCancel={() => setProfileToDelete(null)}
       />
+
+      {/* ================================================================== */}
+      {/* Add Flow Account — Choice Modal                                     */}
+      {/* ================================================================== */}
+      {isAddChoiceModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsAddChoiceModalOpen(false)}>
+          <div className="modal-content" style={{ maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Add a Flow Account</h2>
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                onClick={() => setIsAddChoiceModalOpen(false)}
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
+                Choose how you want to connect your Google Flow account.
+              </p>
+
+              {/* Option A — Sign in with Google */}
+              <button
+                type="button"
+                data-testid="choice-google-signin"
+                onClick={handleSignInWithGoogle}
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '14px',
+                  padding: '16px 18px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-color)',
+                  backgroundColor: 'var(--bg-surface)',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  width: '100%',
+                  transition: 'border-color 0.15s',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--primary)')}
+                onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border-color)')}
+              >
+                <div style={{ fontSize: '24px', flexShrink: 0, marginTop: '2px' }}>🔑</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    Sign in with Google
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                    Open a dedicated Chrome session and sign in to your Google Flow account.
+                  </div>
+                  <div
+                    style={{
+                      marginTop: '6px',
+                      display: 'inline-block',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      color: 'var(--primary)',
+                    }}
+                  >
+                    Continue with Google →
+                  </div>
+                </div>
+              </button>
+
+              {/* Option B — Connect Existing Chrome Profile */}
+              <button
+                type="button"
+                data-testid="choice-connect-existing"
+                onClick={handleOpenConnectExistingModal}
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '14px',
+                  padding: '16px 18px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-color)',
+                  backgroundColor: 'var(--bg-surface)',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  width: '100%',
+                  transition: 'border-color 0.15s',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--primary)')}
+                onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border-color)')}
+              >
+                <div style={{ fontSize: '24px', flexShrink: 0, marginTop: '2px' }}>🌐</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    Connect Existing Chrome Profile
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                    Link a Chrome profile that is already signed into Google on your computer.
+                  </div>
+                  <div
+                    style={{
+                      marginTop: '6px',
+                      display: 'inline-block',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      color: 'var(--primary)',
+                    }}
+                  >
+                    Scan Chrome Profiles →
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setIsAddChoiceModalOpen(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ================================================================== */}
       {/* Add Flow Account Streamlined Onboarding Modal                        */}

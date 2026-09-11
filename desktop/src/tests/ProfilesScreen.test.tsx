@@ -15,6 +15,7 @@ describe('ProfilesScreen', () => {
     cleanup();
     document.body.innerHTML = '';
   });
+
   const mockProfiles: ProfileSessionSnapshot[] = [
     {
       profileId: 'prof_1',
@@ -80,7 +81,7 @@ describe('ProfilesScreen', () => {
       await Promise.resolve();
     });
 
-    // Banner text is updated to dedicated profile architecture
+    // Banner text is present
     expect(screen.getByText(/Dedicated Flow Profiles/i)).toBeDefined();
     // Profile names appear in cards
     expect(screen.getByText('Main Generation Profile')).toBeDefined();
@@ -101,7 +102,19 @@ describe('ProfilesScreen', () => {
     expect(window.flowApi?.launchLoginBrowser).toHaveBeenCalled();
   });
 
-  it('handles Verify Account and Test CDP actions', async () => {
+  it('Test CDP button is NOT visible on account cards', async () => {
+    render(<ProfilesScreen />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Test CDP must not appear in the normal card UI
+    const testCdpBtns = screen.queryAllByRole('button', { name: /Test CDP/i });
+    expect(testCdpBtns.length).toBe(0);
+  });
+
+  it('handles Verify Account action on cards (no Test CDP button)', async () => {
     render(<ProfilesScreen />);
 
     await act(async () => {
@@ -116,13 +129,8 @@ describe('ProfilesScreen', () => {
 
     expect(window.flowApi?.verifyAccount).toHaveBeenCalledWith('prof_1');
 
-    const testBtns = screen.getAllByRole('button', { name: /Test CDP/i });
-    await act(async () => {
-      fireEvent.click(testBtns[0]);
-      await Promise.resolve();
-    });
-
-    expect(window.flowApi?.testConnection).toHaveBeenCalledWith('prof_1');
+    // Confirm Test CDP is still absent after interaction
+    expect(screen.queryAllByRole('button', { name: /Test CDP/i }).length).toBe(0);
   });
 
   it('handles Stop Profile action', async () => {
@@ -141,7 +149,7 @@ describe('ProfilesScreen', () => {
     expect(window.flowApi?.stopProfile).toHaveBeenCalledWith('prof_1');
   });
 
-  it('launches Chrome immediately on clicking Add Flow Account without multi-step wizard', async () => {
+  it('clicking Add Flow Account opens choice modal (not Chrome directly)', async () => {
     render(<ProfilesScreen />);
 
     await act(async () => {
@@ -154,16 +162,108 @@ describe('ProfilesScreen', () => {
       await Promise.resolve();
     });
 
-    // Verify createProfile was called with auto-generated name
+    // Choice modal should open
+    expect(screen.getByText('Add a Flow Account')).toBeDefined();
+    expect(screen.getByText(/Choose how you want to connect/i)).toBeDefined();
+
+    // Both options must be present
+    expect(screen.getByText('Sign in with Google')).toBeDefined();
+    expect(screen.getByText('Connect Existing Chrome Profile')).toBeDefined();
+    expect(screen.getByText(/Continue with Google/i)).toBeDefined();
+    expect(screen.getByText(/Scan Chrome Profiles/i)).toBeDefined();
+
+    // Chrome must NOT have been launched yet — user hasn't chosen
+    expect(window.flowApi?.createProfile).not.toHaveBeenCalled();
+    expect(window.flowApi?.launchLoginBrowser).not.toHaveBeenCalled();
+  });
+
+  it('choosing Sign in with Google in choice modal launches Chrome', async () => {
+    render(<ProfilesScreen />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Open choice modal
+    const addBtns = screen.getAllByRole('button', { name: /Add Flow Account/i });
+    await act(async () => {
+      fireEvent.click(addBtns[0]);
+      await Promise.resolve();
+    });
+
+    // Click the "Sign in with Google" option
+    const googleBtn = screen.getByTestId('choice-google-signin');
+    await act(async () => {
+      fireEvent.click(googleBtn);
+      await Promise.resolve();
+    });
+
+    // createProfile and launchLoginBrowser should both be called
     expect(window.flowApi?.createProfile).toHaveBeenCalledWith(
       expect.objectContaining({ displayName: expect.stringMatching(/Flow Account/) })
     );
-
-    // Verify launchLoginBrowser was called immediately
     expect(window.flowApi?.launchLoginBrowser).toHaveBeenCalledWith('prof_3');
 
-    // Verify streamlined modal is open instructing user to sign in
-    expect(screen.getByText(/Chrome window is open to Google Flow/i)).toBeDefined();
-    expect(screen.getByText(/Sign into your Google Account in the Chrome window/i)).toBeDefined();
+    // Sign-in onboarding modal should appear (text may appear in multiple places)
+    expect(screen.getAllByText(/Chrome window is open/i).length).toBeGreaterThan(0);
+  });
+
+  it('choosing Connect Existing Chrome Profile in choice modal opens scan modal', async () => {
+    // Setup detectLocalChromeProfiles
+    (window.flowApi as any).detectLocalChromeProfiles = vi.fn().mockResolvedValue([]);
+
+    render(<ProfilesScreen />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Open choice modal
+    const addBtns = screen.getAllByRole('button', { name: /Add Flow Account/i });
+    await act(async () => {
+      fireEvent.click(addBtns[0]);
+      await Promise.resolve();
+    });
+
+    // Click the "Connect Existing Chrome Profile" option
+    const connectBtn = screen.getByTestId('choice-connect-existing');
+    await act(async () => {
+      fireEvent.click(connectBtn);
+      await Promise.resolve();
+    });
+
+    // Connect Existing Chrome Profile modal should open
+    expect(screen.getByText(/Connect Existing Chrome Profile/i)).toBeDefined();
+    expect(window.flowApi?.launchLoginBrowser).not.toHaveBeenCalled();
+    expect((window.flowApi as any).detectLocalChromeProfiles).toHaveBeenCalled();
+  });
+
+  it('choice modal can be dismissed without launching Chrome', async () => {
+    render(<ProfilesScreen />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const addBtns = screen.getAllByRole('button', { name: /Add Flow Account/i });
+    await act(async () => {
+      fireEvent.click(addBtns[0]);
+      await Promise.resolve();
+    });
+
+    // Modal should be open
+    expect(screen.getByText('Add a Flow Account')).toBeDefined();
+
+    // Click Cancel
+    const cancelBtn = screen.getByRole('button', { name: /^Cancel$/i });
+    await act(async () => {
+      fireEvent.click(cancelBtn);
+      await Promise.resolve();
+    });
+
+    // Modal should be gone, Chrome was never launched
+    expect(screen.queryByText('Add a Flow Account')).toBeNull();
+    expect(window.flowApi?.launchLoginBrowser).not.toHaveBeenCalled();
+    expect(window.flowApi?.createProfile).not.toHaveBeenCalled();
   });
 });
