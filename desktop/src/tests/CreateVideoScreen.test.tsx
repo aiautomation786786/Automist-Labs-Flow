@@ -23,7 +23,7 @@ describe('CreateVideoScreen', () => {
     motionEnabled: true,
     motionStyle: 'breathe',
     transitionStyle: 'hard_cut',
-    voiceEngine: 'kokoro',
+    voiceEngine: 'edge-tts',
     voiceId: 'narrator_1',
     lastSaved: new Date().toISOString(),
   };

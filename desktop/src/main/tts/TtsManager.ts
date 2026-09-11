@@ -2,9 +2,9 @@
  * TtsManager – Central orchestrator for Infinity Flow Text-to-Speech engines.
  *
  * Responsibilities:
- *  1. Provider Registry: all 5 engines (Edge TTS, Kokoro ONNX, Azure Speech, ai33.pro, FameSpeak).
+ *  1. Provider Registry: all 4 engines (Edge TTS, Azure Speech, ai33.pro, FameSpeak).
  *  2. Centralized Fallback Engine (ZBot §7):
- *     Selected Engine → Immediate Retry Once → Kokoro → Edge TTS.
+ *     Selected Engine → Immediate Retry Once → Edge TTS.
  *     - Never fails a video run merely because an external voice API fails.
  *     - Voice preview strictly never cross-falls back across providers.
  *     - User cancellation (AbortSignal) terminates immediately and never triggers fallback.
@@ -31,7 +31,6 @@ import type {
 } from './TtsTypes';
 import type { StoryEntity } from '../../shared/types';
 import { EdgeTtsProvider } from './EdgeTtsProvider';
-import { KokoroProvider } from './KokoroProvider';
 import { AzureTtsProvider } from './AzureTtsProvider';
 import { Ai33TtsProvider } from './Ai33TtsProvider';
 import { FameSpeakTtsProvider } from './FameSpeakTtsProvider';
@@ -49,7 +48,6 @@ const logger = new AppLogger({ mirrorToStderr: false });
 export class TtsManager {
   private static providers: Map<TtsProviderId, ITtsProvider> = new Map<TtsProviderId, ITtsProvider>([
     ['edge-tts', new EdgeTtsProvider()],
-    ['kokoro', new KokoroProvider()],
     ['azure', new AzureTtsProvider()],
     ['ai33', new Ai33TtsProvider()],
     ['famespeak', new FameSpeakTtsProvider()],
@@ -182,9 +180,7 @@ export class TtsManager {
    *   Selected Provider
    *         ↓ (if error, immediate retry once)
    *   Selected Provider (Retry)
-   *         ↓ (if still failing)
-   *   Kokoro Local ONNX
-   *         ↓ (if Kokoro unavailable or error)
+   *         ↓ (if still failing or unavailable)
    *   Edge TTS (guaranteed free fallback)
    *
    * Invariant: User cancellation immediately stops execution without fallback.
@@ -241,46 +237,24 @@ export class TtsManager {
           if (retryClassified.classification === 'cancelled' || signal?.aborted) {
             throw retryClassified;
           }
-          logger.warn('tts', `Primary provider '${requestedProviderId}' failed on retry: ${retryErr.message}. Initiating Kokoro fallback.`);
+          if (requestedProviderId === 'edge-tts') {
+            throw retryClassified;
+          }
+          logger.warn('tts', `Primary provider '${requestedProviderId}' failed on retry: ${retryErr.message}. Falling back to Edge TTS.`);
         }
       }
     } else {
-      logger.warn('tts', `Requested provider '${requestedProviderId}' is unavailable (${primary.getUnavailableReason()}). Falling back.`);
-    }
-
-    if (signal?.aborted) {
-      throw new TtsError('Synthesis was cancelled.', 'cancelled', requestedProviderId);
-    }
-
-    // 2. Attempt Kokoro Local Fallback
-    if (requestedProviderId !== 'kokoro') {
-      const kokoro = this.getProvider('kokoro');
-      const kokoroAvail = await kokoro.isAvailable();
-      if (kokoroAvail) {
-        try {
-          logger.info('tts', `Synthesizing scene with Kokoro fallback (voice: ${kokoro.defaultVoiceId})`);
-          const kokoroRes = await kokoro.synthesize({
-            text: trimmed,
-            voiceId: kokoro.defaultVoiceId,
-            outputPath,
-            signal,
-          });
-          return { result: kokoroRes, providerUsed: 'kokoro', fallbackOccurred: true };
-        } catch (kokoroErr: any) {
-          const kokoroClassified = classifyTtsError(kokoroErr, 'kokoro');
-          if (kokoroClassified.classification === 'cancelled' || signal?.aborted) {
-            throw kokoroClassified;
-          }
-          logger.warn('tts', `Kokoro fallback failed: ${kokoroErr.message}. Falling back to Edge TTS.`);
-        }
+      if (requestedProviderId === 'edge-tts') {
+        throw new TtsError(`Edge TTS is unavailable: ${primary.getUnavailableReason()}`, 'unavailable', 'edge-tts');
       }
+      logger.warn('tts', `Requested provider '${requestedProviderId}' is unavailable (${primary.getUnavailableReason()}). Falling back to Edge TTS.`);
     }
 
     if (signal?.aborted) {
       throw new TtsError('Synthesis was cancelled.', 'cancelled', requestedProviderId);
     }
 
-    // 3. Guaranteed Edge TTS Fallback
+    // 2. Guaranteed Edge TTS Fallback
     logger.info('tts', `Executing final guaranteed Edge TTS fallback for scene.`);
     const edge = this.getProvider('edge-tts');
     try {
@@ -290,7 +264,7 @@ export class TtsManager {
         outputPath,
         signal,
       });
-      return { result: edgeRes, providerUsed: 'edge-tts', fallbackOccurred: requestedProviderId !== 'edge-tts' };
+      return { result: edgeRes, providerUsed: 'edge-tts', fallbackOccurred: true };
     } catch (edgeErr: any) {
       throw classifyTtsError(edgeErr, 'edge-tts');
     }
@@ -541,7 +515,6 @@ export class TtsManager {
 function primaryVoiceFallback(providerId: TtsProviderId): string {
   switch (providerId) {
     case 'edge-tts': return 'en-US-ChristopherNeural';
-    case 'kokoro': return 'am_eric';
     case 'azure': return 'en-US-JennyNeural';
     case 'ai33': return 'elevenlabs:rachel';
     case 'famespeak': return 'fs_morgan_freeman';

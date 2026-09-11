@@ -48,7 +48,6 @@ describe('ZBot Create Video Parity Test Suite', () => {
       listSkills: vi.fn().mockResolvedValue([]),
       listTtsEngines: vi.fn().mockResolvedValue([
         { id: 'edge-tts', name: 'Edge TTS', badge: 'FREE', audioExtension: 'mp3', supportsWordTimings: true, isAvailable: true },
-        { id: 'kokoro', name: 'Kokoro TTS', badge: 'LOCAL', audioExtension: 'wav', supportsWordTimings: true, isAvailable: true },
         { id: 'azure', name: 'Azure Speech', badge: 'API KEY', audioExtension: 'mp3', supportsWordTimings: true, isAvailable: true },
         { id: 'ai33', name: 'AI33 Studio', badge: 'API KEY', audioExtension: 'mp3', supportsWordTimings: true, isAvailable: true },
         { id: 'famespeak', name: 'FameSpeak', badge: 'API KEY', audioExtension: 'mp3', supportsWordTimings: true, isAvailable: true },
@@ -227,9 +226,8 @@ describe('ZBot Create Video Parity Test Suite', () => {
     expect(screen.getByText(/Voice & TTS Narration Foundation/i)).toBeDefined();
     expect(screen.getAllByText(/Background Music/i).length).toBeGreaterThanOrEqual(1);
 
-    // 1. Five TTS Engines rendered in tab bar
+    // 1. Four TTS Engines rendered in tab bar
     expect(screen.getByRole('button', { name: /Edge TTS/i })).toBeDefined();
-    expect(screen.getByRole('button', { name: /Kokoro/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /Azure Speech/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /ai33\.pro/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /FameSpeak/i })).toBeDefined();
@@ -421,9 +419,8 @@ describe('ZBot Create Video Parity Test Suite', () => {
     expect(screen.getByText(/Split at blank lines/i)).toBeDefined();
     expect(screen.getByRole('button', { name: /^ON$/i })).toBeDefined();
 
-    // 5 TTS engines
+    // 4 TTS engines
     expect(screen.getByText('Edge TTS')).toBeDefined();
-    expect(screen.getByText(/Kokoro/i)).toBeDefined();
     expect(screen.getByText('Azure Speech')).toBeDefined();
     expect(screen.getByText(/AI33/i)).toBeDefined();
     expect(screen.getByText('FameSpeak')).toBeDefined();

@@ -44,7 +44,7 @@ export interface TtsSynthesizeOptions {
   pitch?: string; // e.g. "+0Hz"
   rate?: string;  // e.g. "+0%"
   volume?: string;// e.g. "+0%"
-  speed?: number; // Speed multiplier (e.g. 0.5 to 1.5 for ai33/kokoro)
+  speed?: number; // Speed multiplier (e.g. 0.5 to 1.5 for ai33)
   outputPath?: string; // If specified, writes directly to this path
   signal?: AbortSignal;
 }

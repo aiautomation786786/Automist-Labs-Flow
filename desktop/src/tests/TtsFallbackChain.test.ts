@@ -107,9 +107,9 @@ describe('ZBot Centralized Fallback Chain & Strict Invariants', () => {
     expect(result.fallbackOccurred).toBe(false);
   });
 
-  it('3. Chosen engine fails twice, gracefully downgrades to Kokoro', async () => {
+  it('3. Chosen engine fails twice, gracefully downgrades to Edge TTS', async () => {
     let primaryCalls = 0;
-    let kokoroCalls = 0;
+    let edgeCalls = 0;
 
     const mockFailingPrimary: ITtsProvider = {
       id: 'famespeak',
@@ -127,73 +127,58 @@ describe('ZBot Centralized Fallback Chain & Strict Invariants', () => {
       },
     };
 
-    const mockWorkingKokoro: ITtsProvider = {
-      id: 'kokoro',
-      name: 'Mock Kokoro',
-      badge: 'LOCAL',
-      audioExtension: 'wav',
-      defaultVoiceId: 'am_eric',
-      supportsWordTimings: false,
+    const mockWorkingEdge: ITtsProvider = {
+      id: 'edge-tts',
+      name: 'Mock Edge TTS',
+      badge: 'FREE',
+      audioExtension: 'mp3',
+      defaultVoiceId: 'en-US-ChristopherNeural',
+      supportsWordTimings: true,
       isAvailable: async () => true,
       getUnavailableReason: () => null,
       listVoices: async () => [],
       synthesize: async () => {
-        kokoroCalls++;
+        edgeCalls++;
         return {
           audioBuffer: Buffer.alloc(2000, 0x33),
           durationSeconds: 3.0,
           sizeBytes: 2000,
-          format: 'wav',
-          providerUsed: 'kokoro',
+          format: 'mp3',
+          providerUsed: 'edge-tts',
         };
       },
     };
 
     TtsManager.registerProvider(mockFailingPrimary);
-    TtsManager.registerProvider(mockWorkingKokoro);
+    TtsManager.registerProvider(mockWorkingEdge);
 
     const result = await TtsManager.synthesizeSceneWithFallback(
-      'Downgrade to Kokoro test.',
+      'Downgrade to Edge test.',
       'famespeak',
       'fs_morgan_freeman'
     );
 
     expect(primaryCalls).toBe(2); // 1 initial + 1 immediate retry
-    expect(kokoroCalls).toBe(1);  // Downgraded to Kokoro
-    expect(result.providerUsed).toBe('kokoro');
+    expect(edgeCalls).toBe(1);    // Downgraded to Edge TTS
+    expect(result.providerUsed).toBe('edge-tts');
     expect(result.fallbackOccurred).toBe(true);
   });
 
-  it('4. Both chosen engine and Kokoro fail, gracefully downgrades to Edge TTS', async () => {
+  it('4. Chosen engine is unavailable, immediately gracefully downgrades to Edge TTS', async () => {
     let edgeCalls = 0;
 
-    const mockFailingAzure: ITtsProvider = {
+    const mockUnavailableAzure: ITtsProvider = {
       id: 'azure',
-      name: 'Failing Azure',
+      name: 'Unavailable Azure',
       badge: 'API KEY',
       audioExtension: 'mp3',
       defaultVoiceId: 'en-US-JennyNeural',
       supportsWordTimings: false,
-      isAvailable: async () => true,
-      getUnavailableReason: () => null,
+      isAvailable: async () => false,
+      getUnavailableReason: () => 'Azure credentials not configured',
       listVoices: async () => [],
       synthesize: async () => {
-        throw new TtsError('Invalid subscription key', 'invalid_key', 'azure', null, 401);
-      },
-    };
-
-    const mockFailingKokoro: ITtsProvider = {
-      id: 'kokoro',
-      name: 'Failing Kokoro',
-      badge: 'LOCAL',
-      audioExtension: 'wav',
-      defaultVoiceId: 'am_eric',
-      supportsWordTimings: false,
-      isAvailable: async () => true,
-      getUnavailableReason: () => null,
-      listVoices: async () => [],
-      synthesize: async () => {
-        throw new TtsError('Model weights missing', 'unavailable', 'kokoro');
+        throw new Error('Should not be called');
       },
     };
 
@@ -219,12 +204,11 @@ describe('ZBot Centralized Fallback Chain & Strict Invariants', () => {
       },
     };
 
-    TtsManager.registerProvider(mockFailingAzure);
-    TtsManager.registerProvider(mockFailingKokoro);
+    TtsManager.registerProvider(mockUnavailableAzure);
     TtsManager.registerProvider(mockWorkingEdge);
 
     const result = await TtsManager.synthesizeSceneWithFallback(
-      'Final fallback to Edge test.',
+      'Immediate fallback to Edge test.',
       'azure',
       'en-US-JennyNeural'
     );
@@ -286,7 +270,6 @@ describe('ZBot Centralized Fallback Chain & Strict Invariants', () => {
   });
 
   it('6. CANCELLATION INVARIANT: AbortSignal strictly aborts immediately without triggering fallback', async () => {
-    let kokoroCalled = false;
     let edgeCalled = false;
 
     const mockAbortingPrimary: ITtsProvider = {
@@ -312,22 +295,6 @@ describe('ZBot Centralized Fallback Chain & Strict Invariants', () => {
       },
     };
 
-    const mockKokoro: ITtsProvider = {
-      id: 'kokoro',
-      name: 'Mock Kokoro',
-      badge: 'LOCAL',
-      audioExtension: 'wav',
-      defaultVoiceId: 'am_eric',
-      supportsWordTimings: false,
-      isAvailable: async () => true,
-      getUnavailableReason: () => null,
-      listVoices: async () => [],
-      synthesize: async () => {
-        kokoroCalled = true;
-        return { audioBuffer: Buffer.alloc(100), durationSeconds: 1, sizeBytes: 100, format: 'wav' };
-      },
-    };
-
     const mockEdge: ITtsProvider = {
       id: 'edge-tts',
       name: 'Mock Edge',
@@ -345,7 +312,6 @@ describe('ZBot Centralized Fallback Chain & Strict Invariants', () => {
     };
 
     TtsManager.registerProvider(mockAbortingPrimary);
-    TtsManager.registerProvider(mockKokoro);
     TtsManager.registerProvider(mockEdge);
 
     const ac = new AbortController();
@@ -365,7 +331,6 @@ describe('ZBot Centralized Fallback Chain & Strict Invariants', () => {
       return true;
     });
 
-    expect(kokoroCalled).toBe(false);
     expect(edgeCalled).toBe(false);
   });
 

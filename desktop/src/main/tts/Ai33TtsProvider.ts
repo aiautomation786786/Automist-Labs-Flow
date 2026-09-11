@@ -6,7 +6,7 @@
  *  - Polling task status: GET /v1/task/:id
  *  - Audio download: metadata.audio_url
  *  - SRT transcript parsing to extract word timings for subtitle alignment
- *  - Upstream voice categories: elevenlabs, minimax, fishaudio, edge, kokoro, vbee, clone
+ *  - Upstream voice categories: elevenlabs, minimax, fishaudio, edge, vbee, clone
  */
 
 import * as fs from 'fs';
@@ -105,17 +105,7 @@ export class Ai33TtsProvider implements ITtsProvider {
       tier: 'premium',
       isAvailable: false,
     },
-    // Kokoro & Edge upstream
-    {
-      id: 'kokoro:am_eric',
-      name: 'Eric (Kokoro Cloud)',
-      provider: 'ai33',
-      locale: 'en-US',
-      gender: 'male',
-      description: 'Balanced, clear documentary style',
-      tier: 'free',
-      isAvailable: false,
-    },
+    // Edge upstream
     {
       id: 'edge:en-US-ChristopherNeural',
       name: 'Christopher (Edge Proxy)',

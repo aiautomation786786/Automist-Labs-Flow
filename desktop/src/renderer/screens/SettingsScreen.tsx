@@ -1041,7 +1041,6 @@ export const SettingsScreen: React.FC = () => {
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 {[
                   { id: 'edge-tts', label: 'Edge TTS (Free Neural)', badge: 'FREE' },
-                  { id: 'kokoro', label: 'Kokoro (Local ONNX)', badge: 'LOCAL' },
                   { id: 'azure', label: 'Azure Speech (HD)', badge: 'API KEY' },
                   { id: 'ai33', label: 'ai33.pro (Multi-Source)', badge: 'API KEY' },
                   { id: 'famespeak', label: 'FameSpeak (Celebrity)', badge: 'API KEY' },
@@ -1310,15 +1309,11 @@ export const SettingsScreen: React.FC = () => {
               )}
             </div>
 
-            {/* Offline & Free Engines Summary */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', borderTop: '1px solid var(--border-color)', paddingTop: '14px' }}>
+            {/* Free Engine Summary */}
+            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '14px' }}>
               <div style={{ padding: '10px 14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-color)', fontSize: '11.5px' }}>
                 <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: '2px' }}>Edge TTS (Always Free)</div>
                 <div style={{ color: 'var(--text-secondary)' }}>Full Microsoft Neural WebSocket synthesis with exact word boundary timings. No API key needed.</div>
-              </div>
-              <div style={{ padding: '10px 14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-color)', fontSize: '11.5px' }}>
-                <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: '2px' }}>Kokoro Local (ONNX)</div>
-                <div style={{ color: 'var(--text-secondary)' }}>Ultra-realistic offline synthesis via ONNX runtime. Requires model weights in models/kokoro/.</div>
               </div>
             </div>
           </div>

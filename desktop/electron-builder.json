@@ -16,21 +16,10 @@
     "!scripts/**/*",
     "!**/*.map"
   ],
-  "extraResources": [
-    {
-      "from": "assets/models",
-      "to": "models",
-      "filter": ["**/*"]
-    }
-  ],
   "asar": true,
   "asarUnpack": [
     "**/node_modules/playwright/**/*",
-    "**/node_modules/playwright-core/**/*",
-    "**/node_modules/onnxruntime-node/**/*",
-    "**/node_modules/onnxruntime-common/**/*",
-    "**/node_modules/phonemizer/**/*",
-    "**/node_modules/global-agent/**/*"
+    "**/node_modules/playwright-core/**/*"
   ],
   "win": {
     "target": [

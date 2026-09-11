@@ -29,7 +29,7 @@ One sentence pitch: *Type a title. Get the whole video.*
 | UI | React 19 + TypeScript, Zustand for state |
 | Styling | Single `main.css`, CSS custom-property tokens, dark-first |
 | Video | ffmpeg + ffprobe (bundled binaries), invoked from main process |
-| Local TTS | Kokoro (onnxruntime-node, runs offline) |
+| TTS | Edge TTS (free, neural) + Azure / ai33 / FameSpeak |
 | PDF import | pdf-parse (lazy-required) |
 | Packaging | electron-builder → NSIS installer (`build:win` script) |
 
@@ -169,7 +169,7 @@ Key behaviors (each is a fix for a real failure):
   bump the version when render logic changes.
 - **Voice resolution:** `resolveVoiceCharacter(id, engine)` returns a synthetic
   character for unknown remote ids, and for an **empty id returns a "Default
-  narrator"** (edge `en-US-ChristopherNeural` / kokoro `am_eric`) instead of
+  narrator"** (edge `en-US-ChristopherNeural`) instead of
   `undefined`. An unpicked voice must cost the run its preferred voice, **never the
   run** (this exact crash shipped once: engine selected, voice list rate-limited,
   empty voice → whole run died after images).
@@ -201,19 +201,18 @@ logged-in sessions (persistent partitions `persist:metaai`, `persist:gemini`).
 
 ## 7. Voice engines
 
-`TtsProvider = 'edge-tts' | 'kokoro' | 'azure' | 'ai33' | 'famespeak'`, registered in
-a `TTS_ENGINES` metadata array (name, badge LOCAL/FREE/API KEY, audio extension).
+`TtsProvider = 'edge-tts' | 'azure' | 'ai33' | 'famespeak'`, registered in
+a `TTS_ENGINES` metadata array (name, badge FREE/API KEY, audio extension).
 
 | Engine | Nature | Notes |
 |---|---|---|
-| Kokoro | local onnx, wav | no key, offline |
 | Edge TTS | free, mp3 | returns **word timings** → exact subtitles |
 | Azure Speech | key+region | REST, HD voices, remote voice list |
-| ai33.pro | key | async: POST task (multipart) → poll `/v1/task/:id` → download `metadata.audio_url`; SRT transcript → cue timings; voice library split by upstream provider (elevenlabs/minimax/fishaudio/edge/kokoro/vbee/**clone**) |
+| ai33.pro | key | async: POST task (multipart) → poll `/v1/task/:id` → download `metadata.audio_url`; SRT transcript → cue timings; voice library split by upstream provider (elevenlabs/minimax/fishaudio/edge/vbee/**clone**) |
 | FameSpeak | bearer key | async REST: `POST /api/v1/tts/generations` `{text, voice}` + `Idempotency-Key` → 202 `{id,status}` → poll `GET .../generations/:id` (status `completed`, failures in `failureMessage`) → `GET .../:id/audio` (mp3). Voices: `GET /api/v1/voices?page=N&limit=200` → `{items,totalPages}`, fields `id, displayName, locale, gender, tier(free/premium), audioUrl` |
 
 **TtsSwitcher rules:**
-- `withFallback`: chosen engine → one immediate retry → Kokoro → Edge. A video never
+- `withFallback`: chosen engine → one immediate retry → Edge TTS. A video never
   ships silent; API failures (bad key, quota) downgrade the voice, not the run.
 - Voice previews do NOT fall back across engines (a preview in another engine's voice
   is a lie).

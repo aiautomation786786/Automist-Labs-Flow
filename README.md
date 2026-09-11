@@ -11,18 +11,17 @@
 [![React](https://img.shields.io/badge/React-19.2.8-61DAFB.svg?style=flat-square&logo=react)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4.0-3178C6.svg?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-4.7.0-646CFF.svg?style=flat-square&logo=vite)](https://vitejs.dev/)
-[![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-1.29.0-005CED.svg?style=flat-square&logo=onnx)](https://onnxruntime.ai/)
-[![Tests](https://img.shields.io/badge/Tests-808%20passed-brightgreen.svg?style=flat-square&logo=vitest)](./desktop/vitest.config.ts)
+[![Tests](https://img.shields.io/badge/Tests-800%2B%20passed-brightgreen.svg?style=flat-square&logo=vitest)](./desktop/vitest.config.ts)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey.svg?style=flat-square)](./LICENSE)
 
-**Infinity Flow** is an enterprise-grade desktop automation studio and agentic video production pipeline. It seamlessly bridges browser-based generative AI environments ([Google Flow](https://labs.google/fx/tools/flow)) and direct API providers ([Google Gemini](https://ai.google.dev/)) with local neural text-to-speech, mathematical watermark mitigation, and fully automated multi-channel delivery.
+**Infinity Flow** is an enterprise-grade desktop automation studio and agentic video production pipeline. It seamlessly bridges browser-based generative AI environments ([Google Flow](https://labs.google/fx/tools/flow)) and direct API providers ([Google Gemini](https://ai.google.dev/)) with multi-provider text-to-speech, mathematical watermark mitigation, and fully automated multi-channel delivery.
 
 [Key Features](#-key-features) •
 [Architecture](#-architecture) •
 [System Requirements](#-system-requirements) •
 [Quick Start](#-quick-start) •
 [Video Factory Pipeline](#-video-factory-pipeline) •
-[Offline Neural TTS](#-offline-neural-tts-kokoro-onnx) •
+[Text-to-Speech Engine](#-voiceover--text-to-speech-engine) •
 [Verification & Testing](#-verification--testing) •
 [Project Structure](#-project-structure)
 
@@ -34,7 +33,7 @@
 
 ### 🎬 1. End-to-End Video Factory (5-Step Creation Pipeline)
 - **Step 1: Script & Story Structure** — Multi-format script parsing (Markdown, numbered scene blocks, two-file narrator/prompt configurations) with natural sort media pairing (`1.jpg`, `2.jpg`, `10.jpg`).
-- **Step 2: Voiceover & TTS Synthesis** — Multi-provider voice generation supporting offline Kokoro ONNX, Microsoft Edge TTS, Azure Speech, FameSpeak, and Ai33 with intelligent fallback chains.
+- **Step 2: Voiceover & TTS Synthesis** — Multi-provider voice generation supporting Microsoft Edge TTS (Free Neural), Azure Speech, FameSpeak, and ai33.pro with intelligent fallback chains.
 - **Step 3: Visual & Scene Orchestration** — Flexible image and video generation using Google Flow models (**Imagen 3/4**, **Nano Banana 1/2/Pro**, **Veo 3.1 Quality/Fast/Lite**, **Omni 1.1 Flash**) and Gemini API providers.
 - **Step 4: Subtitles, Transitions & Motion** — Automatic SRT/VTT subtitle synchronization, Ken Burns motion pans/zooms, cross-fades, and motion filter synthesis.
 - **Step 5: Final Render & Channel Delivery** — FFmpeg-based multi-track audio ducking, resolution-matched scaling, non-destructive watermark mitigation, and direct delivery into organized channel repositories.
@@ -44,10 +43,10 @@
 - **Zero Cookie & Session Collisions** — True process-level isolation ensures credentials, browser caches, and rate-limit quotas never interfere across concurrent accounts.
 - **Live Account Verification & Auto-Reconnect** — Transparent Google OAuth detection, automatic session verification, and persistent background connection management without storing user passwords.
 
-### 🎙️ 3. Built-In Offline Neural TTS (Kokoro ONNX)
-- **100% Offline Speech Generation** — Bundled with `kokoro-v1.0.onnx` and high-performance native ONNX Runtime Node bindings (`onnxruntime-node`).
-- **Zero External API Costs** — Generate studio-grade speech directly on the host CPU without third-party subscriptions, internet access, or API rate limits.
-- **Instant Voice Previews** — Real-time waveform audio preview directly inside the desktop interface.
+### 🎙️ 3. Multi-Engine Text-to-Speech Architecture
+- **Free Studio-Quality Speech** — Native Microsoft Edge TTS neural synthesis with millisecond-accurate word boundary timings for subtitles, completely free without API keys.
+- **Enterprise & Celebrity Cloud Voices** — Optional integration with Azure Speech HD, ai33.pro multi-source models, and FameSpeak celebrity voices.
+- **Fail-Safe Fallback Chain** — Automatic retry and seamless graceful downgrade ensure video generation never stalls or fails due to remote voice API interruptions.
 
 ### 🖼️ 4. Generation Studios (Single & Bulk)
 - **Image Generation Studio** — Interactive single-prompt and bulk batch generation across all aspect ratios (`16:9`, `9:16`, `1:1`, `4:3`, `3:4`).
@@ -80,7 +79,7 @@ flowchart TB
         subgraph MainProcess["Electron Main Process"]
             Scheduler["Parallel Worker Scheduler"]
             WorkerPool["Profile Worker Pool (Isolated CDP Sessions)"]
-            TtsManager["TTS Manager (Kokoro ONNX / Edge / Azure / FameSpeak)"]
+            TtsManager["TTS Manager (Edge / Azure / FameSpeak / ai33)"]
             RenderManager["Final Render & Assembly Manager (FFmpeg)"]
             PostProcessing["Non-Destructive Reverse-Alpha Watermark Cleaner"]
             Storage["Local Repositories (Projects, Channels, Skills, Settings)"]
@@ -91,7 +90,7 @@ flowchart TB
         ChromeProfiles["Dedicated Chrome Profiles (Port 9222, 9223...)"]
         GoogleFlow["Google Flow (labs.google/fx/tools/flow)"]
         GeminiAPI["Google Gemini AI API (Veo 3.1 & Imagen 3)"]
-        KokoroEngine["Local ONNX Runtime (kokoro-v1.0.onnx)"]
+        TtsEngines["Text-to-Speech Providers (Edge / Azure / ai33 / FameSpeak)"]
     end
 
     UI --> IPC
@@ -99,7 +98,7 @@ flowchart TB
     Scheduler --> WorkerPool
     WorkerPool --> ChromeProfiles --> GoogleFlow
     Scheduler --> GeminiAPI
-    TtsManager --> KokoroEngine
+    TtsManager --> TtsEngines
     RenderManager --> PostProcessing
     RenderManager --> Storage
 ```
@@ -176,25 +175,24 @@ npm run package:portable
 
 ---
 
-## 🎙️ Offline Neural TTS (Kokoro ONNX)
+## 🎙️ Voiceover & Text-to-Speech Engine
 
-Infinity Flow includes native offline text-to-speech powered by Kokoro and ONNX Runtime:
+Infinity Flow features a multi-provider speech synthesis engine with built-in fail-safe fallback:
 
-- **Model Location**: `desktop/assets/models/kokoro/kokoro-v1.0.onnx`
-- **Engine**: Native commonjs bindings via `onnxruntime-node`
-- **Fallback Hierarchy**:
-  1. **Kokoro ONNX (Local Offline)** — Highest privacy, zero latency, zero cost.
-  2. **Microsoft Edge TTS** — High-quality online neural voices.
-  3. **Azure Speech Services** — Cloud-grade enterprise neural synthesis.
-  4. **FameSpeak & Ai33** — Specialized character and custom voice engines.
+- **Free Primary Engine**: Native Microsoft Edge TTS provides studio-grade neural speech and millisecond-accurate word boundary timings for automated subtitle alignment without API keys or costs.
+- **Cloud & Celebrity Engines**: Azure Speech Services (HD Neural), ai33.pro (multi-source voice models), and FameSpeak (celebrity voices).
+- **Graceful Fallback Hierarchy**:
+  1. **Selected Provider** — User's chosen voice engine.
+  2. **Immediate Retry** — Automatic retry if transient network fluctuations occur.
+  3. **Guaranteed Edge TTS Fallback** — Instant fallback to free Edge TTS ensuring video generation never aborts due to voice API limits.
 
 ```typescript
-// Example TTS fallback invocation
-const audioBuffer = await ttsManager.generateSpeech({
-  text: "Welcome to Infinity Flow.",
-  voice: "af_heart",
-  provider: "kokoro"
-});
+// Example TTS narration synthesis with automatic fallback
+const narrationResult = await ttsManager.synthesizeSceneWithFallback(
+  "Miles beneath the surface, bioluminescent organisms illuminate the deep.",
+  "azure",
+  "en-US-JennyNeural"
+);
 ```
 
 ---
@@ -206,7 +204,7 @@ Infinity Flow maintains a rigorous, automated testing suite using **Vitest**:
 ```bash
 cd desktop
 
-# Run the complete test suite (107 files, 808 tests)
+# Run the complete test suite (106 files)
 npm run test
 
 # Typecheck the complete TypeScript codebase
@@ -220,10 +218,10 @@ npm run test:coverage
 ```
 
 ### Test Suite Coverage Highlights
-- **107 Test Suites / 808 Unit & Integration Tests**:
+- **106 Test Suites / 800+ Unit & Integration Tests**:
   - `DedicatedProfileArchitecture.test.ts` — CDP port allocation, worker isolation, profile lifecycle.
   - `VideoFactoryPipeline.test.ts` — 5-stage pipeline integrity, crash recovery, and pause/resume logic.
-  - `KokoroProvider.test.ts` & `TtsFallbackChain.test.ts` — ONNX tensor generation, fallback reliability.
+  - `TtsFallbackChain.test.ts` — Multi-provider fallback chain, retry guarantees, and graceful downgrade.
   - `GeminiImagePostProcessing.test.ts` — Reverse-alpha watermark removal mathematical precision.
   - `ChannelExportShortsParity.test.ts` — Shorts/Longs routing, thumbnail overlays, and delivery audits.
   - `ProfilesScreen.test.tsx` & `SettingsScreen.test.tsx` — Full React component mounting and interaction parity.
@@ -235,11 +233,9 @@ npm run test:coverage
 ```
 google-flow-browser-mcp/
 ├── desktop/                          # Infinity Flow Desktop Application (Electron)
-│   ├── assets/                       # Bundled production assets & models
+│   ├── assets/                       # Bundled production assets & brand icons
 │   │   ├── icon.ico / icon.png       # Application identity icons
-│   │   ├── infinity-flow-logo.svg    # Vector brand assets
-│   │   └── models/kokoro/            # Offline Kokoro ONNX neural model
-│   │       └── kokoro-v1.0.onnx
+│   │   └── infinity-flow-logo.svg    # Vector brand assets
 │   ├── scripts/                      # Build, packaging & verification scripts
 │   ├── src/
 │   │   ├── main/                     # Electron Main Process
@@ -248,14 +244,14 @@ google-flow-browser-mcp/
 │   │   │   ├── render/               # FFmpeg assembly, motion filters & mixers
 │   │   │   ├── scheduler/            # Multi-worker concurrency pool
 │   │   │   ├── storage/              # Local SQLite/JSON repositories
-│   │   │   ├── tts/                  # Kokoro, Edge, Azure, Ai33, FameSpeak
+│   │   │   ├── tts/                  # Edge, Azure, Ai33, FameSpeak
 │   │   │   └── utils/                # Loggers, FFmpeg resolvers, Zip utilities
 │   │   ├── renderer/                 # Electron Renderer (React 19 + Vite)
 │   │   │   ├── components/           # AppShell, Modals, SegmentedControls
 │   │   │   ├── screens/              # Studio, Factory, Profiles, Settings, Channels
 │   │   │   └── styles/               # Production dark-mode styles
 │   │   ├── shared/                   # Cross-process contracts, types & schemas
-│   │   └── tests/                    # 107 Vitest unit & integration test suites
+│   │   └── tests/                    # 106 Vitest unit & integration test suites
 │   ├── electron-builder.json         # Windows packaging configuration
 │   ├── package.json                  # Desktop dependencies & scripts
 │   ├── tsconfig.json                 # TypeScript compiler configuration

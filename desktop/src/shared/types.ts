@@ -616,7 +616,7 @@ export interface AppSettings {
     defaultVideoResolution?: string;
     musicDirectory?: string;
     musicVolume?: number;
-    defaultTtsEngine?: 'edge-tts' | 'kokoro' | 'azure' | 'ai33' | 'famespeak';
+    defaultTtsEngine?: 'edge-tts' | 'azure' | 'ai33' | 'famespeak';
     defaultVoiceId?: string;
     scriptAiModel?: string;
     scriptAiKey?: string;
@@ -857,7 +857,7 @@ export interface VideoFactoryConfig {
     shortsThumbnailOverlay?: boolean;
     stage: 'draft' | 'script_ready' | 'assets_queued' | 'rendering_pending' | VideoFactoryStage;
 }
-export type TtsProviderId = 'edge-tts' | 'kokoro' | 'azure' | 'ai33' | 'famespeak';
+export type TtsProviderId = 'edge-tts' | 'azure' | 'ai33' | 'famespeak';
 export type TtsEngineBadge = 'LOCAL' | 'FREE' | 'API KEY';
 export interface TtsEngineMetadata {
     id: TtsProviderId;

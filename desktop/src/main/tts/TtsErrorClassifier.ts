@@ -94,7 +94,6 @@ export function classifyTtsError(err: unknown, providerId = 'tts'): TtsError {
 
   // 6. Runtime / Model unavailable
   if (
-    lower.includes('onnxruntime-node') ||
     lower.includes('not installed') ||
     lower.includes('runtime missing') ||
     lower.includes('weights not found') ||

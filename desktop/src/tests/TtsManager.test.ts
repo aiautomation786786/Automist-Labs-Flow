@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { TtsManager } from '../main/tts/TtsManager';
-import { KokoroProvider } from '../main/tts/KokoroProvider';
+import { AzureTtsProvider } from '../main/tts/AzureTtsProvider';
 import { StoryRepository } from '../main/storage/StoryRepository';
 import { AssetManager } from '../main/storage/AssetManager';
 import type { StoryEntity, ITtsProvider } from '../main/tts/TtsTypes';
@@ -27,6 +27,7 @@ describe('TtsManager Central Orchestrator & Invariants', () => {
     if (fs.existsSync(testAppDir)) {
       fs.rmSync(testAppDir, { recursive: true, force: true });
     }
+    TtsManager.registerProvider(new AzureTtsProvider());
   });
 
   it('1. Resolves default narrator when voiceId is omitted or whitespace', () => {
@@ -39,44 +40,66 @@ describe('TtsManager Central Orchestrator & Invariants', () => {
     const res3 = TtsManager.resolveVoice('edge-tts', 'en-US-JennyNeural');
     expect(res3.voiceId).toBe('en-US-JennyNeural');
 
-    const resKokoro = TtsManager.resolveVoice('kokoro', '');
-    expect(resKokoro.voiceId).toBe('am_eric');
+    const resAzure = TtsManager.resolveVoice('azure', '');
+    expect(resAzure.voiceId).toBe('en-US-JennyNeural');
   });
 
   it('2. Gathers catalog of voices across registered providers', async () => {
     const all = await TtsManager.listAllVoices();
-    expect(all.length).toBeGreaterThanOrEqual(7);
+    expect(all.length).toBeGreaterThanOrEqual(6);
 
     const edgeVoices = all.filter((v) => v.provider === 'edge-tts');
-    const kokoroVoices = all.filter((v) => v.provider === 'kokoro');
-
     expect(edgeVoices.length).toBeGreaterThan(0);
-    expect(kokoroVoices.length).toBeGreaterThan(0);
 
-    // Kokoro voices are available in this environment with ONNX runtime and models bundled
-    for (const kv of kokoroVoices) {
-      expect(kv.isAvailable).toBe(true);
-      expect(kv.unavailableReason).toBeUndefined();
+    for (const ev of edgeVoices) {
+      expect(ev.isAvailable).toBe(true);
+      expect(ev.unavailableReason).toBeUndefined();
     }
   });
 
   it('3. Preview voice works when provider is available, and returns failure when provider is unavailable', async () => {
-    // Real Kokoro preview succeeds
-    const res = await TtsManager.previewVoice('kokoro', 'am_eric');
+    const mockWorking: ITtsProvider = {
+      id: 'azure',
+      name: 'Mock Azure',
+      badge: 'API KEY',
+      audioExtension: 'mp3',
+      defaultVoiceId: 'en-US-JennyNeural',
+      supportsWordTimings: true,
+      isAvailable: async () => true,
+      getUnavailableReason: () => null,
+      listVoices: async () => [],
+      synthesize: async () => ({
+        audioBuffer: Buffer.alloc(1000),
+        sizeBytes: 1000,
+        durationSeconds: 1.0,
+        format: 'mp3',
+      }),
+    };
+    TtsManager.registerProvider(mockWorking);
+
+    const res = await TtsManager.previewVoice('azure', 'en-US-JennyNeural');
     expect(res.success).toBe(true);
     expect(res.audioDataUri).toBeDefined();
-    expect(res.durationSeconds).toBeGreaterThan(0);
+    expect(res.durationSeconds).toBe(1.0);
 
-    // When provider is simulated unavailable, fails truthfully
-    KokoroProvider.setRuntimeAvailableForTesting(false);
-    try {
-      const failRes = await TtsManager.previewVoice('kokoro', 'am_eric');
-      expect(failRes.success).toBe(false);
-      expect(failRes.error).toBeDefined();
-      expect(failRes.error).toContain('onnxruntime-node');
-    } finally {
-      KokoroProvider.resetRuntimeStatus();
-    }
+    const mockFailing: ITtsProvider = {
+      id: 'azure',
+      name: 'Mock Azure',
+      badge: 'API KEY',
+      audioExtension: 'mp3',
+      defaultVoiceId: 'en-US-JennyNeural',
+      supportsWordTimings: true,
+      isAvailable: async () => false,
+      getUnavailableReason: () => 'Azure key not configured',
+      listVoices: async () => [],
+      synthesize: async () => { throw new Error('Not available'); },
+    };
+    TtsManager.registerProvider(mockFailing);
+
+    const failRes = await TtsManager.previewVoice('azure', 'en-US-JennyNeural');
+    expect(failRes.success).toBe(false);
+    expect(failRes.error).toBeDefined();
+    expect(failRes.error).toContain('Azure key not configured');
   });
 
   it('4. Sequential per-scene narration synthesis and manifest generation', async () => {

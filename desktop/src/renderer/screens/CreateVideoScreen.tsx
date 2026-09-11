@@ -95,7 +95,6 @@ NARRATION: Here, extreme pressures and freezing temperatures foster alien life f
 
 const DEFAULT_ENGINES: TtsEngineMetadata[] = [
   { id: 'edge-tts', name: 'Edge TTS', badge: 'FREE', audioExtension: 'mp3', supportsWordTimings: true, isAvailable: true, requiresConfig: false },
-  { id: 'kokoro', name: 'Kokoro ONNX', badge: 'LOCAL', audioExtension: 'wav', supportsWordTimings: false, isAvailable: false, unavailableReason: 'Runtime or model weights not installed', requiresConfig: false },
   { id: 'azure', name: 'Azure Speech', badge: 'API KEY', audioExtension: 'mp3', supportsWordTimings: true, isAvailable: false, unavailableReason: 'Speech key or region not configured in Settings', requiresConfig: true },
   { id: 'ai33', name: 'ai33.pro', badge: 'API KEY', audioExtension: 'mp3', supportsWordTimings: true, isAvailable: false, unavailableReason: 'ai33 API key not configured in Settings', requiresConfig: true },
   { id: 'famespeak', name: 'FameSpeak', badge: 'API KEY', audioExtension: 'mp3', supportsWordTimings: false, isAvailable: false, unavailableReason: 'FameSpeak API key not configured in Settings', requiresConfig: true },
@@ -103,7 +102,6 @@ const DEFAULT_ENGINES: TtsEngineMetadata[] = [
 
 const ENGINE_DISPLAY_NAMES: Record<string, string> = {
   'edge-tts': 'Edge TTS',
-  'kokoro': 'Kokoro',
   'azure': 'Azure Speech',
   'ai33': 'ai33.pro',
   'famespeak': 'FameSpeak',
@@ -117,13 +115,6 @@ const DEFAULT_PROVIDER_VOICES: Record<TtsProviderId, VoiceInfo[]> = {
     { id: 'en-US-AriaNeural', name: 'Aria Neural (Expressive & Dynamic)', locale: 'en-US', gender: 'female', provider: 'edge-tts', isAvailable: true },
     { id: 'en-US-EricNeural', name: 'Eric Neural (Conversational)', locale: 'en-US', gender: 'male', provider: 'edge-tts', isAvailable: true },
     { id: 'en-US-MichelleNeural', name: 'Michelle Neural (Friendly & Warm)', locale: 'en-US', gender: 'female', provider: 'edge-tts', isAvailable: true },
-  ],
-  'kokoro': [
-    { id: 'af_heart', name: 'Heart (High Quality Primary)', locale: 'en-US', gender: 'female', provider: 'kokoro', isAvailable: true },
-    { id: 'af_bella', name: 'Bella (Articulate)', locale: 'en-US', gender: 'female', provider: 'kokoro', isAvailable: true },
-    { id: 'af_sarah', name: 'Sarah (Natural Flow)', locale: 'en-US', gender: 'female', provider: 'kokoro', isAvailable: true },
-    { id: 'am_adam', name: 'Adam (Clear Narrator)', locale: 'en-US', gender: 'male', provider: 'kokoro', isAvailable: true },
-    { id: 'am_michael', name: 'Michael (Deep Resonance)', locale: 'en-US', gender: 'male', provider: 'kokoro', isAvailable: true },
   ],
   'azure': [
     { id: 'en-US-JennyNeural', name: 'Jenny Neural (Azure High-Res)', locale: 'en-US', gender: 'female', provider: 'azure', isAvailable: true },
@@ -550,8 +541,25 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
           if (draft.motionStyle) setMotionStyle(draft.motionStyle);
           if (draft.transitionStyle) setTransitionStyle(draft.transitionStyle);
           if (typeof draft.crossfadeDuration === 'number') setCrossfadeDuration(draft.crossfadeDuration);
-          if (draft.voiceEngine) setVoiceEngine(draft.voiceEngine);
-          if (draft.voiceId) setVoiceId(draft.voiceId);
+          const VALID_ENGINES: TtsProviderId[] = ['edge-tts', 'azure', 'ai33', 'famespeak'];
+          const validEngine = (draft.voiceEngine && VALID_ENGINES.includes(draft.voiceEngine as TtsProviderId))
+            ? (draft.voiceEngine as TtsProviderId)
+            : 'edge-tts';
+          setVoiceEngine(validEngine);
+          setSelectedEngineTab(validEngine);
+
+          const isStaleLegacyVoice = !draft.voiceId ||
+            draft.voiceId.startsWith('af_') ||
+            draft.voiceId.startsWith('am_') ||
+            draft.voiceId.startsWith('bf_') ||
+            draft.voiceId.startsWith('bm_');
+
+          if (!isStaleLegacyVoice && draft.voiceId) {
+            setVoiceId(draft.voiceId);
+          } else {
+            const fallbackVoice = DEFAULT_PROVIDER_VOICES[validEngine]?.[0]?.id || 'en-US-ChristopherNeural';
+            setVoiceId(fallbackVoice);
+          }
           if (draft.activeMode && !initialMode) setActiveMode(draft.activeMode);
           if (draft.skillId && !initialSkillId) setSelectedSkillId(draft.skillId);
           if (draft.channelId) {
@@ -1152,15 +1160,6 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
     setStep(prevStep);
     persistDraft({ step: prevStep });
   };
-
-  // Prewarm Kokoro speech synthesis in the background when reaching Voice & Music step or selecting Kokoro
-  useEffect(() => {
-    if (selectedEngineTab === 'kokoro' || step === 3) {
-      if (typeof window.flowApi?.testTtsConnection === 'function') {
-        window.flowApi.testTtsConnection('kokoro').catch(() => {});
-      }
-    }
-  }, [selectedEngineTab, step]);
 
   const handlePreviewVoice = async (vProvider: TtsProviderId, vId: string, e: React.MouseEvent) => {
     e.stopPropagation();

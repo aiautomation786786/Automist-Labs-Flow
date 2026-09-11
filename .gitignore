@@ -35,7 +35,7 @@ coverage/
 *.jpeg
 *.webp
 
-# Protect App Assets and Models (Kokoro ONNX, Icons, SVG Logos)
+# Protect App Assets (Icons, SVG Logos)
 !desktop/assets/**
 !**/assets/**
 
