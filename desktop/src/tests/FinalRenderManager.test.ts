@@ -268,4 +268,79 @@ describe('FinalRenderManager Orchestration & Lifecycle', () => {
     const manifest = await StoryRepository.getFinalRenderManifest(projectId);
     expect(manifest?.status).toBe('cancelled');
   }, 30000);
+
+  it('6. Assembles slot-based multi-video project (Bulk Video / Image-to-Video) into valid final.mp4', async () => {
+    const project = await ProjectRepository.create({
+      name: 'Bulk Video Slot Assembly Project',
+      imageRatio: '16:9',
+      videoRatio: '16:9',
+      prompts: [
+        { text: 'Prompt 1', type: 'video' },
+        { text: 'Prompt 2', type: 'video' },
+      ],
+    });
+
+    const projectId = project.projectId;
+    const dirs = AssetManager.ensureProjectDirectories(projectId);
+    const ffmpegBin = SceneRenderer.getFfmpegPath();
+
+    const clip1 = path.join(dirs.videosDir, 'video-001.mp4');
+    const clip2 = path.join(dirs.videosDir, 'video-002.mp4');
+
+    for (const [idx, clipPath] of [clip1, clip2].entries()) {
+      execFileSync(
+        ffmpegBin,
+        [
+          '-y',
+          '-f', 'lavfi',
+          '-i', `color=c=${idx === 0 ? 'teal' : 'magenta'}:s=320x240:r=25:d=1.5`,
+          '-f', 'lavfi',
+          '-i', `sine=f=${300 + idx * 100}:d=1.5`,
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-pix_fmt', 'yuv420p',
+          '-c:a', 'aac',
+          '-shortest',
+          clipPath,
+        ],
+        { stdio: 'ignore' }
+      );
+    }
+
+    // Update slots in ProjectRepository with completed status and mediaPath
+    const updated = await ProjectRepository.get(projectId);
+    expect(updated).not.toBeNull();
+    updated!.slots[0].status = 'completed';
+    updated!.slots[0].result = { assetId: 'res_0', mediaPath: clip1 };
+    updated!.slots[1].status = 'completed';
+    updated!.slots[1].result = { assetId: 'res_1', mediaPath: clip2 };
+    await (ProjectRepository as any).writeProjectAtomic(updated!);
+
+    // Assemble without any Phase 5 renderManifest or story
+    const manifest = await FinalRenderManager.assembleFinalVideo(projectId, {
+      transitionStyle: 'hard_cut',
+    });
+
+    expect(manifest.status).toBe('completed');
+    expect(manifest.totalScenes).toBe(2);
+    expect(fs.existsSync(manifest.absoluteVideoPath)).toBe(true);
+    expect(manifest.durationSeconds).toBeGreaterThan(2.0);
+    expect(manifest.videoCodec).toBe('h264');
+    expect(manifest.audioCodec).toBe('aac');
+  }, 35000);
+
+  it('7. Rejects assembly when fewer than 2 completed video clips are available', async () => {
+    const project = await ProjectRepository.create({
+      name: 'Single Slot Project',
+      imageRatio: '16:9',
+      videoRatio: '16:9',
+      prompts: [{ text: 'Prompt 1', type: 'video' }],
+    });
+
+    const projectId = project.projectId;
+
+    await expect(
+      FinalRenderManager.assembleFinalVideo(projectId)
+    ).rejects.toThrow(/at least 2 completed video clips are required/i);
+  }, 30000);
 });

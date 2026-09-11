@@ -209,6 +209,33 @@ export class FinalAssemblyService {
   }
 
   /**
+   * Checks if a video file has an audio stream.
+   */
+  static async hasAudioStream(filePath: string): Promise<boolean> {
+    const ffprobeBin = AudioDurationMeasurer.getFfprobePath() || 'ffprobe';
+    try {
+      const { stdout } = await execFileAsync(
+        ffprobeBin,
+        [
+          '-v',
+          'error',
+          '-select_streams',
+          'a',
+          '-show_entries',
+          'stream=index',
+          '-of',
+          'csv=p=0',
+          filePath,
+        ],
+        { timeout: 5000 }
+      );
+      return stdout.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Executes the full final video assembly pipeline.
    */
   static async assembleFinalVideo(params: FinalAssemblyServiceParams): Promise<FinalAssemblyServiceResult> {
@@ -218,7 +245,7 @@ export class FinalAssemblyService {
       outputVideoPath,
       outputThumbnailPath,
       outputPosterPath,
-      options,
+      options = {},
       signal,
       onProgress,
     } = params;
@@ -276,6 +303,26 @@ export class FinalAssemblyService {
       inputArgs.push('-i', s.videoPath);
     }
 
+    if (signal?.aborted) {
+      throw new Error(`Final assembly for project ${projectId} was cancelled.`);
+    }
+
+    // Inspect each clip to check if audio stream exists and normalize audio pad
+    const sceneAudioPads: string[] = [];
+    for (let i = 0; i < numScenes; i++) {
+      if (signal?.aborted) {
+        throw new Error(`Final assembly for project ${projectId} was cancelled.`);
+      }
+      const s = sortedScenes[i];
+      const hasAudio = await this.hasAudioStream(s.videoPath);
+      if (hasAudio) {
+        filterComplexParts.push(`[${i}:a]aformat=sample_rates=44100:channel_layouts=stereo[a_in_${i}]`);
+      } else {
+        filterComplexParts.push(`anullsrc=r=44100:cl=stereo,atrim=0:${s.durationSeconds.toFixed(3)}[a_in_${i}]`);
+      }
+      sceneAudioPads.push(`[a_in_${i}]`);
+    }
+
     let finalVideoPad = '[v_final]';
     let speechAudioPad = '[a_speech]';
     let expectedAssemblyDuration = totalSpeechDuration;
@@ -284,7 +331,7 @@ export class FinalAssemblyService {
       // Single scene: direct passthrough via null filter
       filterComplexParts.push('[0:v]null[v_final]');
       finalVideoPad = '[v_final]';
-      speechAudioPad = '[0:a]';
+      speechAudioPad = sceneAudioPads[0];
     } else if (transitionStyle === 'cross_fade') {
       // Project-wide cross fade between scenes
       const desiredXfade = Math.min(1.0, Math.max(0.3, options.crossfadeDuration ?? 0.75));
@@ -293,7 +340,7 @@ export class FinalAssemblyService {
       const xfadeDur = Math.min(desiredXfade, Math.max(0.25, minSceneDur / 2));
 
       let lastVPad = '[0:v]';
-      let lastAPad = '[0:a]';
+      let lastAPad = sceneAudioPads[0];
       let cumulativeOffset = 0;
 
       for (let i = 1; i < numScenes; i++) {
@@ -319,7 +366,7 @@ export class FinalAssemblyService {
       let accumulatedDur = sortedScenes[0].durationSeconds;
       for (let i = 1; i < numScenes; i++) {
         const nextV = `[${i}:v]`;
-        const nextA = `[${i}:a]`;
+        const nextA = sceneAudioPads[i];
         const outV = i === numScenes - 1 ? '[v_final]' : `[v_xf${i}]`;
         const outA = i === numScenes - 1 ? '[a_speech]' : `[a_xf${i}]`;
 
@@ -343,7 +390,7 @@ export class FinalAssemblyService {
       // Hard Cut concatenation
       let concatInputs = '';
       for (let i = 0; i < numScenes; i++) {
-        concatInputs += `[${i}:v][${i}:a]`;
+        concatInputs += `[${i}:v]${sceneAudioPads[i]}`;
       }
       filterComplexParts.push(
         `${concatInputs}concat=n=${numScenes}:v=1:a=1[v_concat][a_speech]`
@@ -465,6 +512,12 @@ export class FinalAssemblyService {
       };
 
       if (signal) {
+        if (signal.aborted) {
+          cleanup();
+          try { child.kill('SIGKILL'); } catch {}
+          reject(new Error(`Final assembly for project ${projectId} was cancelled.`));
+          return;
+        }
         signal.addEventListener('abort', () => {
           cleanup();
           try { child.kill('SIGKILL'); } catch {}

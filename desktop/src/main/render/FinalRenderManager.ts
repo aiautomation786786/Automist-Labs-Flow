@@ -24,6 +24,7 @@ import type { SceneClipInfo } from './FinalRenderTypes';
 import { FinalAssemblyService } from './FinalAssemblyService';
 import { AssetManager } from '../storage/AssetManager';
 import { StoryRepository } from '../storage/StoryRepository';
+import { ProjectRepository } from '../storage/ProjectRepository';
 import { fileMutex } from '../storage/FileMutex';
 import { generationEventBus } from '../events/GenerationEventBus';
 import { AudioDurationMeasurer } from '../tts/AudioDurationMeasurer';
@@ -152,27 +153,59 @@ export class FinalRenderManager {
             });
           }
         } else {
-          // Check rendersDir for any scene-XXX.mp4
-          const files = fs.readdirSync(dirs.rendersDir).filter((f) => /^scene-\d+\.mp4$/i.test(f));
-          if (files.length === 0) {
-            throw new Error(
-              `No rendered scene clips found for project ${projectId}. Please render scenes in Phase 5 first.`
-            );
-          }
+          // Check ProjectRepository slots (Bulk Video, Image-to-Video, Bulk Image-to-Video)
+          const project = await ProjectRepository.get(projectId);
+          const completedVideoSlots = (project?.slots || [])
+            .filter((s) => s.type === 'video' && s.status === 'completed' && s.result?.mediaPath)
+            .sort((a, b) => a.slotIndex - b.slotIndex);
 
-          files.sort();
-          for (let i = 0; i < files.length; i++) {
-            const f = files[i];
-            const numMatch = f.match(/scene-(\d+)\.mp4/i);
-            const sceneNum = numMatch ? parseInt(numMatch[1], 10) : i + 1;
-            const videoPath = path.join(dirs.rendersDir, f);
-            const dur = await AudioDurationMeasurer.measureDurationSeconds(videoPath);
-            sceneClips.push({
-              sceneNumber: sceneNum,
-              videoPath,
-              durationSeconds: Math.max(0.5, dur),
-            });
+          if (completedVideoSlots.length >= 2) {
+            for (let i = 0; i < completedVideoSlots.length; i++) {
+              const slot = completedVideoSlots[i];
+              const videoPath = slot.result!.mediaPath!;
+              if (!fs.existsSync(videoPath)) {
+                throw new Error(
+                  `Video clip for prompt ${slot.slotIndex + 1} not found on disk at: ${videoPath}`
+                );
+              }
+              const dur = await AudioDurationMeasurer.measureDurationSeconds(videoPath);
+              sceneClips.push({
+                sceneNumber: i + 1,
+                videoPath,
+                durationSeconds: Math.max(0.5, dur),
+              });
+            }
+          } else {
+            // Check rendersDir for any scene-XXX.mp4
+            const files = fs.existsSync(dirs.rendersDir)
+              ? fs.readdirSync(dirs.rendersDir).filter((f) => /^scene-\d+\.mp4$/i.test(f))
+              : [];
+            if (files.length > 0) {
+              files.sort();
+              for (let i = 0; i < files.length; i++) {
+                const f = files[i];
+                const numMatch = f.match(/scene-(\d+)\.mp4/i);
+                const sceneNum = numMatch ? parseInt(numMatch[1], 10) : i + 1;
+                const videoPath = path.join(dirs.rendersDir, f);
+                const dur = await AudioDurationMeasurer.measureDurationSeconds(videoPath);
+                sceneClips.push({
+                  sceneNumber: sceneNum,
+                  videoPath,
+                  durationSeconds: Math.max(0.5, dur),
+                });
+              }
+            } else {
+              throw new Error(
+                `No rendered video clips found for project ${projectId}. At least 2 completed video clips are required for final assembly.`
+              );
+            }
           }
+        }
+
+        if (sceneClips.length < 2) {
+          throw new Error(
+            `Cannot assemble final video: at least 2 completed video clips are required (found ${sceneClips.length}).`
+          );
         }
 
         sceneClips.sort((a, b) => a.sceneNumber - b.sceneNumber);
@@ -234,6 +267,10 @@ export class FinalRenderManager {
           signal: abortController.signal,
           onProgress: emitProgress,
         });
+
+        if (abortController.signal.aborted) {
+          throw new Error('Final assembly cancelled by user.');
+        }
 
         // 4b. Check Shorts 2-second thumbnail overlay applicability
         // Invariants:

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { execFile } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import { promisify } from 'util';
 import { FinalAssemblyService } from '../main/render/FinalAssemblyService';
 import { SceneRenderer } from '../main/render/SceneRenderer';
@@ -281,4 +281,74 @@ describe('FinalAssemblyService (Real FFmpeg Execution)', () => {
     expect(result.width).toBe(1920);
     expect(result.height).toBe(1080);
   }, 35000);
+
+  it('assembles silent video clips without audio streams and generates valid broadcast MP4', async () => {
+    const silentClip1 = path.join(tempDir, 'silent1.mp4');
+    const silentClip2 = path.join(tempDir, 'silent2.mp4');
+    const ffmpegBin = SceneRenderer.getFfmpegPath();
+
+    // Create 2 silent video clips (NO audio stream)
+    for (const [idx, clipPath] of [silentClip1, silentClip2].entries()) {
+      execFileSync(
+        ffmpegBin,
+        [
+          '-y',
+          '-f', 'lavfi',
+          '-i', `color=c=${idx === 0 ? 'olive' : 'navy'}:s=320x240:r=25:d=1.5`,
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-pix_fmt', 'yuv420p',
+          clipPath,
+        ],
+        { stdio: 'ignore' }
+      );
+    }
+
+    const outputVideoPath = path.join(tempDir, 'silent_assembled.mp4');
+    const result = await FinalAssemblyService.assembleFinalVideo({
+      projectId: 'silent_test_proj',
+      sceneClips: [
+        { sceneNumber: 1, videoPath: silentClip1, durationSeconds: 1.5 },
+        { sceneNumber: 2, videoPath: silentClip2, durationSeconds: 1.5 },
+      ],
+      outputVideoPath,
+      options: {
+        transitionStyle: 'hard_cut',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(fs.existsSync(outputVideoPath)).toBe(true);
+    expect(result.durationSeconds).toBeGreaterThan(2.5);
+    expect(result.videoCodec).toBe('h264');
+    expect(result.audioCodec).toBe('aac');
+
+    // Also test with background music enabled on silent clips
+    const bgmPath = path.join(tempDir, 'silent_bgm.mp3');
+    execFileSync(
+      ffmpegBin,
+      ['-y', '-f', 'lavfi', '-i', 'sine=f=440:d=4.0', '-c:a', 'libmp3lame', bgmPath],
+      { stdio: 'ignore' }
+    );
+
+    const outputWithBgm = path.join(tempDir, 'silent_bgm_assembled.mp4');
+    const resultWithBgm = await FinalAssemblyService.assembleFinalVideo({
+      projectId: 'silent_bgm_proj',
+      sceneClips: [
+        { sceneNumber: 1, videoPath: silentClip1, durationSeconds: 1.5 },
+        { sceneNumber: 2, videoPath: silentClip2, durationSeconds: 1.5 },
+      ],
+      outputVideoPath: outputWithBgm,
+      options: {
+        transitionStyle: 'cross_fade',
+        musicPath: bgmPath,
+        musicEnabled: true,
+        musicVolume: 0.3,
+      },
+    });
+
+    expect(resultWithBgm.success).toBe(true);
+    expect(fs.existsSync(outputWithBgm)).toBe(true);
+    expect(resultWithBgm.audioCodec).toBe('aac');
+  }, 40000);
 });

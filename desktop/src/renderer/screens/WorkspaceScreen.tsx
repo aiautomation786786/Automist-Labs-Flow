@@ -454,6 +454,49 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
     return (project?.slots || []).filter((s) => s.status === 'completed' && s.result?.mediaPath);
   }, [project]);
 
+  const isVideoFactory = useMemo(() => {
+    return Boolean(
+      (pipelineState && (pipelineState.mode === 'full_video' || pipelineState.mode === 'from_skill')) ||
+      (project?.settings as any)?.mode === 'full_video' ||
+      (project?.settings as any)?.mode === 'from_skill'
+    );
+  }, [pipelineState, project]);
+
+  const hasAssembledVideo = useMemo(() => {
+    return Boolean(finalManifest?.status === 'completed' && (finalManifest?.absoluteVideoPath || (finalManifest as any)?.outputVideoPath));
+  }, [finalManifest]);
+
+  const totalVideoSlotsCount = useMemo(() => {
+    return (project?.slots || []).filter((s) => s.type === 'video').length;
+  }, [project]);
+
+  const completedVideoSlotsCount = useMemo(() => {
+    return (project?.slots || []).filter(
+      (s) => s.type === 'video' && s.status === 'completed' && Boolean(s.result?.mediaPath)
+    ).length;
+  }, [project]);
+
+  const availableClipsCount = useMemo(() => {
+    if (isVideoFactory) {
+      return pipelineState?.stages?.rendering?.status === 'completed' ? 2 : 0;
+    }
+    return completedVideoSlotsCount;
+  }, [isVideoFactory, pipelineState, completedVideoSlotsCount]);
+
+  // Content-Aware Visibility:
+  // - Pure Image (totalVideoSlotsCount === 0): HIDE
+  // - Single Video (totalVideoSlotsCount <= 1): HIDE
+  // - Multi Video (totalVideoSlotsCount >= 2): SHOW
+  // - Video Factory: SHOW
+  // - Active rendering or pre-existing final video: SHOW
+  const shouldShowAssemblyPanel = useMemo(() => {
+    if (isVideoFactory) return true;
+    if (hasAssembledVideo || isFinalRendering) return true;
+    return totalVideoSlotsCount >= 2;
+  }, [isVideoFactory, hasAssembledVideo, isFinalRendering, totalVideoSlotsCount]);
+
+  const canAssemble = availableClipsCount >= 2 && !isFinalRendering;
+
   const allCompletedSelected =
     completedSlotsList.length > 0 &&
     completedSlotsList.every((s) => selectedSlotIndices.has(s.slotIndex));
@@ -516,6 +559,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
 
   const handleAssembleFinalVideo = async () => {
     if (!window.flowApi?.assembleFinalVideo) return;
+    if (availableClipsCount < 2) {
+      setAssemblyError(`At least 2 completed video clips required for assembly (${availableClipsCount} ready)`);
+      return;
+    }
     try {
       setIsFinalRendering(true);
       setAssemblyError(null);
@@ -1099,20 +1146,22 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
       </div>
 
       {/* Final Video & Music Assembly Panel */}
-      <div
-        style={{
-          backgroundColor: 'var(--bg-surface)',
-          border: '1px solid var(--border-color)',
-          borderRadius: 'var(--radius-md)',
-          padding: '16px 20px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '14px',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '15px', fontWeight: 700 }}>Final Video &amp; Music Assembly</span>
+      {shouldShowAssemblyPanel && (
+        <div
+          data-testid="final-video-assembly-panel"
+          style={{
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)',
+            padding: '16px 20px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '14px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '15px', fontWeight: 700 }}>Final Video &amp; Music Assembly</span>
             {finalManifest?.status === 'completed' && (
               <span
                 style={{
@@ -1371,7 +1420,13 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
                       <button
                         className="btn-secondary btn-sm"
                         onClick={handleAssembleFinalVideo}
-                        style={{ fontSize: '12px', padding: '4px 10px' }}
+                        disabled={!canAssemble || isFinalRendering}
+                        style={{
+                          fontSize: '12px',
+                          padding: '4px 10px',
+                          opacity: canAssemble && !isFinalRendering ? 1 : 0.5,
+                          cursor: canAssemble && !isFinalRendering ? 'pointer' : 'not-allowed',
+                        }}
                         title="Re-assemble with updated settings"
                       >
                         Re-assemble
@@ -1455,16 +1510,34 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
                   <button
                     className="btn-primary"
                     onClick={handleAssembleFinalVideo}
-                    style={{ alignSelf: 'flex-start', padding: '8px 18px', fontWeight: 600, fontSize: '13px' }}
+                    disabled={!canAssemble}
+                    data-testid="assemble-final-video-btn"
+                    style={{
+                      alignSelf: 'flex-start',
+                      padding: '8px 18px',
+                      fontWeight: 600,
+                      fontSize: '13px',
+                      opacity: canAssemble ? 1 : 0.5,
+                      cursor: canAssemble ? 'pointer' : 'not-allowed',
+                    }}
                   >
-                    Assemble Final Video
+                    {isFinalRendering ? 'Assembling...' : 'Assemble Final Video'}
                   </button>
+                  {!canAssemble && !isFinalRendering && (
+                    <div
+                      data-testid="assemble-requirement-hint"
+                      style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginTop: '2px' }}
+                    >
+                      At least 2 completed video clips required for assembly ({availableClipsCount} ready)
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           </div>
         )}
       </div>
+      )}
 
       {/* Filter Segmented Control */}
       {imageSlots.length > 0 && videoSlots.length > 0 && (
