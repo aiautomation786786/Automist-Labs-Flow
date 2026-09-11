@@ -75,14 +75,14 @@ describe('All-Pages-Mounted Architecture (ZBot §4 Parity)', () => {
       render(<AppShell />);
     });
 
-    // Visit Skills
-    const skillsNavBtn = screen.getByTestId('nav-item-skills');
+    // Visit Channels
+    const channelsNavBtn = screen.getByTestId('nav-item-channels');
     await act(async () => {
-      fireEvent.click(skillsNavBtn);
+      fireEvent.click(channelsNavBtn);
     });
 
-    const skillsContainer = screen.getByTestId('view-container-skills');
-    expect(skillsContainer.style.display).toBe('flex');
+    const channelsContainer = screen.getByTestId('view-container-channels');
+    expect(channelsContainer.style.display).toBe('flex');
     expect(screen.getByTestId('view-container-projects').style.display).toBe('none');
 
     // Visit Create Video
@@ -93,7 +93,7 @@ describe('All-Pages-Mounted Architecture (ZBot §4 Parity)', () => {
 
     const createVideoContainer = screen.getByTestId('view-container-create-video');
     expect(createVideoContainer.style.display).toBe('flex');
-    expect(screen.getByTestId('view-container-skills').style.display).toBe('none');
+    expect(screen.getByTestId('view-container-channels').style.display).toBe('none');
     expect(screen.getByTestId('view-container-projects').style.display).toBe('none');
 
     // Return to Projects
@@ -105,6 +105,6 @@ describe('All-Pages-Mounted Architecture (ZBot §4 Parity)', () => {
     // Projects should be visible again without remounting
     expect(screen.getByTestId('view-container-projects').style.display).toBe('flex');
     expect(screen.getByTestId('view-container-create-video').style.display).toBe('none');
-    expect(screen.getByTestId('view-container-skills').style.display).toBe('none');
+    expect(screen.getByTestId('view-container-channels').style.display).toBe('none');
   });
 });

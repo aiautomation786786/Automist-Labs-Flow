@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @vitest-environment jsdom
  */
 
@@ -50,11 +50,13 @@ describe('AppShell Sidebar Cleanup', () => {
     expect(screen.queryByText('Omni Flash')).toBeNull();
     expect(screen.queryByText('Diagnostics')).toBeNull();
 
+    // Standalone Skills item is removed per ZBot §4 (accessed via From Skill & Channel settings)
+    expect(screen.queryByTestId('nav-item-skills')).toBeNull();
+
     // Clean valid navigation items must exist
     expect(screen.getByTestId('nav-item-projects')).toBeDefined();
     expect(screen.getByTestId('nav-item-create_video')).toBeDefined();
     expect(screen.getByTestId('nav-item-channels')).toBeDefined();
-    expect(screen.getByTestId('nav-item-skills')).toBeDefined();
     expect(screen.getByTestId('nav-item-single_image')).toBeDefined();
     expect(screen.getByTestId('nav-item-single_video')).toBeDefined();
     expect(screen.getByTestId('nav-item-bulk_image')).toBeDefined();

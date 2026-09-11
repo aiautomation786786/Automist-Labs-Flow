@@ -326,4 +326,119 @@ describe('ZBot Create Video Parity Test Suite', () => {
     const launchBtn = screen.getByRole('button', { name: /Create Video Project/i });
     expect((launchBtn as HTMLButtonElement).disabled).toBe(false);
   });
+
+  it('9. Step 1 (Full Video Script): strictly user-provided script without Video Title & Concept card or AI Script Assistant', async () => {
+    await setupScreen();
+
+    // Verify Script step contains ONLY script input workflows
+    expect(screen.getByRole('button', { name: /Paste Script/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /One File/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Separate Files/i })).toBeDefined();
+
+    // AI Script Assistant accordion and redundant Video Title & Concept card MUST NOT be present in Step 1
+    expect(screen.queryByText(/AI Script Assistant \(ZBot Skills\)/i)).toBeNull();
+    expect(screen.queryByText(/Video Title & Concept/i)).toBeNull();
+
+    // Project title is maintained in header metadata bar
+    const projectTitleInput = screen.getByLabelText('Project Title') as HTMLInputElement;
+    expect(projectTitleInput).toBeDefined();
+    expect(projectTitleInput.value).toBe('The Ocean Abyss');
+  });
+
+  it('10. From Skill mode: autonomous Script AI workflow with 3 skill sourcing tabs, Channel Assignment, Topic, and generation controls', async () => {
+    await setupScreen();
+
+    // Switch to From Skill mode
+    fireEvent.click(screen.getByRole('button', { name: /2\. From Skill/i }));
+
+    expect(screen.getByText(/From Skill Workflow/i)).toBeDefined();
+    expect(screen.getByText(/Channel Assignment/i)).toBeDefined();
+
+    // 3 Skill Sourcing Tabs
+    expect(screen.getByRole('button', { name: /Select Existing/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Paste Skill/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Upload Skill/i })).toBeDefined();
+
+    // Topic / Premise input
+    expect(screen.getByText(/Video Topic \/ Premise/i)).toBeDefined();
+
+    // Scene count and duration controls
+    expect(screen.getByText(/Target Scene Count/i)).toBeDefined();
+    expect(screen.getByText(/Target Duration/i)).toBeDefined();
+    expect(screen.getByText(/Desired Tone/i)).toBeDefined();
+    expect(screen.getByText(/Custom User Instructions/i)).toBeDefined();
+
+    // Generate button
+    expect(screen.getByRole('button', { name: /Generate Script & Review Scenes/i })).toBeDefined();
+
+    // Verify strict isolation: no stepper header in From Skill mode
+    expect(screen.queryByText(/1\. Script/i)).toBeNull();
+  });
+
+  it('11. Images Only mode: dedicated artwork workflow with prompt count badge, 16:9/9:16 aspect cards, save folder picker, and strict isolation', async () => {
+    await setupScreen();
+
+    // Switch to Images Only mode
+    fireEvent.click(screen.getByRole('button', { name: /3\. Images Only/i }));
+
+    expect(screen.getByText(/Images Only Workflow/i)).toBeDefined();
+
+    // Input mode tabs
+    expect(screen.getByRole('button', { name: /Paste Prompts/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Import from File/i })).toBeDefined();
+
+    // Aspect Ratio cards
+    expect(screen.getByText(/16:9 Landscape/i)).toBeDefined();
+    expect(screen.getByText(/9:16 Portrait/i)).toBeDefined();
+
+    // Save to folder destination picker
+    expect(screen.getByText(/Save to Folder/i)).toBeDefined();
+    expect(screen.getByRole('button', { name: /Choose Folder\.\.\./i })).toBeDefined();
+
+    // Action button
+    expect(screen.getByRole('button', { name: /Create Batch Image Project/i })).toBeDefined();
+
+    // Strict mode isolation: NO stepper, NO voice controls, NO subtitles, NO motion controls
+    expect(screen.queryByText(/1\. Script/i)).toBeNull();
+    expect(screen.queryByText(/Narrator Engine/i)).toBeNull();
+    expect(screen.queryByText(/Subtitles Configuration/i)).toBeNull();
+    expect(screen.queryByText(/Camera Motion & Pacing/i)).toBeNull();
+  });
+
+  it('12. Audio Only mode: dedicated narration studio with paste/file tabs, split at blank lines toggle, 5 TTS engines, clean manifest, and strict isolation', async () => {
+    await setupScreen();
+
+    // Switch to Audio Only mode
+    fireEvent.click(screen.getByRole('button', { name: /4\. Audio Only/i }));
+
+    expect(screen.getByText(/Audio Only Workflow \(Standalone Narration Studio\)/i)).toBeDefined();
+
+    // Input tabs
+    expect(screen.getByRole('button', { name: /Paste Narration/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Load from File/i })).toBeDefined();
+
+    // Split at blank lines toggle
+    expect(screen.getByText(/Split at blank lines/i)).toBeDefined();
+    expect(screen.getByRole('button', { name: /^ON$/i })).toBeDefined();
+
+    // 5 TTS engines
+    expect(screen.getByText('Edge TTS')).toBeDefined();
+    expect(screen.getByText(/Kokoro/i)).toBeDefined();
+    expect(screen.getByText('Azure Speech')).toBeDefined();
+    expect(screen.getByText(/AI33/i)).toBeDefined();
+    expect(screen.getByText('FameSpeak')).toBeDefined();
+
+    // Voice preview and Save to folder
+    expect(screen.getByRole('button', { name: /▶ Preview Voice/i })).toBeDefined();
+    expect(screen.getByText(/Save to Folder/i)).toBeDefined();
+
+    // Action button
+    expect(screen.getByRole('button', { name: /Synthesize Standalone Audio/i })).toBeDefined();
+
+    // Strict mode isolation: NO stepper, NO video/resolution cards, NO subtitles, NO motion controls
+    expect(screen.queryByText(/1\. Script/i)).toBeNull();
+    expect(screen.queryByText(/Output Resolution/i)).toBeNull();
+    expect(screen.queryByText(/Subtitles Configuration/i)).toBeNull();
+    expect(screen.queryByText(/Camera Motion & Pacing/i)).toBeNull();
+  });
 });

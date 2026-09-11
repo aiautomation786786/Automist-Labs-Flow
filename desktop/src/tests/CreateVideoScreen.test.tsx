@@ -148,7 +148,7 @@ describe('CreateVideoScreen', () => {
     });
 
     // Step 1: Script
-    const titleInput = screen.getByPlaceholderText(/e\.g\. The Secrets of Deep Space/i);
+    const titleInput = screen.getByLabelText('Project Title');
     fireEvent.change(titleInput, { target: { value: 'Ocean Deep Documentary' } });
 
     // Click sample script button
@@ -213,7 +213,7 @@ describe('CreateVideoScreen', () => {
     fireEvent.click(backBtn2);
 
     // Verify Step 1 title and scenes preserved
-    expect((screen.getByPlaceholderText(/e\.g\. The Secrets of Deep Space/i) as HTMLInputElement).value).toBe('The Ocean Abyss');
+    expect((screen.getByLabelText('Project Title') as HTMLInputElement).value).toBe('The Ocean Abyss');
     expect(screen.getAllByText(/SCENE 1/i).length).toBeGreaterThanOrEqual(1);
   });
 

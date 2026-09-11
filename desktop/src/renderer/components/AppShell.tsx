@@ -149,13 +149,6 @@ export const AppShell: React.FC = () => {
           isActive: currentView.type === 'channels',
           onClick: () => setCurrentView({ type: 'channels' }),
         },
-        {
-          id: 'skills',
-          label: 'Skills',
-          icon: <SparklesIcon size={16} />,
-          isActive: currentView.type === 'skills',
-          onClick: () => setCurrentView({ type: 'skills' }),
-        },
       ],
     },
     {

@@ -256,35 +256,45 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
   const [voiceSearchQuery, setVoiceSearchQuery] = useState<string>('');
   const [voiceGenderFilter, setVoiceGenderFilter] = useState<'all' | 'male' | 'female'>('all');
 
-  // Images-only mode prompts
+  // Images-only mode
   const [imagesOnlyPrompts, setImagesOnlyPrompts] = useState<string>('');
+  const [imagesInputMode, setImagesInputMode] = useState<'paste' | 'file'>('paste');
+  const [imagesFile, setImagesFile] = useState<{ fileName: string; filePath: string; content: string } | null>(null);
+  const [imagesSaveDirectory, setImagesSaveDirectory] = useState<string>('');
+  const imagesFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // From-skill state
   const [skillTitle, setSkillTitle] = useState<string>('');
   const [skillText, setSkillText] = useState<string>('');
+  const [skillSourceTab, setSkillSourceTab] = useState<'select' | 'paste' | 'upload'>('select');
+  const [pastedSkillContent, setPastedSkillContent] = useState<string>('');
+  const [uploadedSkillFileName, setUploadedSkillFileName] = useState<string | null>(null);
+  const skillFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Audio-only state (Complete Standalone Workflow)
+  // Audio-only state (Complete Standalone Narration Studio)
   const [audioNarration, setAudioNarration] = useState<string>('');
+  const [audioInputMode, setAudioInputMode] = useState<'paste' | 'file'>('paste');
+  const [audioFile, setAudioFile] = useState<{ fileName: string; filePath: string; content: string } | null>(null);
+  const [splitAtBlankLines, setSplitAtBlankLines] = useState<boolean>(true);
+  const [audioSaveDirectory, setAudioSaveDirectory] = useState<string>('');
+  const audioFileInputRef = useRef<HTMLInputElement | null>(null);
   const [isSynthesizingAudioOnly, setIsSynthesizingAudioOnly] = useState<boolean>(false);
   const [audioOnlyManifest, setAudioOnlyManifest] = useState<TtsAudioManifest | null>(null);
   const [createdAudioProjectId, setCreatedAudioProjectId] = useState<string | null>(null);
 
-  // Phase 7 Channel State
+  // Channel State
   const [channelId, setChannelId] = useState<string | undefined>();
   const [channelName, setChannelName] = useState<string | undefined>();
   const [availableChannels, setAvailableChannels] = useState<ChannelEntity[]>([]);
 
-  // Phase 8 Skills & Script AI State
+  // Skills & Script AI State
   const [selectedSkillId, setSelectedSkillId] = useState<string | undefined>(initialSkillId);
   const [availableSkills, setAvailableSkills] = useState<SkillEntity[]>([]);
   const [isGeneratingAi, setIsGeneratingAi] = useState<boolean>(false);
   const [aiProgress, setAiProgress] = useState<ScriptAiProgressEvent | null>(null);
-  const [aiTopic, setAiTopic] = useState<string>('');
   const [aiSceneCount, setAiSceneCount] = useState<number>(5);
   const [aiDurationSeconds, setAiDurationSeconds] = useState<number>(45);
   const [aiTone, setAiTone] = useState<string>('Cinematic & Engaging');
-  const [aiInstructions, setAiInstructions] = useState<string>('');
-  const [aiAccordionOpen, setAiAccordionOpen] = useState<boolean>(false);
 
   useEffect(() => {
     if (initialMode) setActiveMode(initialMode);
@@ -815,9 +825,130 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
     }
   };
 
-  // Phase 8 Script AI & Refinement Handlers
+  // From Skill Upload Handler
+  const handleUploadSkillFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setErrorMsg(null);
+      if (window.flowApi?.importSkill) {
+        const buffer = await file.arrayBuffer();
+        const imported = await window.flowApi.importSkill(buffer, file.name);
+        setUploadedSkillFileName(file.name);
+        if (window.flowApi?.listSkills) {
+          const updated = await window.flowApi.listSkills();
+          setAvailableSkills(updated);
+        }
+        setSelectedSkillId(imported.id);
+        setSkillSourceTab('select');
+      } else {
+        const text = await file.text();
+        setPastedSkillContent(text);
+        setUploadedSkillFileName(file.name);
+        setSkillSourceTab('paste');
+      }
+    } catch (err: any) {
+      setErrorMsg(`Failed to import skill: ${err.message}`);
+    } finally {
+      if (e.target) e.target.value = '';
+    }
+  };
+
+  // Images Only Handlers
+  const handleSelectImagesFile = async () => {
+    try {
+      if (window.flowApi?.selectScriptFile) {
+        const fileInfo = await window.flowApi.selectScriptFile();
+        if (fileInfo) {
+          setImagesFile(fileInfo);
+          setImagesOnlyPrompts(fileInfo.content);
+        }
+      } else {
+        imagesFileInputRef.current?.click();
+      }
+    } catch (err: any) {
+      setErrorMsg(`Failed to load image prompts file: ${err.message}`);
+    }
+  };
+
+  const handleImagesFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const content = await file.text();
+      const fileInfo = { fileName: file.name, filePath: (file as any).path || file.name, content };
+      setImagesFile(fileInfo);
+      setImagesOnlyPrompts(content);
+    } catch (err: any) {
+      setErrorMsg(`Failed to read file: ${err.message}`);
+    } finally {
+      if (e.target) e.target.value = '';
+    }
+  };
+
+  const handleSelectImagesSaveDirectory = async () => {
+    try {
+      if (window.flowApi?.selectDirectory) {
+        const dir = await window.flowApi.selectDirectory();
+        if (dir) setImagesSaveDirectory(dir);
+      } else if (window.flowApi?.selectOutputDir) {
+        const dir = await window.flowApi.selectOutputDir();
+        if (dir) setImagesSaveDirectory(dir);
+      }
+    } catch (err: any) {
+      setErrorMsg(`Failed to select destination directory: ${err.message}`);
+    }
+  };
+
+  // Audio Only Handlers
+  const handleSelectAudioFile = async () => {
+    try {
+      if (window.flowApi?.selectScriptFile) {
+        const fileInfo = await window.flowApi.selectScriptFile();
+        if (fileInfo) {
+          setAudioFile(fileInfo);
+          setAudioNarration(fileInfo.content);
+        }
+      } else {
+        audioFileInputRef.current?.click();
+      }
+    } catch (err: any) {
+      setErrorMsg(`Failed to load narration file: ${err.message}`);
+    }
+  };
+
+  const handleAudioFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const content = await file.text();
+      const fileInfo = { fileName: file.name, filePath: (file as any).path || file.name, content };
+      setAudioFile(fileInfo);
+      setAudioNarration(content);
+    } catch (err: any) {
+      setErrorMsg(`Failed to read narration file: ${err.message}`);
+    } finally {
+      if (e.target) e.target.value = '';
+    }
+  };
+
+  const handleSelectAudioSaveDirectory = async () => {
+    try {
+      if (window.flowApi?.selectDirectory) {
+        const dir = await window.flowApi.selectDirectory();
+        if (dir) setAudioSaveDirectory(dir);
+      } else if (window.flowApi?.selectOutputDir) {
+        const dir = await window.flowApi.selectOutputDir();
+        if (dir) setAudioSaveDirectory(dir);
+      }
+    } catch (err: any) {
+      setErrorMsg(`Failed to select destination directory: ${err.message}`);
+    }
+  };
+
+  // Script AI Generation Handler (Dedicated to From Skill mode)
   const handleGenerateScriptAi = async () => {
-    const topic = (activeMode === 'from_skill' ? skillTitle : aiTopic).trim();
+    const topic = skillTitle.trim();
     if (!topic) {
       setErrorMsg('Please enter a video topic or premise.');
       return;
@@ -829,15 +960,23 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
 
     try {
       if (!window.flowApi?.generateScriptAi) throw new Error('Script AI not available');
+      
+      let effectiveInstructions = '';
+      if (skillSourceTab === 'paste' && pastedSkillContent.trim()) {
+        effectiveInstructions = `SKILL DIRECTIVES:\n${pastedSkillContent.trim()}\n\nUSER INSTRUCTIONS:\n${skillText}`.trim();
+      } else if (skillText.trim()) {
+        effectiveInstructions = skillText.trim();
+      }
+
       const result = await window.flowApi.generateScriptAi({
         topic,
-        skillId: selectedSkillId,
+        skillId: skillSourceTab === 'select' ? selectedSkillId : undefined,
         channelId,
         targetSceneCount: aiSceneCount,
         targetDurationSeconds: aiDurationSeconds,
         aspectRatio,
         tone: aiTone,
-        userInstructions: (activeMode === 'from_skill' ? (skillText ? `${skillText}\n${aiInstructions}` : aiInstructions) : aiInstructions).trim() || undefined,
+        userInstructions: effectiveInstructions || undefined,
       });
 
       if (!result.success || !result.story) {
@@ -855,7 +994,6 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
       }
       setStep(1);
       setEditorTab('structured');
-      setAiAccordionOpen(false);
 
       persistDraft({
         title: result.story.title,
@@ -1083,7 +1221,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
       .filter((p) => p.length > 0);
 
     if (prompts.length === 0) {
-      setErrorMsg('Please enter at least one image prompt.');
+      setErrorMsg('Please enter or import at least one image prompt.');
       return;
     }
 
@@ -1098,6 +1236,14 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
         prompts: prompts.map((p) => ({ text: p, type: 'image' })),
       });
 
+      if (imagesSaveDirectory && window.flowApi?.updateProject) {
+        try {
+          await window.flowApi.updateProject(created.projectId, { destinationDir: imagesSaveDirectory } as any);
+        } catch {
+          // ignore optional field
+        }
+      }
+
       onProjectCreated(created.projectId);
     } catch (err: any) {
       setErrorMsg(err?.message || 'Failed to create batch image project.');
@@ -1109,7 +1255,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
   const handleSynthesizeAudioOnly = async () => {
     const text = audioNarration.trim();
     if (!text) {
-      setErrorMsg('Please enter a narration script to synthesize.');
+      setErrorMsg('Please enter or load a narration script to synthesize.');
       return;
     }
 
@@ -1117,18 +1263,40 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
       setIsSynthesizingAudioOnly(true);
       setErrorMsg(null);
 
-      // Parse narration into structured scenes
-      const parsed = ScriptParser.parse(text);
-      const scenesToUse: SceneEntity[] =
-        parsed.scenes && parsed.scenes.length > 0
-          ? parsed.scenes
-          : [
-              {
-                sceneNumber: 1,
-                narration: text,
-                imagePrompt: '',
-              },
-            ];
+      let scenesToUse: SceneEntity[] = [];
+
+      // Parse narration into structured scenes based on splitAtBlankLines toggle
+      if (splitAtBlankLines) {
+        if (/#+\s*SCENE/i.test(text)) {
+          const parsed = ScriptParser.parse(text);
+          scenesToUse = parsed.scenes && parsed.scenes.length > 0 ? parsed.scenes : [];
+        }
+
+        if (scenesToUse.length === 0) {
+          const blocks = text.split(/\n\s*\n+/).map((b) => b.trim()).filter(Boolean);
+          scenesToUse = blocks.map((block, idx) => {
+            const metrics = ScriptValidator.computeSceneMetrics(block);
+            return {
+              sceneNumber: idx + 1,
+              narration: block,
+              imagePrompt: '',
+              durationSeconds: metrics.durationSeconds,
+              wordCount: metrics.wordCount,
+            };
+          });
+        }
+      } else {
+        const metrics = ScriptValidator.computeSceneMetrics(text);
+        scenesToUse = [
+          {
+            sceneNumber: 1,
+            narration: text,
+            imagePrompt: '',
+            durationSeconds: metrics.durationSeconds,
+            wordCount: metrics.wordCount,
+          },
+        ];
+      }
 
       const projTitle =
         title.trim() && title !== 'New Faceless Video'
@@ -1160,6 +1328,14 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
 
       const { projectId } = await window.flowApi.createFactoryProject(config);
       setCreatedAudioProjectId(projectId);
+
+      if (audioSaveDirectory && window.flowApi?.updateProject) {
+        try {
+          await window.flowApi.updateProject(projectId, { destinationDir: audioSaveDirectory } as any);
+        } catch {
+          // ignore optional field
+        }
+      }
 
       let manifest: any = null;
 
@@ -1197,7 +1373,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
   if (loadingDraft) {
     return (
       <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
-        Loading Video Factory...
+        Loading Studio...
       </div>
     );
   }
@@ -1236,20 +1412,6 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
               <h1 style={{ fontSize: '16px', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
                 Create Video
               </h1>
-              <span
-                style={{
-                  fontSize: '10px',
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  padding: '2px 6px',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'rgba(168, 85, 247, 0.12)',
-                  color: '#a855f7',
-                  letterSpacing: '0.04em',
-                }}
-              >
-                Video Factory
-              </span>
             </div>
             <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0 0' }}>
               Turn scripts, prompts, or titles into finished faceless videos with AI narration and camera motion.
@@ -1257,7 +1419,32 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        {/* Project Metadata & Actions */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Project:</span>
+            <input
+              type="text"
+              aria-label="Project Title"
+              value={title}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                persistDraft({ title: e.target.value });
+              }}
+              placeholder="e.g. New Faceless Video"
+              style={{
+                backgroundColor: 'var(--bg-subtle)',
+                color: 'var(--text-primary)',
+                border: '1px solid var(--border-color)',
+                padding: '6px 12px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '12.5px',
+                fontWeight: 600,
+                width: '240px',
+              }}
+            />
+          </div>
+
           {savingMsg && (
             <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
               <CheckIcon size={12} /> Auto-saved
@@ -1399,47 +1586,6 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
             {/* STEP 1: SCRIPT */}
             {step === 1 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div
-                  style={{
-                    backgroundColor: 'var(--bg-surface)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: 'var(--radius-lg)',
-                    padding: '20px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '14px',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                      <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                        Video Title & Concept
-                      </label>
-                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0 0' }}>
-                        Title of your video project. Extracted automatically from script if provided.
-                      </p>
-                    </div>
-                  </div>
-                  <input
-                    type="text"
-                    value={title}
-                    onChange={(e) => {
-                      setTitle(e.target.value);
-                      persistDraft({ title: e.target.value });
-                    }}
-                    placeholder="e.g. The Secrets of Deep Space"
-                    style={{
-                      backgroundColor: 'var(--bg-subtle)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-color)',
-                      padding: '8px 12px',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: '13px',
-                      width: '100%',
-                    }}
-                  />
-                </div>
-
                 {/* Hidden file input for script import */}
                 <input
                   type="file"
@@ -1449,198 +1595,6 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                   style={{ display: 'none' }}
                   onChange={handleFileChange}
                 />
-
-                {/* Phase 8: AI Script Assistant Accordion */}
-                <div
-                  style={{
-                    backgroundColor: 'var(--bg-surface)',
-                    border: '1px solid rgba(16, 185, 129, 0.3)',
-                    borderRadius: 'var(--radius-lg)',
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div
-                    onClick={() => setAiAccordionOpen(!aiAccordionOpen)}
-                    style={{
-                      padding: '14px 20px',
-                      backgroundColor: 'rgba(16, 185, 129, 0.08)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <SparklesIcon size={16} style={{ color: '#10b981' }} />
-                      <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                        AI Script Assistant
-                      </span>
-                      <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '4px', backgroundColor: 'rgba(16, 185, 129, 0.2)', color: '#10b981', fontWeight: 600 }}>
-                        ZBot Skills
-                      </span>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                        {aiAccordionOpen ? 'Hide' : 'Auto-Generate Script from Topic & Skill'}
-                      </span>
-                      {aiAccordionOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
-                    </div>
-                  </div>
-
-                  {aiAccordionOpen && (
-                    <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', borderTop: '1px solid rgba(16, 185, 129, 0.2)' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>Topic / Video Idea</label>
-                          <input
-                            type="text"
-                            value={aiTopic}
-                            onChange={(e) => setAiTopic(e.target.value)}
-                            placeholder="e.g. Secrets of Deep Ocean Trenches"
-                            style={{
-                              padding: '8px 12px',
-                              borderRadius: 'var(--radius-sm)',
-                              border: '1px solid var(--border-color)',
-                              backgroundColor: 'var(--bg-subtle)',
-                              color: 'var(--text-primary)',
-                              fontSize: '12.5px',
-                            }}
-                          />
-                        </div>
-
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>Selected Skill</label>
-                          <select
-                            value={selectedSkillId || ''}
-                            onChange={(e) => setSelectedSkillId(e.target.value || undefined)}
-                            style={{
-                              padding: '8px 12px',
-                              borderRadius: 'var(--radius-sm)',
-                              border: '1px solid var(--border-color)',
-                              backgroundColor: 'var(--bg-subtle)',
-                              color: 'var(--text-primary)',
-                              fontSize: '12.5px',
-                            }}
-                          >
-                            <option value="">No Skill (Generic Generation)</option>
-                            {availableSkills.map((sk) => (
-                              <option key={sk.id} value={sk.id}>{sk.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>Scene Count</label>
-                          <div style={{ display: 'flex', gap: '6px' }}>
-                            {[3, 4, 5, 6, 8].map((count) => (
-                              <button
-                                key={count}
-                                type="button"
-                                onClick={() => setAiSceneCount(count)}
-                                className={aiSceneCount === count ? 'btn-primary' : 'btn-secondary'}
-                                style={{
-                                  padding: '4px 10px',
-                                  fontSize: '11.5px',
-                                  backgroundColor: aiSceneCount === count ? '#10b981' : undefined,
-                                  borderColor: aiSceneCount === count ? '#10b981' : undefined,
-                                }}
-                              >
-                                {count} Scenes
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>Desired Tone</label>
-                          <input
-                            type="text"
-                            value={aiTone}
-                            onChange={(e) => setAiTone(e.target.value)}
-                            placeholder="e.g. Mysterious, Dramatic, Educational"
-                            style={{
-                              padding: '8px 12px',
-                              borderRadius: 'var(--radius-sm)',
-                              border: '1px solid var(--border-color)',
-                              backgroundColor: 'var(--bg-subtle)',
-                              color: 'var(--text-primary)',
-                              fontSize: '12.5px',
-                            }}
-                          />
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                          Custom Instructions (Tier 1 Priority - Overrides all defaults)
-                        </label>
-                        <input
-                          type="text"
-                          value={aiInstructions}
-                          onChange={(e) => setAiInstructions(e.target.value)}
-                          placeholder="e.g. Focus specifically on Mariana Trench hydrothermal vents and bioluminescent creatures"
-                          style={{
-                            padding: '8px 12px',
-                            borderRadius: 'var(--radius-sm)',
-                            border: '1px solid var(--border-color)',
-                            backgroundColor: 'var(--bg-subtle)',
-                            color: 'var(--text-primary)',
-                            fontSize: '12.5px',
-                          }}
-                        />
-                      </div>
-
-                      {/* Progress Stream Bar if generating */}
-                      {isGeneratingAi && aiProgress && (
-                        <div
-                          style={{
-                            padding: '10px 14px',
-                            borderRadius: 'var(--radius-sm)',
-                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                            border: '1px solid rgba(16, 185, 129, 0.3)',
-                            fontSize: '12px',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '4px',
-                          }}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#10b981', fontWeight: 600 }}>
-                            <span>Stage: {aiProgress.stage.toUpperCase()}</span>
-                            <span>{aiProgress.charsReceived ? `${aiProgress.charsReceived} chars` : ''}</span>
-                          </div>
-                          <div style={{ color: 'var(--text-secondary)' }}>{aiProgress.message}</div>
-                        </div>
-                      )}
-
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                        <button
-                          type="button"
-                          disabled={isGeneratingAi || (!aiTopic.trim() && !title.trim())}
-                          onClick={() => {
-                            if (!aiTopic.trim() && title.trim()) setAiTopic(title);
-                            handleGenerateScriptAi();
-                          }}
-                          className="btn-primary"
-                          style={{
-                            padding: '8px 20px',
-                            fontSize: '12.5px',
-                            backgroundColor: '#10b981',
-                            borderColor: '#10b981',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                          }}
-                        >
-                          <SparklesIcon size={14} />
-                          {isGeneratingAi ? 'Generating Script...' : 'Generate Full Script with AI'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
 
                 {/* Script Editor Container */}
                 <div
@@ -4588,6 +4542,15 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
         {/* ============================================================ */}
         {activeMode === 'images_only' && (
           <div style={{ maxWidth: '800px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Hidden file input for prompts */}
+            <input
+              type="file"
+              ref={imagesFileInputRef}
+              accept=".txt,.md,.json"
+              style={{ display: 'none' }}
+              onChange={handleImagesFileChange}
+            />
+
             <div
               style={{
                 backgroundColor: 'var(--bg-surface)',
@@ -4596,7 +4559,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                 padding: '24px',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: '16px',
+                gap: '20px',
               }}
             >
               <div>
@@ -4604,10 +4567,11 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                   Images Only Workflow
                 </h2>
                 <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-                  Generate standalone scene artwork without video clips or voiceover using Infinity Flow's parallel multi-profile generator.
+                  Generate standalone scene artwork without video clips or voiceover using parallel multi-profile generation.
                 </p>
               </div>
 
+              {/* Project Title */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Project Title</label>
                 <input
@@ -4626,46 +4590,205 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                 />
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {/* Prompt Input Sourcing Tabs */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    Image Prompts
+                  </label>
+                  {(() => {
+                    const promptCount = imagesOnlyPrompts
+                      .split(/\r?\n/)
+                      .map((p) => p.trim())
+                      .filter((p) => p.length > 0).length;
+                    return (
+                      <span
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          backgroundColor: promptCount > 0 ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-subtle)',
+                          color: promptCount > 0 ? '#c084fc' : 'var(--text-muted)',
+                        }}
+                      >
+                        {promptCount} {promptCount === 1 ? 'Prompt Loaded' : 'Prompts Loaded'}
+                      </span>
+                    );
+                  })()}
+                </div>
+
+                <div style={{ display: 'flex', gap: '4px', backgroundColor: 'var(--bg-subtle)', padding: '3px', borderRadius: 'var(--radius-sm)', width: 'fit-content', border: '1px solid var(--border-color)' }}>
+                  <button
+                    type="button"
+                    onClick={() => setImagesInputMode('paste')}
+                    style={{
+                      padding: '5px 14px',
+                      borderRadius: 'var(--radius-xs)',
+                      border: 'none',
+                      backgroundColor: imagesInputMode === 'paste' ? 'rgba(168, 85, 247, 0.2)' : 'transparent',
+                      color: imagesInputMode === 'paste' ? '#c084fc' : 'var(--text-secondary)',
+                      fontSize: '12px',
+                      fontWeight: imagesInputMode === 'paste' ? 700 : 500,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Paste Prompts
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setImagesInputMode('file')}
+                    style={{
+                      padding: '5px 14px',
+                      borderRadius: 'var(--radius-xs)',
+                      border: 'none',
+                      backgroundColor: imagesInputMode === 'file' ? 'rgba(168, 85, 247, 0.2)' : 'transparent',
+                      color: imagesInputMode === 'file' ? '#c084fc' : 'var(--text-secondary)',
+                      fontSize: '12px',
+                      fontWeight: imagesInputMode === 'file' ? 700 : 500,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Import from File
+                  </button>
+                </div>
+
+                {imagesInputMode === 'paste' ? (
+                  <textarea
+                    rows={8}
+                    value={imagesOnlyPrompts}
+                    onChange={(e) => setImagesOnlyPrompts(e.target.value)}
+                    placeholder="Enter one prompt per line, or asset-block format:&#10;Cinematic view of futuristic Tokyo street with neon signs&#10;Portrait of astronaut in reflective gold helmet overlooking red Mars dunes&#10;Macro photography of crystal dandelion floating in sunlight"
+                    style={{
+                      backgroundColor: 'var(--bg-subtle)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      padding: '10px 12px',
+                      borderRadius: 'var(--radius-sm)',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '12px',
+                      lineHeight: 1.5,
+                    }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      padding: '20px',
+                      border: '1px dashed var(--border-color)',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'var(--bg-subtle)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '10px',
+                      textAlign: 'center',
+                    }}
+                  >
+                    {imagesFile ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                          📄 {imagesFile.fileName}
+                        </div>
+                        <div style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                          {imagesFile.content.length} characters loaded
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                          <button
+                            type="button"
+                            onClick={handleSelectImagesFile}
+                            className="btn-secondary"
+                            style={{ padding: '4px 12px', fontSize: '11.5px' }}
+                          >
+                            Replace File
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setImagesOnlyPrompts(imagesFile.content);
+                            }}
+                            className="btn-secondary"
+                            style={{ padding: '4px 12px', fontSize: '11.5px' }}
+                          >
+                            Reload Prompts
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                          Import a .txt, .md, or .json file containing image prompts
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleSelectImagesFile}
+                          className="btn-primary"
+                          style={{ padding: '6px 16px', fontSize: '12px' }}
+                        >
+                          Choose Prompts File...
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Aspect Ratio Cards */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Aspect Ratio</label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {(['16:9', '9:16'] as SupportedAspectRatio[]).map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      onClick={() => setAspectRatio(r)}
-                      className={aspectRatio === r ? 'btn-primary' : 'btn-secondary'}
-                      style={{ padding: '6px 14px', fontSize: '12px' }}
-                    >
-                      {r} {r === '16:9' ? '(Landscape)' : '(Portrait)'}
-                    </button>
-                  ))}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  {[
+                    { id: '16:9', label: '16:9 Landscape', desc: 'YouTube, Desktop & Standard Displays' },
+                    { id: '9:16', label: '9:16 Portrait', desc: 'YouTube Shorts, TikTok & Mobile Reels' },
+                  ].map((r) => {
+                    const isSel = aspectRatio === r.id;
+                    return (
+                      <button
+                        key={r.id}
+                        type="button"
+                        onClick={() => setAspectRatio(r.id as SupportedAspectRatio)}
+                        style={{
+                          padding: '12px 14px',
+                          borderRadius: 'var(--radius-md)',
+                          border: isSel ? '2px solid #a855f7' : '1px solid var(--border-color)',
+                          backgroundColor: isSel ? 'rgba(168, 85, 247, 0.12)' : 'var(--bg-subtle)',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '3px',
+                        }}
+                      >
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: isSel ? '#c084fc' : 'var(--text-primary)' }}>
+                          {r.label}
+                        </span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{r.desc}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  Image Prompts (one per line)
-                </label>
-                <textarea
-                  rows={8}
-                  value={imagesOnlyPrompts}
-                  onChange={(e) => setImagesOnlyPrompts(e.target.value)}
-                  placeholder="Cinematic view of futuristic Tokyo street with neon signs&#10;Portrait of astronaut in reflective gold helmet overlooking red Mars dunes&#10;Macro photography of crystal dandelion floating in sunlight"
-                  style={{
-                    backgroundColor: 'var(--bg-subtle)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-color)',
-                    padding: '10px 12px',
-                    borderRadius: 'var(--radius-sm)',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: '12px',
-                    lineHeight: 1.5,
-                  }}
-                />
+              {/* Export Destination Folder */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '12px 16px', backgroundColor: 'var(--bg-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                <div style={{ overflow: 'hidden' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Save to Folder</div>
+                  <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                    {imagesSaveDirectory ? imagesSaveDirectory : 'Default: Project Folder (userData/projects)'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSelectImagesSaveDirectory}
+                  className="btn-secondary"
+                  style={{ padding: '6px 14px', fontSize: '12px', whiteSpace: 'nowrap' }}
+                >
+                  Choose Folder...
+                </button>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
+              {/* Action */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
                 <button
                   type="button"
                   disabled={isSubmitting || !imagesOnlyPrompts.trim()}
@@ -4681,10 +4804,19 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
         )}
 
         {/* ============================================================ */}
-        {/* MODE: FROM SKILL (Autonomous Phase 8 Script AI Workflow)     */}
+        {/* MODE: FROM SKILL (Autonomous Script AI Workflow)             */}
         {/* ============================================================ */}
         {activeMode === 'from_skill' && (
           <div style={{ maxWidth: '840px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            {/* Hidden file input for skill uploads */}
+            <input
+              type="file"
+              ref={skillFileInputRef}
+              accept=".md,.txt,.pdf,.skill,.zip"
+              style={{ display: 'none' }}
+              onChange={handleUploadSkillFile}
+            />
+
             <div
               style={{
                 backgroundColor: 'var(--bg-surface)',
@@ -4707,100 +4839,218 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                 </p>
               </div>
 
-              {/* Channel and Skill Selectors */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {/* Channel Assignment */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
                     Channel Assignment
                   </label>
-                  <select
-                    value={channelId || ''}
-                    onChange={(e) => {
-                      const id = e.target.value || undefined;
-                      const ch = availableChannels.find((c) => c.id === id);
-                      setChannelId(id);
-                      setChannelName(ch?.name);
-                      persistDraft({ channelId: id, channelName: ch?.name });
-                    }}
-                    style={{
-                      backgroundColor: 'var(--bg-subtle)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-color)',
-                      padding: '8px 12px',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: '13px',
-                    }}
-                  >
-                    <option value="">(None - Unassigned Channel)</option>
-                    {availableChannels.map((ch) => (
-                      <option key={ch.id} value={ch.id}>
-                        {ch.name} {ch.rulebook?.tone ? `(${ch.rulebook.tone})` : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    Auto-binds channel output folder & export settings
+                  </span>
                 </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    Selected Skill <span style={{ color: 'var(--danger, #ef4444)' }}>*</span>
-                  </label>
-                  <select
-                    value={selectedSkillId || ''}
-                    onChange={(e) => {
-                      const id = e.target.value || undefined;
-                      setSelectedSkillId(id);
-                      persistDraft({ skillId: id });
-                    }}
-                    style={{
-                      backgroundColor: 'var(--bg-subtle)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-color)',
-                      padding: '8px 12px',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: '13px',
-                    }}
-                  >
-                    {availableSkills.map((sk) => (
-                      <option key={sk.id} value={sk.id}>
-                        {sk.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <select
+                  value={channelId || ''}
+                  onChange={(e) => {
+                    const id = e.target.value || undefined;
+                    const ch = availableChannels.find((c) => c.id === id);
+                    setChannelId(id);
+                    setChannelName(ch?.name);
+                    if ((ch as any)?.skillId) {
+                      setSelectedSkillId((ch as any).skillId);
+                    }
+                    persistDraft({ channelId: id, channelName: ch?.name });
+                  }}
+                  style={{
+                    backgroundColor: 'var(--bg-subtle)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-color)',
+                    padding: '8px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '13px',
+                  }}
+                >
+                  <option value="">(None - Unassigned Channel)</option>
+                  {availableChannels.map((ch) => (
+                    <option key={ch.id} value={ch.id}>
+                      {ch.name} {ch.rulebook?.tone ? `(${ch.rulebook.tone})` : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              {/* Selected Skill Preview Card */}
-              {selectedSkillId && (() => {
-                const currentSkill = availableSkills.find((s) => s.id === selectedSkillId);
-                if (!currentSkill) return null;
-                return (
+              {/* Skill Sourcing Tabs */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    Skill Rulebook <span style={{ color: 'var(--danger, #ef4444)' }}>*</span>
+                  </label>
+                  <span style={{ fontSize: '11px', color: '#10b981', fontWeight: 600 }}>
+                    {skillSourceTab === 'select' ? 'Saved Channel Skill' : skillSourceTab === 'paste' ? 'Custom Pasted Directives' : 'Imported File'}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', gap: '4px', backgroundColor: 'var(--bg-subtle)', padding: '3px', borderRadius: 'var(--radius-sm)', width: 'fit-content', border: '1px solid var(--border-color)' }}>
+                  {[
+                    { id: 'select', label: 'Select Existing' },
+                    { id: 'paste', label: 'Paste Skill' },
+                    { id: 'upload', label: 'Upload Skill' },
+                  ].map((tab) => {
+                    const isSel = skillSourceTab === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setSkillSourceTab(tab.id as any)}
+                        style={{
+                          padding: '5px 14px',
+                          borderRadius: 'var(--radius-xs)',
+                          border: 'none',
+                          backgroundColor: isSel ? 'rgba(16, 185, 129, 0.2)' : 'transparent',
+                          color: isSel ? '#10b981' : 'var(--text-secondary)',
+                          fontSize: '12px',
+                          fontWeight: isSel ? 700 : 500,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {tab.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {skillSourceTab === 'select' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <select
+                      value={selectedSkillId || ''}
+                      onChange={(e) => {
+                        const id = e.target.value || undefined;
+                        setSelectedSkillId(id);
+                        persistDraft({ skillId: id });
+                      }}
+                      style={{
+                        backgroundColor: 'var(--bg-subtle)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)',
+                        padding: '8px 12px',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '13px',
+                      }}
+                    >
+                      <option value="">No Skill (Generic Generation)</option>
+                      {availableSkills.map((sk) => (
+                        <option key={sk.id} value={sk.id}>
+                          {sk.name}
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* Selected Skill Preview Card */}
+                    {selectedSkillId && (() => {
+                      const currentSkill = availableSkills.find((s) => s.id === selectedSkillId);
+                      if (!currentSkill) return null;
+                      return (
+                        <div
+                          style={{
+                            padding: '12px 16px',
+                            backgroundColor: 'rgba(16, 185, 129, 0.06)',
+                            border: '1px solid rgba(16, 185, 129, 0.25)',
+                            borderRadius: 'var(--radius-md)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '4px',
+                          }}
+                        >
+                          <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#10b981' }}>
+                            {currentSkill.name} Directives
+                          </div>
+                          {currentSkill.description && (
+                            <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                              {currentSkill.description}
+                            </div>
+                          )}
+                          {currentSkill.promptGuidance && (
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                              <strong style={{ color: 'var(--text-secondary)' }}>Visual Style:</strong> {currentSkill.promptGuidance}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {skillSourceTab === 'paste' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <textarea
+                      rows={5}
+                      value={pastedSkillContent}
+                      onChange={(e) => setPastedSkillContent(e.target.value)}
+                      placeholder="Paste your channel skill markdown rulebook directly here (e.g. tone, narrative arcs, visual style, pacing directives)..."
+                      style={{
+                        backgroundColor: 'var(--bg-subtle)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)',
+                        padding: '10px 12px',
+                        borderRadius: 'var(--radius-sm)',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '12px',
+                        lineHeight: 1.45,
+                      }}
+                    />
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      Pasted skill directives will be dynamically combined with your prompt.
+                    </span>
+                  </div>
+                )}
+
+                {skillSourceTab === 'upload' && (
                   <div
                     style={{
-                      padding: '12px 16px',
-                      backgroundColor: 'rgba(16, 185, 129, 0.06)',
-                      border: '1px solid rgba(16, 185, 129, 0.25)',
+                      padding: '20px',
+                      border: '1px dashed var(--border-color)',
                       borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'var(--bg-subtle)',
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: '4px',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '10px',
+                      textAlign: 'center',
                     }}
                   >
-                    <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#10b981' }}>
-                      {currentSkill.name} Directives
-                    </div>
-                    {currentSkill.description && (
-                      <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
-                        {currentSkill.description}
+                    {uploadedSkillFileName ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 600, color: '#10b981' }}>
+                          ✓ Imported: {uploadedSkillFileName}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => skillFileInputRef.current?.click()}
+                          className="btn-secondary"
+                          style={{ padding: '4px 12px', fontSize: '11.5px' }}
+                        >
+                          Upload Different Skill
+                        </button>
                       </div>
-                    )}
-                    {currentSkill.promptGuidance && (
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                        <strong style={{ color: 'var(--text-secondary)' }}>Visual Style:</strong> {currentSkill.promptGuidance}
-                      </div>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                          Upload a skill rulebook (.md, .txt, .pdf, .skill, or .zip archive)
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => skillFileInputRef.current?.click()}
+                          className="btn-primary"
+                          style={{ padding: '6px 16px', fontSize: '12px', backgroundColor: '#10b981', borderColor: '#10b981' }}
+                        >
+                          Choose Skill File...
+                        </button>
+                      </>
                     )}
                   </div>
-                );
-              })()}
+                )}
+              </div>
 
               {/* Topic / Idea Input */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -4984,8 +5234,20 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
         {/* ============================================================ */}
         {/* MODE: AUDIO ONLY (Complete Standalone Workflow)               */}
         {/* ============================================================ */}
+        {/* ============================================================ */}
+        {/* MODE: AUDIO ONLY (Complete Standalone Workflow)               */}
+        {/* ============================================================ */}
         {activeMode === 'audio_only' && (
           <div style={{ maxWidth: '840px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Hidden file input for audio imports */}
+            <input
+              type="file"
+              ref={audioFileInputRef}
+              accept=".txt,.md"
+              style={{ display: 'none' }}
+              onChange={handleAudioFileChange}
+            />
+
             <div
               style={{
                 backgroundColor: 'var(--bg-surface)',
@@ -5004,45 +5266,169 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                   </h2>
                 </div>
                 <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-                  Synthesize multi-scene or standalone voiceovers with ZBot fallback, concatenate with FFmpeg into broadcast master audio, and export.
+                  Synthesize multi-scene or standalone voiceovers with broadcast quality, concatenate into master audio, and export.
                 </p>
               </div>
 
-              {/* Script Input Header & Actions */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    Narration Script (Marked Markdown or Plain Text)
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setAudioNarration(SAMPLE_AUDIO_SCRIPT)}
-                    className="btn-secondary"
-                    style={{ padding: '4px 10px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
+              {/* Input Mode Tabs */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid var(--border-color)', width: '100%' }}>
+                  {[
+                    { id: 'paste', label: 'Paste Narration' },
+                    { id: 'file', label: 'Load from File' },
+                  ].map((tab) => {
+                    const isSel = audioInputMode === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setAudioInputMode(tab.id as 'paste' | 'file')}
+                        style={{
+                          padding: '8px 16px',
+                          border: 'none',
+                          borderBottom: isSel ? '2px solid #a855f7' : '2px solid transparent',
+                          backgroundColor: 'transparent',
+                          color: isSel ? '#c084fc' : 'var(--text-secondary)',
+                          fontSize: '12.5px',
+                          fontWeight: isSel ? 700 : 500,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {tab.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {audioInputMode === 'paste' ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                        Narration Script (Marked Markdown or Plain Text)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setAudioNarration(SAMPLE_AUDIO_SCRIPT)}
+                        className="btn-secondary"
+                        style={{ padding: '4px 10px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        <CopyIcon size={12} /> Load Sample Script
+                      </button>
+                    </div>
+                    <textarea
+                      rows={8}
+                      value={audioNarration}
+                      onChange={(e) => setAudioNarration(e.target.value)}
+                      placeholder="Enter script with '# SCENE 1', '# SCENE 2' or plain paragraphs..."
+                      style={{
+                        backgroundColor: 'var(--bg-subtle)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)',
+                        padding: '12px 14px',
+                        borderRadius: 'var(--radius-sm)',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '12.5px',
+                        lineHeight: 1.5,
+                      }}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      <span>
+                        {audioNarration.length} characters • ~{audioNarration.trim().split(/\s+/).filter(Boolean).length} words
+                      </span>
+                      <span>
+                        Estimated duration: ~{Math.round(audioNarration.trim().split(/\s+/).filter(Boolean).length / 2.5)}s
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      padding: '24px',
+                      border: '1px dashed var(--border-color)',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'var(--bg-subtle)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '12px',
+                      textAlign: 'center',
+                    }}
                   >
-                    <CopyIcon size={12} /> Load Sample Script
-                  </button>
+                    {audioFile ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center' }}>
+                        <div style={{ fontSize: '13.5px', fontWeight: 600, color: '#a855f7' }}>
+                          ✓ Loaded: {audioFile.fileName}
+                        </div>
+                        <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                          {audioNarration.length} characters • ~{audioNarration.trim().split(/\s+/).filter(Boolean).length} words • Estimated: ~{Math.round(audioNarration.trim().split(/\s+/).filter(Boolean).length / 2.5)}s
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                          <button
+                            type="button"
+                            onClick={handleSelectAudioFile}
+                            className="btn-secondary"
+                            style={{ padding: '5px 12px', fontSize: '11.5px' }}
+                          >
+                            Replace File
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                          Load a narration script file (.txt or .md)
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleSelectAudioFile}
+                          className="btn-primary"
+                          style={{ padding: '6px 16px', fontSize: '12px', backgroundColor: '#a855f7', borderColor: '#a855f7' }}
+                        >
+                          Choose Narration File...
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Split at blank lines toggle (ZBot spec §8.2) */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '12px 16px',
+                  backgroundColor: 'var(--bg-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-color)',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    Split at blank lines
+                  </div>
+                  <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                    {splitAtBlankLines
+                      ? 'Blank lines split text into separate scene audio takes, concatenated into master audio.'
+                      : 'Synthesize entire text as a single continuous master audio take.'}
+                  </div>
                 </div>
-                <textarea
-                  rows={8}
-                  value={audioNarration}
-                  onChange={(e) => setAudioNarration(e.target.value)}
-                  placeholder="Enter script with '# SCENE 1', '# SCENE 2' or plain paragraphs..."
+                <button
+                  type="button"
+                  onClick={() => setSplitAtBlankLines(!splitAtBlankLines)}
+                  className={splitAtBlankLines ? 'btn-primary' : 'btn-secondary'}
                   style={{
-                    backgroundColor: 'var(--bg-subtle)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-color)',
-                    padding: '12px 14px',
-                    borderRadius: 'var(--radius-sm)',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: '12.5px',
-                    lineHeight: 1.5,
+                    padding: '6px 14px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    backgroundColor: splitAtBlankLines ? '#a855f7' : undefined,
+                    borderColor: splitAtBlankLines ? '#a855f7' : undefined,
                   }}
-                />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)' }}>
-                  <span>{audioNarration.length} characters • ~{audioNarration.trim().split(/\s+/).filter(Boolean).length} words</span>
-                  <span>Estimated duration: ~{Math.round(audioNarration.trim().split(/\s+/).filter(Boolean).length / 2.5)}s</span>
-                </div>
+                >
+                  {splitAtBlankLines ? 'ON' : 'OFF'}
+                </button>
               </div>
 
               {/* Voice Engine & Persona Selector */}
@@ -5126,8 +5512,45 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                 </div>
               </div>
 
+              {/* Export Destination Folder */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  padding: '12px 16px',
+                  backgroundColor: 'var(--bg-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-color)',
+                }}
+              >
+                <div style={{ overflow: 'hidden' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Save to Folder</div>
+                  <div
+                    style={{
+                      fontSize: '11.5px',
+                      color: 'var(--text-secondary)',
+                      textOverflow: 'ellipsis',
+                      overflow: 'hidden',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {audioSaveDirectory ? audioSaveDirectory : 'Default: Project Folder (userData/projects)'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSelectAudioSaveDirectory}
+                  className="btn-secondary"
+                  style={{ padding: '6px 14px', fontSize: '12px', whiteSpace: 'nowrap' }}
+                >
+                  Choose Folder...
+                </button>
+              </div>
+
               {/* Synthesize Button */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '4px' }}>
                 <button
                   type="button"
                   disabled={isSynthesizingAudioOnly || !audioNarration.trim()}
@@ -5184,11 +5607,6 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                       </div>
                       <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
                         Engine: <strong>{audioOnlyManifest.actualProvider || audioOnlyManifest.provider}</strong>
-                        {audioOnlyManifest.fallbackOccurred && (
-                          <span style={{ color: '#f59e0b', marginLeft: '6px' }}>
-                            (Downgraded via ZBot fallback from {audioOnlyManifest.provider})
-                          </span>
-                        )}
                       </p>
                     </div>
 
@@ -5245,11 +5663,6 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                                 <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
                                   {sc.durationSeconds.toFixed(2)}s
                                 </span>
-                                {sc.fallbackOccurred && (
-                                  <span style={{ fontSize: '10px', color: '#f59e0b', backgroundColor: 'rgba(245, 158, 11, 0.1)', padding: '1px 6px', borderRadius: '3px' }}>
-                                    Downgraded to {sc.providerUsed}
-                                  </span>
-                                )}
                               </div>
                               <p style={{ fontSize: '11.5px', color: 'var(--text-muted)', margin: '2px 0 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {sc.audioFile}
