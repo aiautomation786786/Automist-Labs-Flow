@@ -1,410 +1,298 @@
 
 <div align="center">
 
-# 🧠 Google Flow Browser MCP
+# ♾️ Infinity Flow
 
-**Control [Google Flow](https://labs.google/fx/tools/flow) — image & video generation — directly from your AI agent via MCP.**
+### Next-Generation AI Video Generation & Automation Studio
 
-<p>
-  <img src="https://img.shields.io/badge/version-1.0.0-blue?style=flat-square" alt="Version 1.0.0">
-  <img src="https://img.shields.io/badge/node-%3E%3D18-green?style=flat-square" alt="Node >= 18">
-  <img src="https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square" alt="License MIT">
-  <img src="https://img.shields.io/badge/MCP-server-8A2BE2?style=flat-square" alt="MCP Server">
-  <img src="https://img.shields.io/badge/OpenCode-ready-4CAF50?style=flat-square" alt="OpenCode Ready">
-</p>
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg?style=flat-square)](./desktop/package.json)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20(x64)-0078D6.svg?style=flat-square&logo=windows)](https://microsoft.com/windows)
+[![Electron](https://img.shields.io/badge/Electron-44.2.0-47848F.svg?style=flat-square&logo=electron)](https://www.electronjs.org/)
+[![React](https://img.shields.io/badge/React-19.2.8-61DAFB.svg?style=flat-square&logo=react)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.4.0-3178C6.svg?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
+[![Vite](https://img.shields.io/badge/Vite-4.7.0-646CFF.svg?style=flat-square&logo=vite)](https://vitejs.dev/)
+[![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-1.29.0-005CED.svg?style=flat-square&logo=onnx)](https://onnxruntime.ai/)
+[![Tests](https://img.shields.io/badge/Tests-808%20passed-brightgreen.svg?style=flat-square&logo=vitest)](./desktop/vitest.config.ts)
+[![License](https://img.shields.io/badge/license-MIT-lightgrey.svg?style=flat-square)](./LICENSE)
 
-<br>
+**Infinity Flow** is an enterprise-grade desktop automation studio and agentic video production pipeline. It seamlessly bridges browser-based generative AI environments ([Google Flow](https://labs.google/fx/tools/flow)) and direct API providers ([Google Gemini](https://ai.google.dev/)) with local neural text-to-speech, mathematical watermark mitigation, and fully automated multi-channel delivery.
 
-[✨ Features](#-features) •
-[🚀 Quick Start](#-quick-start) •
-[🔧 Tools](#-tools) •
-[⚙️ Configuration](#️-configuration) •
-[🛡️ Safety](#️-safety--ethics)
-
-<br>
+[Key Features](#-key-features) •
+[Architecture](#-architecture) •
+[System Requirements](#-system-requirements) •
+[Quick Start](#-quick-start) •
+[Video Factory Pipeline](#-video-factory-pipeline) •
+[Offline Neural TTS](#-offline-neural-tts-kokoro-onnx) •
+[Verification & Testing](#-verification--testing) •
+[Project Structure](#-project-structure)
 
 </div>
 
 ---
 
-> **🇫🇷 Ce serveur MCP permet à votre agent AI (OpenCode) d'utiliser Google Flow pour générer des images et des vidéos, via votre propre compte Google et sans partager vos identifiants.**
+## 🌟 Key Features
 
----
+### 🎬 1. End-to-End Video Factory (5-Step Creation Pipeline)
+- **Step 1: Script & Story Structure** — Multi-format script parsing (Markdown, numbered scene blocks, two-file narrator/prompt configurations) with natural sort media pairing (`1.jpg`, `2.jpg`, `10.jpg`).
+- **Step 2: Voiceover & TTS Synthesis** — Multi-provider voice generation supporting offline Kokoro ONNX, Microsoft Edge TTS, Azure Speech, FameSpeak, and Ai33 with intelligent fallback chains.
+- **Step 3: Visual & Scene Orchestration** — Flexible image and video generation using Google Flow models (**Imagen 3/4**, **Nano Banana 1/2/Pro**, **Veo 3.1 Quality/Fast/Lite**, **Omni 1.1 Flash**) and Gemini API providers.
+- **Step 4: Subtitles, Transitions & Motion** — Automatic SRT/VTT subtitle synchronization, Ken Burns motion pans/zooms, cross-fades, and motion filter synthesis.
+- **Step 5: Final Render & Channel Delivery** — FFmpeg-based multi-track audio ducking, resolution-matched scaling, non-destructive watermark mitigation, and direct delivery into organized channel repositories.
 
-## 📸 What It Does
+### 🛡️ 2. Multi-Account Dedicated Profile Isolation
+- **Isolated Chrome Profiles** — Each Google Flow account operates in its own dedicated Chrome user data directory with an allocated Chrome DevTools Protocol (CDP) port.
+- **Zero Cookie & Session Collisions** — True process-level isolation ensures credentials, browser caches, and rate-limit quotas never interfere across concurrent accounts.
+- **Live Account Verification & Auto-Reconnect** — Transparent Google OAuth detection, automatic session verification, and persistent background connection management without storing user passwords.
 
-This MCP server connects your AI agent to **[Google Flow](https://labs.google/fx/tools/flow)** — Google's creative suite for image and video generation. Your agent can:
+### 🎙️ 3. Built-In Offline Neural TTS (Kokoro ONNX)
+- **100% Offline Speech Generation** — Bundled with `kokoro-v1.0.onnx` and high-performance native ONNX Runtime Node bindings (`onnxruntime-node`).
+- **Zero External API Costs** — Generate studio-grade speech directly on the host CPU without third-party subscriptions, internet access, or API rate limits.
+- **Instant Voice Previews** — Real-time waveform audio preview directly inside the desktop interface.
 
-- 🎨 **Generate images** with Nano Banana Pro, Nano Banana 2, or Imagen 4
-- 🎬 **Create videos** and scenes with characters
-- 🧑 **Manage characters** and scenes in your Flow workspace
-- 🖼️ **Use Grid Architect** for batch shot generation
-- 🔍 **Discover and control** any Flow tool programmatically
+### 🖼️ 4. Generation Studios (Single & Bulk)
+- **Image Generation Studio** — Interactive single-prompt and bulk batch generation across all aspect ratios (`16:9`, `9:16`, `1:1`, `4:3`, `3:4`).
+- **Gemini Video Studio** — Native support for Google Gemini Veo 3.1 (Cinema Quality 8s, Fast 4s/6s/8s) and Omni 1.1 Flash with prompt-driven generation.
+- **Mathematical Watermark Mitigation** — Calibrated reverse-alpha blending algorithm (`GeminiImagePostProcessingService` & `GeminiPostProcessingService`) that non-destructively reconstructs watermark regions down to individual RGB channels without crude blurry delogo filters.
 
-All through your **own Google account** — no API keys, no third-party tokens.
+### 📡 5. Multi-Channel Automated Delivery
+- **Intelligent Aspect-Ratio Routing** — Probes final video dimensions and automatically delivers `9:16` vertical videos to **Shorts** and `16:9` horizontal videos to **Longs** output directories.
+- **Shorts Poster Frame Generation** — Renders dynamic poster frames from the first 2.0s while preserving continuous audio streams from 0.0s.
+- **Audit Trails & Delivery History** — Complete delivery logs stored in SQLite/JSON repositories with instant reveal in Windows Explorer.
 
----
+### 🔑 6. Multi-Key Gemini API Key Management
+- **Round-Robin Key Rotation** — Distribute requests across multiple Gemini API keys.
+- **Automatic Quota Failover** — Gracefully handles rate-limiting (`429`) errors by automatically failing over to standby active keys.
+- **Encrypted Local Storage** — Stored securely in user application data directories (`%LOCALAPPDATA%`), never exposed to source control.
 
-## ✨ Features
-
-<table>
-<tr>
-  <td width="50%">
-
-### 🎯 For AI Agents
-  </td>
-  <td width="50%">
-
-### 🔒 For Humans
-  </td>
-</tr>
-<tr>
-  <td>
-
-- **15+ MCP tools** ready to use
-- **Smart job queue** — no parallel conflicts
-- **Auto-discover UI** — adapts to Flow changes
-- **Structured logging** for debugging
-- **Safe actions** — resilient click/fill logic
-  </td>
-  <td>
-
-- **Your account, your data** — no token sharing
-- **No password asked** — ever
-- **Clean safety rules** — stops on captcha/verification
-- **Config backup** before any modification
-- **Single-job queue** — no runaway generation
-  </td>
-</tr>
-</table>
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-| What | Why |
-|------|-----|
-| **Node.js ≥ 18** | Runtime for the MCP server |
-| **Google Chrome** | Required for browser automation |
-| **OpenCode** | AI agent that connects to MCP servers |
-| **A Google account** | To use Google Flow (yours, not shared) |
-
-### 1️⃣ Install
-
-```bash
-git clone https://github.com/TMSSS05/google-flow-browser-mcp.git
-cd google-flow-browser-mcp
-npm install
-```
-
-### 2️⃣ Configure your Google profile
-
-```bash
-cp config/flow.config.example.json config/flow.config.json
-```
-
-Edit `config/flow.config.json`:
-
-```json
-{
-  "expectedAccount": "your.email@gmail.com",
-  "chromeProfile": "Profile 3",
-  "chromeUserDataDir": "/home/you/.config/google-chrome"
-}
-```
-
-> 💡 **Finding your Chrome profile:**  
-> Open Chrome and go to `chrome://version/`. Look for **"Profile Path"** — the last folder name is your profile (e.g., `Profile 3`), and the path before it is your `chromeUserDataDir`.
-
-### 3️⃣ Make scripts executable
-
-```bash
-chmod +x scripts/*.sh
-```
-
-### 4️⃣ Start Chrome with CDP
-
-```bash
-./scripts/start-browser.sh
-```
-
-> This launches Chrome with remote debugging enabled on port 9222 using your configured profile.
-
-### 5️⃣ Start the MCP server
-
-```bash
-# In a separate terminal:
-./scripts/start-mcp.sh
-```
-
-### 6️⃣ Register with OpenCode
-
-```bash
-./scripts/register-opencode.sh
-```
-
-> 🔄 **Restart OpenCode** after registration for the changes to take effect.
-
-### ✅ Verify it works
-
-```bash
-./scripts/test-flow-image.sh
-```
+### 🤖 7. Model Context Protocol (MCP) Server
+- Legacy and agentic MCP server integration (`src/index.js`) exposing 15+ automated tools to Claude Desktop, OpenCode, and external AI agents over stdio.
 
 ---
 
 ## 🏗️ Architecture
 
+```mermaid
+flowchart TB
+    subgraph DesktopApp["Infinity Flow Desktop Studio (Electron / React / TypeScript)"]
+        UI["Modern Dark UI (React 19 + Lucide Icons)"]
+        IPC["Electron IPC Bridge (Preload Context Isolation)"]
+        
+        subgraph MainProcess["Electron Main Process"]
+            Scheduler["Parallel Worker Scheduler"]
+            WorkerPool["Profile Worker Pool (Isolated CDP Sessions)"]
+            TtsManager["TTS Manager (Kokoro ONNX / Edge / Azure / FameSpeak)"]
+            RenderManager["Final Render & Assembly Manager (FFmpeg)"]
+            PostProcessing["Non-Destructive Reverse-Alpha Watermark Cleaner"]
+            Storage["Local Repositories (Projects, Channels, Skills, Settings)"]
+        end
+    end
+
+    subgraph ExternalEngines["Automation & AI Engines"]
+        ChromeProfiles["Dedicated Chrome Profiles (Port 9222, 9223...)"]
+        GoogleFlow["Google Flow (labs.google/fx/tools/flow)"]
+        GeminiAPI["Google Gemini AI API (Veo 3.1 & Imagen 3)"]
+        KokoroEngine["Local ONNX Runtime (kokoro-v1.0.onnx)"]
+    end
+
+    UI --> IPC
+    IPC --> MainProcess
+    Scheduler --> WorkerPool
+    WorkerPool --> ChromeProfiles --> GoogleFlow
+    Scheduler --> GeminiAPI
+    TtsManager --> KokoroEngine
+    RenderManager --> PostProcessing
+    RenderManager --> Storage
+```
+
+---
+
+## 💻 System Requirements
+
+| Requirement | Specification |
+| :--- | :--- |
+| **Operating System** | Windows 10 / Windows 11 (64-bit) |
+| **Node.js** | Node.js **>= 20.0.0** |
+| **Google Chrome** | Latest Google Chrome installed at default system path |
+| **FFmpeg / FFprobe** | FFmpeg installed on system `PATH` (or specified in settings) |
+| **Hardware** | Multi-core x64 CPU, 8 GB RAM minimum (16 GB recommended for batch rendering) |
+
+---
+
+## 🚀 Quick Start
+
+### 1. Clone the Repository
+```bash
+git clone https://github.com/aiautomation786786/Automist-Labs-Flow.git
+cd Automist-Labs-Flow
+```
+
+### 2. Install Dependencies
+Install dependencies for both the root MCP server and the desktop studio:
+```bash
+# Install root dependencies
+npm install
+
+# Install desktop studio dependencies
+cd desktop
+npm install
+cd ..
+```
+
+### 3. Launch Development Mode
+```bash
+cd desktop
+npm run start
+```
+This compiles the TypeScript main process, builds the Vite React renderer, and launches the Electron application with Hot Module Replacement (HMR).
+
+---
+
+## 📦 Building & Packaging (Windows)
+
+The desktop application is configured for production packaging using `electron-builder`:
+
+### Create Unpacked Windows Application (`win-unpacked`)
+```bash
+cd desktop
+npm run pack
+```
+Outputs the production-ready application to:
+```
+desktop/release/win-unpacked/InfinityFlow.exe
+```
+
+### Create Standalone Windows Installer
+```bash
+cd desktop
+npm run package
+```
+Generates an optimized NSIS installer in `desktop/release/`.
+
+### Create Portable Executable
+```bash
+cd desktop
+npm run package:portable
+```
+
+---
+
+## 🎙️ Offline Neural TTS (Kokoro ONNX)
+
+Infinity Flow includes native offline text-to-speech powered by Kokoro and ONNX Runtime:
+
+- **Model Location**: `desktop/assets/models/kokoro/kokoro-v1.0.onnx`
+- **Engine**: Native commonjs bindings via `onnxruntime-node`
+- **Fallback Hierarchy**:
+  1. **Kokoro ONNX (Local Offline)** — Highest privacy, zero latency, zero cost.
+  2. **Microsoft Edge TTS** — High-quality online neural voices.
+  3. **Azure Speech Services** — Cloud-grade enterprise neural synthesis.
+  4. **FameSpeak & Ai33** — Specialized character and custom voice engines.
+
+```typescript
+// Example TTS fallback invocation
+const audioBuffer = await ttsManager.generateSpeech({
+  text: "Welcome to Infinity Flow.",
+  voice: "af_heart",
+  provider: "kokoro"
+});
+```
+
+---
+
+## 🧪 Verification & Testing
+
+Infinity Flow maintains a rigorous, automated testing suite using **Vitest**:
+
+```bash
+cd desktop
+
+# Run the complete test suite (107 files, 808 tests)
+npm run test
+
+# Typecheck the complete TypeScript codebase
+npm run typecheck
+
+# Run tests in watch mode during development
+npm run test:watch
+
+# Generate comprehensive test coverage reports
+npm run test:coverage
+```
+
+### Test Suite Coverage Highlights
+- **107 Test Suites / 808 Unit & Integration Tests**:
+  - `DedicatedProfileArchitecture.test.ts` — CDP port allocation, worker isolation, profile lifecycle.
+  - `VideoFactoryPipeline.test.ts` — 5-stage pipeline integrity, crash recovery, and pause/resume logic.
+  - `KokoroProvider.test.ts` & `TtsFallbackChain.test.ts` — ONNX tensor generation, fallback reliability.
+  - `GeminiImagePostProcessing.test.ts` — Reverse-alpha watermark removal mathematical precision.
+  - `ChannelExportShortsParity.test.ts` — Shorts/Longs routing, thumbnail overlays, and delivery audits.
+  - `ProfilesScreen.test.tsx` & `SettingsScreen.test.tsx` — Full React component mounting and interaction parity.
+
+---
+
+## 📂 Project Structure
+
 ```
 google-flow-browser-mcp/
+├── desktop/                          # Infinity Flow Desktop Application (Electron)
+│   ├── assets/                       # Bundled production assets & models
+│   │   ├── icon.ico / icon.png       # Application identity icons
+│   │   ├── infinity-flow-logo.svg    # Vector brand assets
+│   │   └── models/kokoro/            # Offline Kokoro ONNX neural model
+│   │       └── kokoro-v1.0.onnx
+│   ├── scripts/                      # Build, packaging & verification scripts
+│   ├── src/
+│   │   ├── main/                     # Electron Main Process
+│   │   │   ├── automation/           # Chrome CDP & Google Flow driver
+│   │   │   ├── execution/            # Gemini Image & Video execution services
+│   │   │   ├── render/               # FFmpeg assembly, motion filters & mixers
+│   │   │   ├── scheduler/            # Multi-worker concurrency pool
+│   │   │   ├── storage/              # Local SQLite/JSON repositories
+│   │   │   ├── tts/                  # Kokoro, Edge, Azure, Ai33, FameSpeak
+│   │   │   └── utils/                # Loggers, FFmpeg resolvers, Zip utilities
+│   │   ├── renderer/                 # Electron Renderer (React 19 + Vite)
+│   │   │   ├── components/           # AppShell, Modals, SegmentedControls
+│   │   │   ├── screens/              # Studio, Factory, Profiles, Settings, Channels
+│   │   │   └── styles/               # Production dark-mode styles
+│   │   ├── shared/                   # Cross-process contracts, types & schemas
+│   │   └── tests/                    # 107 Vitest unit & integration test suites
+│   ├── electron-builder.json         # Windows packaging configuration
+│   ├── package.json                  # Desktop dependencies & scripts
+│   ├── tsconfig.json                 # TypeScript compiler configuration
+│   └── vite.config.ts                # Vite renderer bundle configuration
 │
-├── 📂 config/
-│   ├── flow.config.example.json    # Configuration template
-│   └── selectors.map.json          # UI selectors (auto-populated)
+├── src/                              # Model Context Protocol (MCP) Server
+│   ├── browser/                      # CDP browser connection & anti-detection
+│   ├── navigation/                   # Google Flow project navigation
+│   ├── queue/                        # Single-job concurrency queue
+│   ├── tools/                        # 15+ MCP agentic tool definitions
+│   └── utils/                        # Logging, file management & error handling
 │
-├── 📂 scripts/
-│   ├── start-browser.sh            # Launch Chrome + CDP
-│   ├── start-mcp.sh                # Start the MCP server
-│   ├── test-flow-image.sh          # Quick integration test
-│   └── register-opencode.sh        # Register in OpenCode config
-│
-├── 📂 src/
-│   ├── index.js                    # MCP server entry point
-│   │
-│   ├── 📁 browser/                 # Chrome & CDP management
-│   │   ├── connect.js              # CDP connection manager
-│   │   ├── launch-profile.js       # Chrome profile launcher
-│   │   ├── account-check.js        # Verify Google account
-│   │   └── safe-actions.js         # Safe click, fill, detection
-│   │
-│   ├── 📁 tools/                   # All MCP tool implementations
-│   │   ├── flow-open.js            # Navigate to Flow
-│   │   ├── flow-status.js          # Connection status
-│   │   ├── generate-image.js       # Image generation
-│   │   ├── generate-video.js       # Video generation (setup only)
-│   │   ├── download-latest.js      # Download generated files
-│   │   ├── create-character.js     # Create a character
-│   │   ├── import-character.js     # Import character JSON
-│   │   ├── open-characters.js      # List characters
-│   │   ├── create-scene.js         # Create a scene
-│   │   ├── open-tools-gallery.js   # Open tools gallery
-│   │   ├── grid-architect.js       # Batch shot generation
-│   │   ├── discover-ui.js          # UI discovery & mapping
-│   │   └── use-flow-tool.js        # Generic tool opener
-│   │
-│   ├── 📁 queue/                   # Job management
-│   │   └── job-queue.js            # Single-job queue
-│   │
-│   └── 📁 utils/                   # Helpers
-│       ├── config.js               # Config loader
-│       ├── logger.js               # Structured logging
-│       ├── errors.js               # Error codes & types
-│       ├── file-manager.js         # File download/save
-│       └── screenshots.js          # Screenshot capture
-│
-└── 📂 output/                      # Generated files land here
+├── scripts/                          # Root automation & testing utilities
+├── .gitignore                        # Strict exclusions for build artifacts & credentials
+├── ARCHITECTURE_SPEC.md              # Technical architecture specification
+├── ZBOT_SPEC.md                      # Pipeline & parity specifications
+└── README.md                         # Project documentation
 ```
 
 ---
 
-## 🔧 Tools
+## 🛡️ Security, Privacy & Safety Principles
 
-All tools are organized by function for easy discovery.
-
-### 🌐 Connection & Status
-
-| Tool | Description |
-|------|-------------|
-| `flow_connect` | Launch Chrome, connect CDP, navigate to Google Flow |
-| `flow_disconnect` | Close browser and clean up all connections |
-| `flow_status` | Full status: connection, Flow loaded, account, queue state |
-| `flow_account_check` | Verify logged-in account matches configured email |
-| `flow_screenshot` | Capture a screenshot of the current Flow page |
-
-### 🎨 Image Generation
-
-| Tool | Description |
-|------|-------------|
-| `flow_generate_image` | Generate image with **Nano Banana Pro**, **Nano Banana 2**, or **Imagen 4**. Supports aspect ratios, reference images, and brand-based model selection. |
-| `flow_download_latest` | Download the most recently generated file |
-
-### 🎬 Video Generation
-
-| Tool | Description |
-|------|-------------|
-| `flow_generate_video` | Set up video generation (Omni Flash, Veo models, custom duration/ratio). ⚠️ **Stops at "ready to generate" — no credit consumed.** |
-| `flow_create_scene` | Create a video scene with characters and a text prompt |
-
-### 👤 Characters
-
-| Tool | Description |
-|------|-------------|
-| `flow_create_character` | Create a new character with name, description, and optional reference images |
-| `flow_import_character` | Import a character from a saved JSON file |
-| `flow_open_characters` | Open the characters page and list all existing characters |
-
-### 🛠️ Tools & Discovery
-
-| Tool | Description |
-|------|-------------|
-| `flow_open_tools_gallery` | Open the tools gallery and browse available tools |
-| `flow_use_tool` | Open any Flow tool by name with optional parameters |
-| `flow_use_grid_architect` | Configure Grid Architect for batch shot generation with theme prompts, visual logic, and reference images |
-| `flow_discover_ui` | Discover and map all interactive elements (buttons, inputs, headings) on any Flow page |
-
-### 📊 Queue & Monitoring
-
-| Tool | Description |
-|------|-------------|
-| `flow_queue_status` | Check job queue: active job, pending queue, completed and failed history |
-
----
-
-## ⚙️ Configuration
-
-Edit `config/flow.config.json` (copy from `config/flow.config.example.json`):
-
-### 🔑 Essential
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `expectedAccount` | `string` | — | Your Google account email ✅ **REQUIRED** |
-| `chromeProfile` | `string` | `"Profile 3"` | Chrome profile directory name |
-| `chromeUserDataDir` | `string` | — | Full path to Chrome user data directory ✅ **REQUIRED** |
-| `flowUrl` | `string` | *Flow labs URL* | Google Flow URL (supports `fr`, `en` locales) |
-
-### 🔧 Advanced
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `cdpPort` | `number` | `9222` | Chrome DevTools Protocol port |
-| `browserMode` | `string` | `"direct-cdp"` | `"direct-cdp"` (recommended) or `"playwright"` |
-| `headless` | `boolean` | `true` | Run Chrome in headless mode |
-| `locale` | `string` | `"fr"` | UI locale (`"fr"`, `"en"`, etc.) |
-
-### ⏱️ Timing
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `jobTimeoutMs` | `300000` (5 min) | Max job execution time |
-| `actionDelayMs` | `800` | Delay between UI actions (anti-detection) |
-| `generationPollIntervalMs` | `5000` (5s) | How often to poll for generation completion |
-| `maxPollAttempts` | `120` | Max polling attempts before timeout |
-| `downloadWaitMs` | `30000` (30s) | Wait time for file download |
-
-### 🎨 Models & Ratios
-
-| Key | Description |
-|-----|-------------|
-| `imageModels` | Available models: `Nano Banana Pro`, `Nano Banana 2`, `Imagen 4` |
-| `videoModels` | Available models: `Omni Flash`, `Veo 3.1 - Lite/Fast/Quality` |
-| `ratios` | Supported aspect ratios: `16:9`, `4:3`, `1:1`, `3:4`, `9:16` |
-
----
-
-## 🛡️ Safety & Ethics
-
-This project is built with **safety-first design**:
-
-| ✅ Principle | How it's enforced |
-|-------------|-------------------|
-| **Your account only** | Uses your own Google profile — never asks for or stores passwords |
-| **No credential theft** | Never exports cookies, tokens, or session data |
-| **No bypass** | Stops cleanly on captcha, login walls, or verification challenges |
-| **No parallel abuse** | Single-job queue prevents concurrent generation |
-| **Credit-safe video** | Video generation sets up parameters but stops before the final "Generate" click (no credit consumed) |
-| **Config backup** | Backs up OpenCode config before any modification |
-
-> ⚠️ **This is a browser automation tool.** Use it responsibly and in accordance with Google's Terms of Service.
-
----
-
-## ❓ FAQ
-
-### Getting Started
-
-<details>
-<summary><strong>Which Chrome profile should I use?</strong></summary>
-
-Open Chrome and go to `chrome://version/`. The **Profile Path** shows both your user data directory and profile name. For example:
-- `/home/you/.config/google-chrome/Profile 3` → `chromeUserDataDir: "/home/you/.config/google-chrome"`, `chromeProfile: "Profile 3"`
-
-You need a profile where you're already logged into your Google account.
-</details>
-
-<details>
-<summary><strong>Can I use this without OpenCode?</strong></summary>
-
-Yes! Any MCP-compatible client (Claude Desktop, Continue.dev, etc.) can connect to this server. Just point your MCP config to `node /path/to/src/index.js`.
-</details>
-
-### Troubleshooting
-
-<details>
-<summary><strong>Chrome doesn't start</strong></summary>
-
-Make sure Chrome is installed at the expected path. On Linux, the default is `/opt/google/chrome/chrome`. Edit `scripts/start-browser.sh` to set the correct `CHROME` path for your system.
-</details>
-
-<details>
-<summary><strong>CDP port already in use</strong></summary>
-
-The script checks for existing Chrome instances on port 9222. If something else is using that port, you can change `cdpPort` in `config/flow.config.json` (and update the script's `CDP_PORT` variable).
-</details>
-
-<details>
-<summary><strong>"Expected account mismatch"</strong></summary>
-
-Verify that `expectedAccount` in `config/flow.config.json` matches the email logged into your Chrome profile. Use `flow_account_check` to verify.
-</details>
-
-<details>
-<summary><strong>Flow UI changed and tools don't work</strong></summary>
-
-Run `flow_discover_ui` to re-map selectors. The `selectors.map.json` will auto-update with new UI element positions.
-</details>
-
-### Usage
-
-<details>
-<summary><strong>How do I generate images?</strong></summary>
-
-Your AI agent calls `flow_generate_image` with a text prompt. Optionally specify model (`Nano Banana 2` is default), aspect ratio, and reference images. The server waits for completion and makes the file available for download.
-</details>
-
-<details>
-<summary><strong>Can I generate videos for free?</strong></summary>
-
-`flow_generate_video` sets up the video parameters (model, ratio, duration) but **stops before clicking Generate**. This lets you review the setup before consuming credits. The actual generation requires a paid Google Flow subscription.
-</details>
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please follow these guidelines:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Commit your changes (`git commit -m 'Add my feature'`)
-4. Push to the branch (`git push origin feature/my-feature`)
-5. Open a Pull Request
+1. **Zero Credential Exfiltration** — Infinity Flow interacts with Google Flow using direct Chrome DevTools Protocol connections to local browser sessions. Passwords, cookies, and tokens are never stored, exported, or transmitted to any external server.
+2. **Local Data Persistence** — Projects, channel delivery configs, and skills are stored locally on the user's filesystem in `%LOCALAPPDATA%`.
+3. **No Brute-Force Botting** — Automation actions include natural human delays (`actionDelayMs`), transparent window options, and clean graceful pauses when security checkpoints or captchas occur.
+4. **Non-Destructive Media Pipelines** — All AI post-processing creates safe original backups (`*_original.png` / `*_original.mp4`) before executing localized watermark mitigation.
 
 ---
 
 ## 📄 License
 
-[MIT](./LICENSE) © TMSSS05
+This project is licensed under the **MIT License**. See [LICENSE](./LICENSE) for details.
 
 ---
 
 <div align="center">
-  <sub>Built with ❤️ for the OpenCode ecosystem</sub>
-  <br>
-  <sub>
-    <a href="https://github.com/TMSSS05/google-flow-browser-mcp/issues">Report Issue</a> ·
-    <a href="https://github.com/TMSSS05/google-flow-browser-mcp/discussions">Discussion</a>
-  </sub>
+  <sub>Built by <b>Automist Labs</b></sub>
 </div>
+

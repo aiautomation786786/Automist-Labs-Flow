@@ -178,6 +178,8 @@ describe('Gemini Image Watermark Quality & Detection Hardening Suite', () => {
         expect(res.error).not.toContain('delogo');
       } finally {
         if (fs.existsSync(dummyPath)) fs.unlinkSync(dummyPath);
+        const originalBackup = path.join(__dirname, 'test_fail_image_original.png');
+        if (fs.existsSync(originalBackup)) fs.unlinkSync(originalBackup);
       }
     });
   });
