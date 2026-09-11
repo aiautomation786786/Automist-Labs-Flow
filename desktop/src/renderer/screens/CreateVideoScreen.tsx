@@ -22,6 +22,7 @@ import { ScriptValidator } from '../../shared/ScriptValidator';
 import {
   SparklesIcon,
   CheckIcon,
+  CloseIcon,
   ArrowRightIcon,
   ChevronLeftIcon,
   PlusIcon,
@@ -97,6 +98,14 @@ const DEFAULT_ENGINES: TtsEngineMetadata[] = [
   { id: 'ai33', name: 'ai33.pro', badge: 'API KEY', audioExtension: 'mp3', supportsWordTimings: true, isAvailable: false, unavailableReason: 'ai33 API key not configured in Settings', requiresConfig: true },
   { id: 'famespeak', name: 'FameSpeak', badge: 'API KEY', audioExtension: 'mp3', supportsWordTimings: false, isAvailable: false, unavailableReason: 'FameSpeak API key not configured in Settings', requiresConfig: true },
 ];
+
+const ENGINE_DISPLAY_NAMES: Record<string, string> = {
+  'edge-tts': 'Edge TTS',
+  'kokoro': 'Kokoro',
+  'azure': 'Azure Speech',
+  'ai33': 'ai33.pro',
+  'famespeak': 'FameSpeak',
+};
 
 const DEFAULT_PROVIDER_VOICES: Record<TtsProviderId, VoiceInfo[]> = {
   'edge-tts': [
@@ -244,6 +253,8 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
   const [selectedEngineTab, setSelectedEngineTab] = useState<TtsProviderId>('edge-tts');
   const [ttsEngines, setTtsEngines] = useState<TtsEngineMetadata[]>([]);
   const [allVoices, setAllVoices] = useState<VoiceInfo[]>([]);
+  const [voiceSearchQuery, setVoiceSearchQuery] = useState<string>('');
+  const [voiceGenderFilter, setVoiceGenderFilter] = useState<'all' | 'male' | 'female'>('all');
 
   // Images-only mode prompts
   const [imagesOnlyPrompts, setImagesOnlyPrompts] = useState<string>('');
@@ -331,6 +342,82 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
   const validation = useMemo(() => {
     return ScriptValidator.validate({ title, scenes });
   }, [title, scenes]);
+
+  // Real project readiness validation (Step 6 & launch guard)
+  const readiness = useMemo(() => {
+    const isScriptValid = scenes.length > 0 && validation.isValid;
+    const isFormatValid = Boolean(aspectRatio && outputResolution);
+    const isVoiceValid = Boolean(voiceId && voiceEngine);
+    const isSubtitlesValid = !subtitlesEnabled || Boolean(subtitleStyle);
+    const isMotionValid = !motionEnabled || Boolean(motionStyle);
+
+    // Selected voice label
+    const selectedVoiceObj = allVoices.find((v) => v.id === voiceId) ||
+      (DEFAULT_PROVIDER_VOICES[voiceEngine as TtsProviderId] || []).find((v) => v.id === voiceId);
+    const voiceDisplayName = selectedVoiceObj?.name || voiceId || 'None selected';
+
+    const items = [
+      {
+        id: 'script',
+        label: 'Script loaded',
+        isReady: isScriptValid,
+        required: true,
+        detail: scenes.length === 0
+          ? 'No scenes defined in script'
+          : !validation.isValid
+          ? (validation.errors[0]?.message || 'Script has validation errors')
+          : `${scenes.length} scene${scenes.length === 1 ? '' : 's'} (${validation.totalWords} words, ~${validation.estimatedDurationSeconds}s)`,
+      },
+      {
+        id: 'format',
+        label: 'Format selected',
+        isReady: isFormatValid,
+        required: true,
+        detail: `${aspectRatio === '9:16' ? '9:16 Vertical' : '16:9 Landscape'} · ${outputResolution === '4k' ? '4K Ultra HD' : outputResolution === '1080p' ? '1080p Full HD' : 'Original Resolution'}`,
+      },
+      {
+        id: 'voice',
+        label: 'Voice selected',
+        isReady: isVoiceValid,
+        required: true,
+        detail: isVoiceValid
+          ? `${ENGINE_DISPLAY_NAMES[voiceEngine] || voiceEngine} · ${voiceDisplayName}`
+          : 'No narrator voice selected',
+      },
+      {
+        id: 'subtitles',
+        label: 'Subtitles configured',
+        isReady: isSubtitlesValid,
+        required: true,
+        detail: subtitlesEnabled
+          ? `Enabled · ${subtitleStyle} (${subtitleConfig.fontSize || 32}px, ${subtitleConfig.position || 'bottom'})`
+          : 'Disabled (No subtitles)',
+      },
+      {
+        id: 'motion',
+        label: 'Motion configured',
+        isReady: isMotionValid,
+        required: true,
+        detail: motionEnabled
+          ? `Enabled · ${MOTION_NAMES[motionStyle] || motionStyle} (${transitionStyle === 'cross_fade' ? `Crossfade ${crossfadeDuration}s` : 'Hard Cut'})`
+          : 'Disabled (Static frames)',
+      },
+      {
+        id: 'music',
+        label: 'Background music',
+        isReady: true,
+        required: false,
+        detail: musicEnabled
+          ? (musicPath ? `${musicPath.split(/[/\\]/).pop()} (${Math.round(musicVolume * 100)}% vol)` : 'Enabled · Voiceover only')
+          : 'Disabled (Voiceover only)',
+      },
+    ];
+
+    const blockingIssues = items.filter((i) => !i.isReady);
+    const allReady = isScriptValid && isFormatValid && isVoiceValid && isSubtitlesValid && isMotionValid;
+
+    return { items, allReady, blockingIssues };
+  }, [scenes, validation, aspectRatio, outputResolution, voiceId, voiceEngine, subtitlesEnabled, subtitleStyle, subtitleConfig, motionEnabled, motionStyle, transitionStyle, crossfadeDuration, musicEnabled, musicPath, musicVolume, allVoices]);
 
   // Load initial draft and channels from storage
   useEffect(() => {
@@ -915,8 +1002,11 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
   // Final project creation for Full Video
   const handleCreateFullVideoProject = async () => {
     const val = ScriptValidator.validate({ title, scenes });
-    if (!val.isValid) {
-      setErrorMsg(val.errors[0]?.message || 'Cannot create video project without valid scenes.');
+    if (!val.isValid || !readiness.allReady) {
+      const err = !val.isValid
+        ? (val.errors[0]?.message || 'Cannot create video project without valid scenes.')
+        : (readiness.blockingIssues[0]?.detail || 'Cannot create video project: configuration incomplete.');
+      setErrorMsg(err);
       return;
     }
 
@@ -3770,6 +3860,26 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
               const providerVoices = allVoices.filter((v) => v.provider === selectedEngineTab);
               const displayVoices = providerVoices.length > 0 ? providerVoices : (DEFAULT_PROVIDER_VOICES[selectedEngineTab] || []);
 
+              // Filter voices by search query and gender
+              const filteredVoices = displayVoices.filter((v) => {
+                const q = voiceSearchQuery.trim().toLowerCase();
+                const matchesSearch = !q ||
+                  v.name.toLowerCase().includes(q) ||
+                  (v.locale && v.locale.toLowerCase().includes(q)) ||
+                  v.id.toLowerCase().includes(q);
+                const matchesGender = voiceGenderFilter === 'all' ||
+                  (v.gender && v.gender.toLowerCase() === voiceGenderFilter);
+                return matchesSearch && matchesGender;
+              });
+
+              // Active selected voice object
+              const selectedVoice = displayVoices.find((v) => v.id === voiceId) ||
+                allVoices.find((v) => v.id === voiceId) ||
+                DEFAULT_PROVIDER_VOICES[selectedEngineTab]?.find((v) => v.id === voiceId);
+
+              const isSelectedVoicePlaying = previewingVoiceId === voiceId;
+              const engineDisplayName = ENGINE_DISPLAY_NAMES[selectedEngineTab] || currentEngine.name;
+
               return (
                 <div
                   style={{
@@ -3782,197 +3892,308 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                     gap: '20px',
                   }}
                 >
+                  {/* Header */}
                   <div>
                     <h2 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-                      Voice & TTS Narration Foundation (ZBot Engine Selection)
+                      Voice & TTS Narration Foundation
                     </h2>
                     <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-                      Select your speech engine and narrator persona. Automatic ZBot fallback protects video generation against API or quota failures.
+                      Select your speech engine, choose a narrator persona, and configure background soundtrack audio.
                     </p>
                   </div>
 
-                  {/* Engine Selection Tabs */}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                    {activeEngines.map((engine) => {
-                      const isSelected = selectedEngineTab === engine.id;
-                      const badgeColor =
-                        engine.badge === 'FREE' ? '#10b981' : engine.badge === 'LOCAL' ? '#3b82f6' : '#a855f7';
-                      const badgeBg =
-                        engine.badge === 'FREE'
-                          ? 'rgba(16, 185, 129, 0.12)'
-                          : engine.badge === 'LOCAL'
-                          ? 'rgba(59, 130, 246, 0.12)'
-                          : 'rgba(168, 85, 247, 0.12)';
+                  {/* 1. VOICE ENGINE TABS */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+                      Voice Engine
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                      {activeEngines.map((engine) => {
+                        const isSelected = selectedEngineTab === engine.id;
+                        const displayName = ENGINE_DISPLAY_NAMES[engine.id] || engine.name;
+                        const badgeColor =
+                          engine.badge === 'FREE' ? '#10b981' : engine.badge === 'LOCAL' ? '#3b82f6' : '#a855f7';
+                        const badgeBg =
+                          engine.badge === 'FREE'
+                            ? 'rgba(16, 185, 129, 0.12)'
+                            : engine.badge === 'LOCAL'
+                            ? 'rgba(59, 130, 246, 0.12)'
+                            : 'rgba(168, 85, 247, 0.12)';
 
-                      return (
-                        <button
-                          key={engine.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedEngineTab(engine.id);
-                            setVoiceEngine(engine.id);
-                            persistDraft({ voiceEngine: engine.id });
+                        return (
+                          <button
+                            key={engine.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedEngineTab(engine.id);
+                              setVoiceEngine(engine.id);
+                              persistDraft({ voiceEngine: engine.id });
 
-                            const voicesForEng = allVoices.filter((v) => v.provider === engine.id);
-                            const firstVoice = voicesForEng[0]?.id || DEFAULT_PROVIDER_VOICES[engine.id]?.[0]?.id;
-                            if (firstVoice) {
-                              setVoiceId(firstVoice);
-                              persistDraft({ voiceId: firstVoice, voiceEngine: engine.id });
-                            }
-                          }}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            padding: '8px 14px',
-                            borderRadius: 'var(--radius-sm)',
-                            border: isSelected ? '2px solid #a855f7' : '1px solid var(--border-color)',
-                            backgroundColor: isSelected ? 'rgba(168, 85, 247, 0.12)' : 'var(--bg-subtle)',
-                            color: isSelected ? '#c084fc' : 'var(--text-primary)',
-                            cursor: 'pointer',
-                            fontSize: '12.5px',
-                            fontWeight: isSelected ? 700 : 500,
-                          }}
-                        >
-                          <span
-                            style={{
-                              width: '8px',
-                              height: '8px',
-                              borderRadius: '50%',
-                              backgroundColor: engine.isAvailable ? '#10b981' : '#f59e0b',
+                              const voicesForEng = allVoices.filter((v) => v.provider === engine.id);
+                              const firstVoice = voicesForEng[0]?.id || DEFAULT_PROVIDER_VOICES[engine.id]?.[0]?.id;
+                              if (firstVoice) {
+                                setVoiceId(firstVoice);
+                                persistDraft({ voiceId: firstVoice, voiceEngine: engine.id });
+                              }
                             }}
-                          />
-                          <span>{engine.name}</span>
-                          <span
                             style={{
-                              fontSize: '9.5px',
-                              fontWeight: 700,
-                              padding: '1px 5px',
-                              borderRadius: '3px',
-                              backgroundColor: badgeBg,
-                              color: badgeColor,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              padding: '8px 14px',
+                              borderRadius: 'var(--radius-sm)',
+                              border: isSelected ? '2px solid #a855f7' : '1px solid var(--border-color)',
+                              backgroundColor: isSelected ? 'rgba(168, 85, 247, 0.12)' : 'var(--bg-subtle)',
+                              color: isSelected ? '#c084fc' : 'var(--text-primary)',
+                              cursor: 'pointer',
+                              fontSize: '12.5px',
+                              fontWeight: isSelected ? 700 : 500,
+                              transition: 'all 0.15s ease',
                             }}
                           >
-                            {engine.badge}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* Engine Status Banner */}
-                  {!currentEngine.isAvailable ? (
-                    <div
-                      style={{
-                        padding: '10px 14px',
-                        borderRadius: 'var(--radius-sm)',
-                        backgroundColor: 'rgba(245, 158, 11, 0.1)',
-                        border: '1px solid rgba(245, 158, 11, 0.3)',
-                        fontSize: '12px',
-                        color: '#f59e0b',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                      }}
-                    >
-                      <AlertCircleIcon size={16} />
-                      <span>
-                        <strong>{currentEngine.name} is offline:</strong> {currentEngine.unavailableReason || 'Requires configuration in Settings.'} (ZBot fallback will automatically synthesize using Kokoro or Edge TTS if this engine is used during generation).
-                      </span>
-                    </div>
-                  ) : (
-                    <div
-                      style={{
-                        padding: '10px 14px',
-                        borderRadius: 'var(--radius-sm)',
-                        backgroundColor: 'rgba(16, 185, 129, 0.08)',
-                        border: '1px solid rgba(16, 185, 129, 0.25)',
-                        fontSize: '11.5px',
-                        color: '#10b981',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                      }}
-                    >
-                      <CheckIcon size={14} />
-                      <span>
-                        <strong>{currentEngine.name} is ready:</strong>{' '}
-                        {currentEngine.supportsWordTimings
-                          ? 'Exact word boundary timing synchronization supported.'
-                          : 'High fidelity audio narration synced to scene durations.'}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Voices Grid */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                    {displayVoices.map((v) => {
-                      const isSel = voiceId === v.id;
-                      const isPlaying = previewingVoiceId === v.id;
-
-                      return (
-                        <div
-                          key={v.id}
-                          onClick={() => {
-                            setErrorMsg(null);
-                            setVoiceId(v.id);
-                            setVoiceEngine(selectedEngineTab);
-                            persistDraft({ voiceId: v.id, voiceEngine: selectedEngineTab });
-                          }}
-                          style={{
-                            padding: '16px',
-                            borderRadius: 'var(--radius-md)',
-                            border: isSel ? '2px solid #a855f7' : '1px solid var(--border-color)',
-                            backgroundColor: isSel ? 'rgba(168, 85, 247, 0.12)' : 'var(--bg-subtle)',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '6px',
-                          }}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: '13px', fontWeight: 700, color: isSel ? '#c084fc' : 'var(--text-primary)' }}>
-                              {v.name}
-                            </span>
-                            {isSel && <CheckIcon size={14} color="#a855f7" />}
-                          </div>
-
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>
-                              {v.locale || 'en-US'} {v.gender ? `• ${v.gender}` : ''}
-                            </span>
-                            {v.tier === 'premium' && (
-                              <span
-                                style={{
-                                  fontSize: '9.5px',
-                                  padding: '1px 5px',
-                                  borderRadius: '3px',
-                                  backgroundColor: 'rgba(168, 85, 247, 0.15)',
-                                  color: '#a855f7',
-                                  fontWeight: 600,
-                                }}
-                              >
-                                Premium
-                              </span>
-                            )}
-                          </div>
-
-                          <div style={{ marginTop: '6px' }}>
-                            <button
-                              type="button"
-                              onClick={(e) => handlePreviewVoice(selectedEngineTab, v.id, e)}
-                              className="btn-secondary"
-                              style={{ padding: '4px 10px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            <span
+                              style={{
+                                width: '8px',
+                                height: '8px',
+                                borderRadius: '50%',
+                                backgroundColor: engine.isAvailable ? '#10b981' : '#f59e0b',
+                                flexShrink: 0,
+                              }}
+                            />
+                            <span>{displayName}</span>
+                            <span
+                              style={{
+                                fontSize: '9.5px',
+                                fontWeight: 700,
+                                padding: '1px 5px',
+                                borderRadius: '3px',
+                                backgroundColor: badgeBg,
+                                color: badgeColor,
+                              }}
                             >
-                              {isPlaying ? '⏹ Stop Preview' : '▶ Test Voice'}
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                              {engine.badge}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Engine Status Line */}
+                    {!currentEngine.isAvailable ? (
+                      <div
+                        style={{
+                          padding: '9px 12px',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: 'rgba(245, 158, 11, 0.08)',
+                          border: '1px solid rgba(245, 158, 11, 0.25)',
+                          fontSize: '11.5px',
+                          color: '#f59e0b',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                        }}
+                      >
+                        <AlertCircleIcon size={14} />
+                        <span>
+                          <strong>{engineDisplayName} requires configuration:</strong>{' '}
+                          {currentEngine.unavailableReason || 'Requires API key or local model setup in Settings.'}
+                        </span>
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: 'rgba(16, 185, 129, 0.06)',
+                          border: '1px solid rgba(16, 185, 129, 0.2)',
+                          fontSize: '11.5px',
+                          color: '#10b981',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                        }}
+                      >
+                        <CheckIcon size={13} />
+                        <span>
+                          <strong>{engineDisplayName} is ready:</strong>{' '}
+                          {currentEngine.supportsWordTimings
+                            ? 'High quality neural speech with exact word-level synchronization.'
+                            : 'High fidelity audio narration synchronized to scene durations.'}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Background Music Card (ZBot Parity §7 & Audio Architecture) */}
+                  {/* 2. NARRATOR VOICE (Dedicated Active Summary Card) */}
+                  <div
+                    style={{
+                      padding: '16px 18px',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'rgba(168, 85, 247, 0.06)',
+                      border: '1px solid rgba(168, 85, 247, 0.25)',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: '16px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: '#c084fc', letterSpacing: '0.05em' }}>
+                        Active Narrator Voice
+                      </div>
+                      <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                        {selectedVoice?.name || voiceId}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        {engineDisplayName} · {selectedVoice?.locale || 'en-US'}{selectedVoice?.gender ? ` · ${selectedVoice.gender.charAt(0).toUpperCase() + selectedVoice.gender.slice(1)}` : ''}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={(e) => handlePreviewVoice(selectedEngineTab, voiceId, e)}
+                      className={isSelectedVoicePlaying ? 'btn-primary' : 'btn-secondary'}
+                      style={{
+                        padding: '8px 16px',
+                        fontSize: '12px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {isSelectedVoicePlaying ? '⏹ Stop Preview' : '▶ Preview Voice'}
+                    </button>
+                  </div>
+
+                  {/* 3. VOICE SELECTION / PREVIEW */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+                        Available Voices ({filteredVoices.length})
+                      </div>
+
+                      {/* Search & Gender Filters */}
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <input
+                          type="text"
+                          value={voiceSearchQuery}
+                          onChange={(e) => setVoiceSearchQuery(e.target.value)}
+                          placeholder="Filter voices..."
+                          style={{
+                            backgroundColor: 'var(--bg-subtle)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: 'var(--radius-sm)',
+                            padding: '4px 10px',
+                            fontSize: '11.5px',
+                            color: 'var(--text-primary)',
+                            width: '150px',
+                          }}
+                        />
+                        <div style={{ display: 'flex', gap: '4px', backgroundColor: 'var(--bg-subtle)', borderRadius: 'var(--radius-sm)', padding: '2px', border: '1px solid var(--border-color)' }}>
+                          {(['all', 'male', 'female'] as const).map((g) => (
+                            <button
+                              key={g}
+                              type="button"
+                              onClick={() => setVoiceGenderFilter(g)}
+                              style={{
+                                border: 'none',
+                                backgroundColor: voiceGenderFilter === g ? 'rgba(168, 85, 247, 0.2)' : 'transparent',
+                                color: voiceGenderFilter === g ? '#c084fc' : 'var(--text-secondary)',
+                                borderRadius: 'var(--radius-xs)',
+                                padding: '2px 8px',
+                                fontSize: '11px',
+                                cursor: 'pointer',
+                                fontWeight: voiceGenderFilter === g ? 600 : 400,
+                              }}
+                            >
+                              {g === 'all' ? 'All' : g.charAt(0).toUpperCase() + g.slice(1)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Bounded Scrollable Voice Grid */}
+                    <div
+                      style={{
+                        maxHeight: '260px',
+                        overflowY: 'auto',
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: '10px',
+                        paddingRight: '4px',
+                      }}
+                    >
+                      {filteredVoices.map((v) => {
+                        const isSel = voiceId === v.id;
+                        const isPlaying = previewingVoiceId === v.id;
+
+                        return (
+                          <div
+                            key={v.id}
+                            onClick={() => {
+                              setErrorMsg(null);
+                              setVoiceId(v.id);
+                              setVoiceEngine(selectedEngineTab);
+                              persistDraft({ voiceId: v.id, voiceEngine: selectedEngineTab });
+                            }}
+                            style={{
+                              padding: '12px 14px',
+                              borderRadius: 'var(--radius-md)',
+                              border: isSel ? '2px solid #a855f7' : '1px solid var(--border-color)',
+                              backgroundColor: isSel ? 'rgba(168, 85, 247, 0.12)' : 'var(--bg-subtle)',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '6px',
+                              transition: 'all 0.15s ease',
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '12.5px', fontWeight: 700, color: isSel ? '#c084fc' : 'var(--text-primary)' }}>
+                                {v.name}
+                              </span>
+                              {isSel && <CheckIcon size={14} color="#a855f7" />}
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                {v.locale || 'en-US'} {v.gender ? `• ${v.gender.charAt(0).toUpperCase() + v.gender.slice(1)}` : ''}
+                              </span>
+                              {v.tier === 'premium' && (
+                                <span
+                                  style={{
+                                    fontSize: '9px',
+                                    padding: '1px 5px',
+                                    borderRadius: '3px',
+                                    backgroundColor: 'rgba(168, 85, 247, 0.15)',
+                                    color: '#a855f7',
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  Premium
+                                </span>
+                              )}
+                            </div>
+
+                            <div style={{ marginTop: '4px' }}>
+                              <button
+                                type="button"
+                                onClick={(e) => handlePreviewVoice(selectedEngineTab, v.id, e)}
+                                className="btn-secondary"
+                                style={{ padding: '3px 9px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                              >
+                                {isPlaying ? '⏹ Stop' : '▶ Preview'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 4. BACKGROUND MUSIC */}
                   <div
                     style={{
                       padding: '16px 18px',
@@ -3987,10 +4208,10 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
                         <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                          Background Music & Audio Mixing
+                          Background Music
                         </div>
                         <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                          Optional background soundtrack layered beneath spoken narration with automatic ducking.
+                          Layer a soundtrack beneath spoken narration with automatic ducking during voiceover.
                         </div>
                       </div>
                       <button
@@ -4007,7 +4228,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                       </button>
                     </div>
 
-                    {musicEnabled && (
+                    {musicEnabled ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', paddingTop: '6px' }}>
                         {/* Audio File Selection */}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
@@ -4018,10 +4239,10 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                               className="btn-secondary"
                               style={{ padding: '6px 12px', fontSize: '11.5px', flexShrink: 0 }}
                             >
-                              Browse Audio File...
+                              Select Music Track...
                             </button>
                             <span style={{ fontSize: '12px', color: musicPath ? 'var(--text-primary)' : 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {musicPath ? `🎵 ${musicPath.split(/[/\\]/).pop()}` : 'No audio file selected'}
+                              {musicPath ? `🎵 ${musicPath.split(/[/\\]/).pop()}` : 'No music track selected'}
                             </span>
                           </div>
                           {musicPath && (
@@ -4042,7 +4263,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', alignItems: 'center' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                             <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', flexShrink: 0 }}>
-                              Music Volume: {Math.round(musicVolume * 100)}%
+                              Volume: {Math.round(musicVolume * 100)}%
                             </label>
                             <input
                               type="range"
@@ -4061,7 +4282,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
 
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '10px' }}>
                             <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                              Sidechain Ducking:
+                              Auto Ducking:
                             </span>
                             <button
                               type="button"
@@ -4077,28 +4298,61 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                             </button>
                           </div>
                         </div>
-
-                        {/* FinalAudioMixer Architecture Notice */}
-                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
-                          <strong>Audio Engine:</strong> FinalAudioMixer loops the soundtrack indefinitely, automatically attenuates volume during spoken words via sidechain compression, normalizes overall loudness to broadcast -14 LUFS, and cleanly fades out audio over the final 1.5 seconds.
-                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        No background music · Spoken narration only
                       </div>
                     )}
                   </div>
 
-                  {/* ZBot Fallback Architecture Banner */}
+                  {/* 5. PRE-RENDER CONFIGURATION OVERVIEW */}
                   <div
                     style={{
-                      padding: '12px 16px',
+                      padding: '16px',
                       borderRadius: 'var(--radius-md)',
-                      backgroundColor: 'rgba(168, 85, 247, 0.08)',
-                      border: '1px solid rgba(168, 85, 247, 0.25)',
-                      fontSize: '12px',
-                      color: 'var(--text-primary)',
-                      lineHeight: 1.45,
+                      backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                      border: '1px solid var(--border-color)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
                     }}
                   >
-                    <strong>ZBot Resilient Fallback Protection:</strong> In accordance with the ZBot specification, narration synthesis follows an automatic downgrade chain: <em>Selected Engine → 1 Retry → Kokoro (Local ONNX) → Edge TTS (Free Cloud)</em>. A missing voice, invalid key, or quota exhaustion will never fail your video generation. Voice previews strictly isolate engines and will never lie with cross-fallback audio.
+                    <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+                      Pre-Render Configuration
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
+                      <div style={{ fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '10.5px' }}>Format & Resolution</span>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                          {aspectRatio === '9:16' ? '9:16 Vertical' : '16:9 Landscape'} · {outputResolution === '4k' ? '4K Ultra HD' : outputResolution === '1080p' ? '1080p Full HD' : 'Original'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '10.5px' }}>Narrator Voice</span>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                          {engineDisplayName} · {selectedVoice?.name || voiceId}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '10.5px' }}>Background Music</span>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                          {musicEnabled && musicPath ? `${musicPath.split(/[/\\]/).pop()} (${Math.round(musicVolume * 100)}%)` : musicEnabled ? 'Music ON (No track)' : 'Disabled'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '10.5px' }}>Subtitles</span>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                          {subtitlesEnabled ? `${subtitleStyle} (${subtitleConfig.fontSize || 32}px)` : 'Disabled'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '10.5px' }}>Camera Motion</span>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                          {motionEnabled ? `${MOTION_NAMES[motionStyle] || motionStyle} (${transitionStyle === 'cross_fade' ? 'Crossfade' : 'Hard Cut'})` : 'Disabled'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               );
@@ -4192,13 +4446,59 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                   </div>
                 </div>
 
-                {/* Readiness Banner */}
-                <div style={{ padding: '12px 16px', borderRadius: 'var(--radius-sm)', backgroundColor: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', fontSize: '12px', color: '#10b981', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <CheckIcon size={16} />
-                  <span>
-                    <strong>Production Ready:</strong> All configuration parameters validated. Launch the autonomous multi-stage rendering pipeline below.
-                  </span>
-                </div>
+                {/* Real Readiness Validation Banner */}
+                {readiness.allReady ? (
+                  <div
+                    style={{
+                      padding: '16px 20px',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'rgba(16, 185, 129, 0.08)',
+                      border: '1px solid rgba(16, 185, 129, 0.3)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#10b981', fontWeight: 700, fontSize: '13.5px' }}>
+                      <CheckIcon size={16} />
+                      <span>Ready to Create — All Configuration Parameters Validated</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      {readiness.items.map((item) => (
+                        <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <CheckIcon size={13} color="#10b981" />
+                          <span><strong style={{ color: 'var(--text-primary)' }}>{item.label}:</strong> {item.detail}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      padding: '16px 20px',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#ef4444', fontWeight: 700, fontSize: '13.5px' }}>
+                      <AlertCircleIcon size={16} />
+                      <span>Not Ready — Configuration Incomplete</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      <span>The following required items must be resolved before creating your project:</span>
+                      {readiness.blockingIssues.map((issue) => (
+                        <div key={issue.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#f87171' }}>
+                          <CloseIcon size={13} />
+                          <span><strong>{issue.label}:</strong> {issue.detail}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -4233,7 +4533,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                 {step === 5 && (
                   <button
                     type="button"
-                    disabled={isSubmitting || scenes.length === 0}
+                    disabled={isSubmitting || !readiness.allReady}
                     onClick={handleCreateFullVideoProject}
                     className="btn-secondary"
                     style={{
@@ -4242,6 +4542,8 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                       display: 'flex',
                       alignItems: 'center',
                       gap: '6px',
+                      opacity: (!readiness.allReady || isSubmitting) ? 0.5 : 1,
+                      cursor: (!readiness.allReady || isSubmitting) ? 'not-allowed' : 'pointer',
                     }}
                   >
                     <SparklesIcon size={13} />
@@ -4256,18 +4558,20 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                 ) : (
                   <button
                     type="button"
-                    disabled={isSubmitting || scenes.length === 0}
+                    disabled={isSubmitting || !readiness.allReady}
                     onClick={handleCreateFullVideoProject}
                     className="btn-primary"
                     style={{
                       padding: '10px 24px',
                       fontSize: '13px',
                       fontWeight: 700,
-                      backgroundColor: '#a855f7',
-                      borderColor: '#a855f7',
+                      backgroundColor: readiness.allReady ? '#a855f7' : '#4b5563',
+                      borderColor: readiness.allReady ? '#a855f7' : '#4b5563',
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
+                      opacity: (!readiness.allReady || isSubmitting) ? 0.5 : 1,
+                      cursor: (!readiness.allReady || isSubmitting) ? 'not-allowed' : 'pointer',
                     }}
                   >
                     <SparklesIcon size={15} />

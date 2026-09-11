@@ -215,7 +215,7 @@ describe('ZBot Create Video Parity Test Suite', () => {
     expect(screen.getByRole('button', { name: /^OFF$/i })).toBeDefined();
   });
 
-  it('6. Step 5 (Voice & Music): renders 5 TTS engines and Background Music controls with ducking', async () => {
+  it('6. Step 5 (Voice & Music): renders 5 TTS engines, dedicated Narrator card, search, music controls and removed dummy text', async () => {
     await setupScreen();
 
     // Step 1 -> Step 2 -> Step 3 -> Step 4 -> Step 5
@@ -225,12 +225,34 @@ describe('ZBot Create Video Parity Test Suite', () => {
     fireEvent.click(screen.getByRole('button', { name: /Next Step/i }));
 
     expect(screen.getByText(/Voice & TTS Narration Foundation/i)).toBeDefined();
-    expect(screen.getByText(/Background Music & Audio Mixing/i)).toBeDefined();
+    expect(screen.getAllByText(/Background Music/i).length).toBeGreaterThanOrEqual(1);
 
-    // Turn music ON to expose ducking and audio engine details
+    // 1. Five TTS Engines rendered in tab bar
+    expect(screen.getByRole('button', { name: /Edge TTS/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Kokoro/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Azure Speech/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /ai33\.pro/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /FameSpeak/i })).toBeDefined();
+
+    // 2. Dedicated active narrator voice card
+    expect(screen.getByText(/Active Narrator Voice/i)).toBeDefined();
+    expect(screen.getByRole('button', { name: /▶ Preview Voice/i })).toBeDefined();
+
+    // 3. Voice list & search input
+    expect(screen.getByPlaceholderText(/Filter voices/i)).toBeDefined();
+
+    // 4. Background Music master switch
     fireEvent.click(screen.getByRole('button', { name: /Music OFF/i }));
-    expect(screen.getByText(/Sidechain Ducking:/i)).toBeDefined();
-    expect(screen.getByText(/FinalAudioMixer loops the soundtrack indefinitely/i)).toBeDefined();
+    expect(screen.getByRole('button', { name: /Music ON/i })).toBeDefined();
+    expect(screen.getByText(/Auto Ducking:/i)).toBeDefined();
+    expect(screen.getByRole('button', { name: /Select Music Track\.\.\./i })).toBeDefined();
+
+    // 5. Pre-Render Configuration Overview
+    expect(screen.getByText(/Pre-Render Configuration/i)).toBeDefined();
+
+    // 6. Verify internal fallback and technical dummy text are completely removed
+    expect(screen.queryByText(/FinalAudioMixer loops the soundtrack indefinitely/i)).toBeNull();
+    expect(screen.queryByText(/ZBot Resilient Fallback Protection/i)).toBeNull();
   });
 
   it('7. Step 6 (Review & Launch): displays full parameter summary and dispatches complete VideoFactoryConfig', async () => {
@@ -279,5 +301,29 @@ describe('ZBot Create Video Parity Test Suite', () => {
     expect(createdConfig?.transitionStyle).toBe('cross_fade');
     expect(createdConfig?.musicEnabled).toBe(true);
     expect(onProjectCreated).toHaveBeenCalledWith('parity_proj_999');
+  });
+
+  it('8. Step 6 (Readiness Validation): displays real checklist and validates configuration', async () => {
+    await setupScreen();
+
+    // Advance to Step 6
+    fireEvent.click(screen.getByRole('button', { name: /Next Step/i })); // to 2
+    fireEvent.click(screen.getByRole('button', { name: /Next Step/i })); // to 3
+    fireEvent.click(screen.getByRole('button', { name: /Next Step/i })); // to 4
+    fireEvent.click(screen.getByRole('button', { name: /Next Step/i })); // to 5
+    fireEvent.click(screen.getByRole('button', { name: /Next: Review & Launch/i })); // to 6
+
+    // In a fully configured project, displays Ready to Create with all checkmarks
+    expect(screen.getByText(/Ready to Create — All Configuration Parameters Validated/i)).toBeDefined();
+    expect(screen.getByText(/Script loaded:/i)).toBeDefined();
+    expect(screen.getByText(/Format selected:/i)).toBeDefined();
+    expect(screen.getByText(/Voice selected:/i)).toBeDefined();
+    expect(screen.getByText(/Subtitles configured:/i)).toBeDefined();
+    expect(screen.getByText(/Motion configured:/i)).toBeDefined();
+    expect(screen.getByText(/Background music:/i)).toBeDefined();
+
+    // Launch button is enabled
+    const launchBtn = screen.getByRole('button', { name: /Create Video Project/i });
+    expect((launchBtn as HTMLButtonElement).disabled).toBe(false);
   });
 });
