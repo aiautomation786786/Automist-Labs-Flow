@@ -18,6 +18,12 @@ export interface ProjectDirectories {
   videosDir: string;
   thumbnailsDir: string;
   logsDir: string;
+  audioDir: string;
+  metadataDir: string;
+  rendersDir: string;
+  subtitlesDir: string;
+  finalDir: string;
+  musicDir: string;
 }
 
 export class AssetManager {
@@ -44,14 +50,20 @@ export class AssetManager {
     const videosDir = path.join(projectDir, 'videos');
     const thumbnailsDir = path.join(projectDir, 'thumbnails');
     const logsDir = path.join(projectDir, 'logs');
+    const audioDir = path.join(projectDir, 'audio');
+    const metadataDir = path.join(projectDir, 'metadata');
+    const rendersDir = path.join(projectDir, 'renders');
+    const subtitlesDir = path.join(projectDir, 'subtitles');
+    const finalDir = path.join(projectDir, 'final');
+    const musicDir = path.join(projectDir, 'music');
 
-    for (const dir of [projectDir, imagesDir, videosDir, thumbnailsDir, logsDir]) {
+    for (const dir of [projectDir, imagesDir, videosDir, thumbnailsDir, logsDir, audioDir, metadataDir, rendersDir, subtitlesDir, finalDir, musicDir]) {
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
     }
 
-    return { projectDir, imagesDir, videosDir, thumbnailsDir, logsDir };
+    return { projectDir, imagesDir, videosDir, thumbnailsDir, logsDir, audioDir, metadataDir, rendersDir, subtitlesDir, finalDir, musicDir };
   }
 
   /**
@@ -137,4 +149,146 @@ export class AssetManager {
 
     return { valid: true, sizeBytes: stat.size };
   }
+
+  /**
+   * Generates destination path for the final assembled MP4 video.
+   * Format: %LOCALAPPDATA%\...\projects\{projectId}\final\final.mp4
+   */
+  static getFinalDestinationPath(projectId: string, filename = 'final.mp4'): string {
+    const { finalDir } = this.ensureProjectDirectories(projectId);
+    return path.join(finalDir, filename);
+  }
+
+  /**
+   * Generates destination path for the final video thumbnail.
+   * Format: %LOCALAPPDATA%\...\projects\{projectId}\final\final-thumbnail.jpg
+   */
+  static getFinalThumbnailDestinationPath(projectId: string): string {
+    const { finalDir } = this.ensureProjectDirectories(projectId);
+    return path.join(finalDir, 'final-thumbnail.jpg');
+  }
+
+  /**
+   * Generates destination path for the final video poster image.
+   * Format: %LOCALAPPDATA%\...\projects\{projectId}\final\final-poster.jpg
+   */
+  static getFinalPosterDestinationPath(projectId: string): string {
+    const { finalDir } = this.ensureProjectDirectories(projectId);
+    return path.join(finalDir, 'final-poster.jpg');
+  }
+
+  /**
+   * Returns the project-local music directory.
+   */
+  static getMusicDir(projectId: string): string {
+    const { musicDir } = this.ensureProjectDirectories(projectId);
+    return musicDir;
+  }
+
+  /**
+   * Returns the root channels directory: %LOCALAPPDATA%\GoogleFlowApp\channels
+   */
+  static getChannelsRootDir(): string {
+    return path.join(getAppDataDir(), 'channels');
+  }
+
+  /**
+   * Returns the base directory for a specific channel.
+   */
+  static getChannelDir(channelId: string): string {
+    return path.join(this.getChannelsRootDir(), channelId);
+  }
+
+  /**
+   * Returns the default delivery directory for a specific channel.
+   */
+  static getChannelDeliveryDir(channelId: string): string {
+    return path.join(this.getChannelDir(channelId), 'delivered');
+  }
+
+  /**
+   * Ensures channel directory and its delivery directory exist.
+   */
+  static ensureChannelDirectories(channelId: string): { channelDir: string; deliveryDir: string } {
+    const channelDir = this.getChannelDir(channelId);
+    const deliveryDir = this.getChannelDeliveryDir(channelId);
+    for (const dir of [this.getChannelsRootDir(), channelDir, deliveryDir]) {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    }
+    return { channelDir, deliveryDir };
+  }
+
+  /**
+   * Returns the root history directory: %LOCALAPPDATA%\GoogleFlowApp\history
+   */
+  static getHistoryRootDir(): string {
+    return path.join(getAppDataDir(), 'history');
+  }
+
+  /**
+   * Returns the path to the delivery history JSON file.
+   */
+  static getDeliveryHistoryPath(): string {
+    return path.join(this.getHistoryRootDir(), 'delivery_history.json');
+  }
+
+  /**
+   * Ensures the history root directory exists.
+   */
+  static ensureHistoryDirectories(): { historyDir: string } {
+    const historyDir = this.getHistoryRootDir();
+    if (!fs.existsSync(historyDir)) {
+      fs.mkdirSync(historyDir, { recursive: true });
+    }
+    return { historyDir };
+  }
+
+  /**
+   * Returns the root skills directory: %LOCALAPPDATA%\GoogleFlowApp\skills
+   */
+  static getSkillsRootDir(): string {
+    return path.join(getAppDataDir(), 'skills');
+  }
+
+  /**
+   * Returns the directory for a specific skill: %LOCALAPPDATA%\GoogleFlowApp\skills\{skillId}
+   */
+  static getSkillDir(skillId: string): string {
+    return path.join(this.getSkillsRootDir(), skillId);
+  }
+
+  /**
+   * Returns the path to a skill's skill.json file.
+   */
+  static getSkillJsonPath(skillId: string): string {
+    return path.join(this.getSkillDir(skillId), 'skill.json');
+  }
+
+  /**
+   * Ensures the skill directory exists.
+   */
+  static ensureSkillDirectories(skillId: string): { skillDir: string } {
+    const skillDir = this.getSkillDir(skillId);
+    for (const dir of [this.getSkillsRootDir(), skillDir]) {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    }
+    return { skillDir };
+  }
+
+  /**
+   * Returns the directory for intermediate generated scripts:
+   * %LOCALAPPDATA%\GoogleFlowApp\generated-scripts (ZBot spec §9)
+   */
+  static getGeneratedScriptsDir(): string {
+    const dir = path.join(getAppDataDir(), 'generated-scripts');
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    return dir;
+  }
 }
+

@@ -14,14 +14,17 @@
  *  8. Four completed slots remain ordered 0, 1, 2, 3.
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import type { PromptSlotEntity } from '../shared/types';
 import { PromptSlotCard, formatMediaUrl } from '../renderer/components/PromptSlotCard';
 import { formatAssetUrl } from '../renderer/utils/assetUrl';
 import { MediaPreviewModal } from '../renderer/components/MediaPreviewModal';
 
 describe('Workspace Asset Rendering & Protocol Resolution', () => {
+  afterEach(() => {
+    cleanup();
+  });
   const sampleSlotCompleted: PromptSlotEntity = {
     slotIndex: 0,
     promptId: 'prompt_01',

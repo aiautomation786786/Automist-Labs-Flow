@@ -73,7 +73,7 @@ async function createWindow(): Promise<void> {
     minWidth: 1100,
     minHeight: 700,
     title: 'Infinity Flow',
-    backgroundColor: '#f8fafc', // Clean neutral professional background
+    backgroundColor: '#0c0d12', // Dark background to prevent startup flash per ZBot §6/§14
     ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

@@ -6,6 +6,9 @@ import { GeminiStatusScreen } from '../screens/GeminiStatusScreen';
 import { WorkspaceScreen } from '../screens/WorkspaceScreen';
 import { ProfilesScreen } from '../screens/ProfilesScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
+import { CreateVideoScreen } from '../screens/CreateVideoScreen';
+import { ChannelsScreen } from '../screens/ChannelsScreen';
+import { SkillsScreen } from '../screens/SkillsScreen';
 import {
   FolderIcon,
   ImageIcon,
@@ -15,9 +18,10 @@ import {
   SparklesIcon,
   UsersIcon,
   SettingsIcon,
+  TvIcon,
 } from './Icons';
 import { InfinityFlowMark } from './InfinityFlowLogo';
-import type { ProfileSessionSnapshot } from '../../shared/types';
+import type { ProfileSessionSnapshot, VideoFactoryMode } from '../../shared/types';
 
 type View =
   | { type: 'projects' }
@@ -31,6 +35,9 @@ type View =
   | { type: 'new_generation'; initialMode?: GenerationMode }
   | { type: 'new_project' }
   | { type: 'workspace'; projectId: string }
+  | { type: 'create_video'; initialMode?: VideoFactoryMode; initialSkillId?: string }
+  | { type: 'channels' }
+  | { type: 'skills' }
   | { type: 'profiles' }
   | { type: 'settings' };
 
@@ -53,6 +60,45 @@ interface NavSection {
 export const AppShell: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>({ type: 'projects' });
   const [readyProfilesCount, setReadyProfilesCount] = useState<number>(0);
+
+  // All-Pages-Mounted Architecture (ZBot §4 Parity):
+  // Preserve screen instances in the DOM once visited so form state, wizard progress,
+  // scroll position, and active event listeners are preserved across tab switches.
+  const [visitedViews, setVisitedViews] = useState<Set<string>>(new Set(['projects']));
+  const [activeWorkspaceProjectId, setActiveWorkspaceProjectId] = useState<string | null>(null);
+  const [createVideoProps, setCreateVideoProps] = useState<{
+    initialMode?: VideoFactoryMode;
+    initialSkillId?: string;
+  }>({});
+
+  const isGenerationStudio =
+    currentView.type === 'single_image' ||
+    currentView.type === 'single_video' ||
+    currentView.type === 'bulk_image' ||
+    currentView.type === 'bulk_video' ||
+    currentView.type === 'image_to_video' ||
+    currentView.type === 'bulk_image_to_video' ||
+    currentView.type === 'new_generation';
+
+  const viewCategory = isGenerationStudio ? 'generation_studio' : currentView.type;
+
+  useEffect(() => {
+    setVisitedViews((prev) => {
+      if (prev.has(viewCategory)) return prev;
+      const next = new Set(prev);
+      next.add(viewCategory);
+      return next;
+    });
+
+    if (currentView.type === 'workspace') {
+      setActiveWorkspaceProjectId(currentView.projectId);
+    } else if (currentView.type === 'create_video') {
+      setCreateVideoProps({
+        initialMode: currentView.initialMode,
+        initialSkillId: currentView.initialSkillId,
+      });
+    }
+  }, [currentView, viewCategory]);
 
   useEffect(() => {
     const fetchProfilesStatus = async () => {
@@ -85,6 +131,41 @@ export const AppShell: React.FC = () => {
           icon: <FolderIcon size={16} />,
           isActive: currentView.type === 'projects' || currentView.type === 'workspace',
           onClick: () => setCurrentView({ type: 'projects' }),
+        },
+      ],
+    },
+    {
+      title: 'VIDEO FACTORY',
+      items: [
+        {
+          id: 'create_video',
+          label: 'Create Video',
+          icon: <SparklesIcon size={16} />,
+          badge: 'New',
+          badgeColor: '#a855f7',
+          badgeBg: 'rgba(168, 85, 247, 0.15)',
+          isActive: currentView.type === 'create_video',
+          onClick: () => setCurrentView({ type: 'create_video' }),
+        },
+        {
+          id: 'channels',
+          label: 'Channels',
+          icon: <TvIcon size={16} />,
+          badge: 'Phase 7',
+          badgeColor: '#3b82f6',
+          badgeBg: 'rgba(59, 130, 246, 0.15)',
+          isActive: currentView.type === 'channels',
+          onClick: () => setCurrentView({ type: 'channels' }),
+        },
+        {
+          id: 'skills',
+          label: 'Skills',
+          icon: <SparklesIcon size={16} />,
+          badge: 'Phase 8',
+          badgeColor: '#10b981',
+          badgeBg: 'rgba(16, 185, 129, 0.15)',
+          isActive: currentView.type === 'skills',
+          onClick: () => setCurrentView({ type: 'skills' }),
         },
       ],
     },
@@ -269,6 +350,7 @@ export const AppShell: React.FC = () => {
                 return (
                   <button
                     key={item.id}
+                    data-testid={`nav-item-${item.id}`}
                     onClick={item.onClick}
                     style={{
                       position: 'relative',
@@ -377,72 +459,207 @@ export const AppShell: React.FC = () => {
       </nav>
 
       {/* Main Content Viewport */}
-      <main style={{ flex: 1, height: '100vh', overflow: 'hidden', backgroundColor: 'var(--bg-app)' }}>
-        {currentView.type === 'projects' && (
-          <ProjectsScreen
-            onOpenProject={(projectId) => setCurrentView({ type: 'workspace', projectId })}
-            onNavigateNewProject={() => setCurrentView({ type: 'single_image' })}
-          />
+      <main style={{ flex: 1, height: '100vh', overflow: 'hidden', backgroundColor: 'var(--bg-app)', position: 'relative' }}>
+        {visitedViews.has('projects') && (
+          <div
+            data-testid="view-container-projects"
+            style={{
+              display: currentView.type === 'projects' ? 'flex' : 'none',
+              width: '100%',
+              height: '100%',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <ProjectsScreen
+              onOpenProject={(projectId) => setCurrentView({ type: 'workspace', projectId })}
+              onNavigateNewProject={() => setCurrentView({ type: 'single_image' })}
+            />
+          </div>
         )}
 
-        {(currentView.type === 'single_image' ||
-          currentView.type === 'single_video' ||
-          currentView.type === 'bulk_image' ||
-          currentView.type === 'bulk_video' ||
-          currentView.type === 'image_to_video' ||
-          currentView.type === 'bulk_image_to_video' ||
-          currentView.type === 'new_generation') && (
-          <GenerationStudioScreen
-            key={
-              currentView.type === 'new_generation'
-                ? currentView.initialMode || 'single_image'
-                : currentView.type
-            }
-            initialMode={
-              currentView.type === 'single_image'
-                ? 'single_image'
-                : currentView.type === 'single_video'
-                ? 'single_video'
-                : currentView.type === 'bulk_image'
-                ? 'bulk_image'
-                : currentView.type === 'bulk_video'
-                ? 'bulk_video'
-                : currentView.type === 'image_to_video'
-                ? 'image_to_video'
-                : currentView.type === 'bulk_image_to_video'
-                ? 'bulk_image_to_video'
-                : currentView.initialMode || 'single_image'
-            }
-            onProjectCreated={(projectId) => setCurrentView({ type: 'workspace', projectId })}
-            onCancel={() => setCurrentView({ type: 'projects' })}
-            onNavigateProfiles={() => setCurrentView({ type: 'profiles' })}
-          />
+        {visitedViews.has('generation_studio') && (
+          <div
+            data-testid="view-container-generation-studio"
+            style={{
+              display: isGenerationStudio ? 'flex' : 'none',
+              width: '100%',
+              height: '100%',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <GenerationStudioScreen
+              key={
+                currentView.type === 'new_generation'
+                  ? currentView.initialMode || 'single_image'
+                  : currentView.type
+              }
+              initialMode={
+                currentView.type === 'single_image'
+                  ? 'single_image'
+                  : currentView.type === 'single_video'
+                  ? 'single_video'
+                  : currentView.type === 'bulk_image'
+                  ? 'bulk_image'
+                  : currentView.type === 'bulk_video'
+                  ? 'bulk_video'
+                  : currentView.type === 'image_to_video'
+                  ? 'image_to_video'
+                  : currentView.type === 'bulk_image_to_video'
+                  ? 'bulk_image_to_video'
+                  : currentView.type === 'new_generation'
+                  ? currentView.initialMode || 'single_image'
+                  : 'single_image'
+              }
+              onProjectCreated={(projectId) => setCurrentView({ type: 'workspace', projectId })}
+              onCancel={() => setCurrentView({ type: 'projects' })}
+              onNavigateProfiles={() => setCurrentView({ type: 'profiles' })}
+            />
+          </div>
         )}
 
-        {currentView.type === 'new_project' && (
-          <NewProjectScreen
-            onProjectCreated={(projectId) => setCurrentView({ type: 'workspace', projectId })}
-            onCancel={() => setCurrentView({ type: 'projects' })}
-            onNavigateProfiles={() => setCurrentView({ type: 'profiles' })}
-          />
+        {visitedViews.has('new_project') && (
+          <div
+            data-testid="view-container-new-project"
+            style={{
+              display: currentView.type === 'new_project' ? 'flex' : 'none',
+              width: '100%',
+              height: '100%',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <NewProjectScreen
+              onProjectCreated={(projectId) => setCurrentView({ type: 'workspace', projectId })}
+              onCancel={() => setCurrentView({ type: 'projects' })}
+              onNavigateProfiles={() => setCurrentView({ type: 'profiles' })}
+            />
+          </div>
         )}
 
-        {currentView.type === 'gemini_video' && (
-          <GeminiStatusScreen
-            onNavigateMode={(mode) => setCurrentView({ type: mode })}
-          />
+        {visitedViews.has('gemini_video') && (
+          <div
+            data-testid="view-container-gemini-video"
+            style={{
+              display: currentView.type === 'gemini_video' ? 'flex' : 'none',
+              width: '100%',
+              height: '100%',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <GeminiStatusScreen
+              onNavigateMode={(mode) => setCurrentView({ type: mode })}
+            />
+          </div>
         )}
 
-        {currentView.type === 'workspace' && (
-          <WorkspaceScreen
-            projectId={currentView.projectId}
-            onBackToProjects={() => setCurrentView({ type: 'projects' })}
-          />
+        {activeWorkspaceProjectId && visitedViews.has('workspace') && (
+          <div
+            data-testid="view-container-workspace"
+            style={{
+              display: currentView.type === 'workspace' ? 'flex' : 'none',
+              width: '100%',
+              height: '100%',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <WorkspaceScreen
+              key={`workspace-${activeWorkspaceProjectId}`}
+              projectId={activeWorkspaceProjectId}
+              onBackToProjects={() => setCurrentView({ type: 'projects' })}
+            />
+          </div>
         )}
 
-        {currentView.type === 'profiles' && <ProfilesScreen />}
+        {visitedViews.has('profiles') && (
+          <div
+            data-testid="view-container-profiles"
+            style={{
+              display: currentView.type === 'profiles' ? 'flex' : 'none',
+              width: '100%',
+              height: '100%',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <ProfilesScreen />
+          </div>
+        )}
 
-        {currentView.type === 'settings' && <SettingsScreen />}
+        {visitedViews.has('create_video') && (
+          <div
+            data-testid="view-container-create-video"
+            style={{
+              display: currentView.type === 'create_video' ? 'flex' : 'none',
+              width: '100%',
+              height: '100%',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <CreateVideoScreen
+              initialMode={createVideoProps.initialMode}
+              initialSkillId={createVideoProps.initialSkillId}
+              onProjectCreated={(projectId) => setCurrentView({ type: 'workspace', projectId })}
+              onCancel={() => setCurrentView({ type: 'projects' })}
+            />
+          </div>
+        )}
+
+        {visitedViews.has('channels') && (
+          <div
+            data-testid="view-container-channels"
+            style={{
+              display: currentView.type === 'channels' ? 'flex' : 'none',
+              width: '100%',
+              height: '100%',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <ChannelsScreen
+              onOpenProject={(projectId) => setCurrentView({ type: 'workspace', projectId })}
+              onNavigateVideoFactory={() => setCurrentView({ type: 'create_video' })}
+            />
+          </div>
+        )}
+
+        {visitedViews.has('skills') && (
+          <div
+            data-testid="view-container-skills"
+            style={{
+              display: currentView.type === 'skills' ? 'flex' : 'none',
+              width: '100%',
+              height: '100%',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <SkillsScreen
+              onNavigateVideoFactory={(skillId) =>
+                setCurrentView({ type: 'create_video', initialMode: 'from_skill', initialSkillId: skillId })
+              }
+            />
+          </div>
+        )}
+
+        {visitedViews.has('settings') && (
+          <div
+            data-testid="view-container-settings"
+            style={{
+              display: currentView.type === 'settings' ? 'flex' : 'none',
+              width: '100%',
+              height: '100%',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <SettingsScreen />
+          </div>
+        )}
       </main>
     </div>
   );

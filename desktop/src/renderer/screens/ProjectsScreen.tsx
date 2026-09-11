@@ -255,6 +255,21 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
                           Tag: {p.campaignTag}
                         </span>
                       )}
+                      {p.channelName && (
+                        <span
+                          style={{
+                            fontSize: '10.5px',
+                            fontWeight: 600,
+                            padding: '1px 6px',
+                            borderRadius: '4px',
+                            backgroundColor: 'rgba(59, 130, 246, 0.12)',
+                            color: '#60a5fa',
+                            border: '1px solid rgba(59, 130, 246, 0.25)',
+                          }}
+                        >
+                          📺 {p.channelName}
+                        </span>
+                      )}
                       </div>
                     </div>
                   </div>

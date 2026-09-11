@@ -15,10 +15,13 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import type {
   ProjectEntity,
   AppSettings,
   CreateProjectParams,
+  SeparateFilesInput,
+  SystemMetrics,
 } from '../../shared/types';
 import { ProjectRepository } from '../storage/ProjectRepository';
 import { JobRepository } from '../storage/JobRepository';
@@ -28,6 +31,34 @@ import { ProfileSessionManager } from '../engine/ProfileSessionManager';
 import { generationEventBus } from '../events/GenerationEventBus';
 import { ZipService, type ExportMediaItem } from '../utils/ZipService';
 import { getAppDataDir, AppLogger } from '../utils/AppLogger';
+import { SettingsManager } from '../storage/SettingsManager';
+import { StoryRepository } from '../storage/StoryRepository';
+import { ScriptParser } from '../../shared/ScriptParser';
+import { ScriptValidator } from '../../shared/ScriptValidator';
+import { TtsManager } from '../tts/TtsManager';
+import { RenderManager } from '../render/RenderManager';
+import { FinalRenderManager } from '../render/FinalRenderManager';
+import { TransitionService } from '../render/TransitionService';
+import { ChannelRepository } from '../storage/ChannelRepository';
+import { ChannelHistoryRepository } from '../storage/ChannelHistoryRepository';
+import { ChannelDeliveryService } from '../channel/ChannelDeliveryService';
+import { SkillRepository } from '../storage/SkillRepository';
+import { ScriptAiService } from '../ai/ScriptAiService';
+import { VideoFactoryPipelineManager } from '../pipeline/VideoFactoryPipelineManager';
+import type {
+  VideoFactoryConfig,
+  VideoFactoryStage,
+  VideoFactoryDraft,
+  StoryEntity,
+  TtsProviderId,
+  CreateChannelParams,
+  ChannelHistoryQuery,
+  CreateSkillParams,
+  UpdateSkillParams,
+  ScriptAiGenerateParams,
+  RefineSceneParams,
+  AnalyzeAlignParams,
+} from '../../shared/types';
 
 const logger = new AppLogger({ mirrorToStderr: false });
 
@@ -46,46 +77,17 @@ export interface IpcDependencies {
 }
 
 export class IpcHandlers {
-  private static settingsFilePath(): string {
-    const configDir = path.join(getAppDataDir(), 'config');
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
-    }
-    return path.join(configDir, 'settings.json');
-  }
-
   static readSettings(): AppSettings {
-    const filePath = this.settingsFilePath();
-    const defaults: AppSettings = {
-      appDataDir: getAppDataDir(),
-      defaultImageRatio: '16:9',
-      defaultProcessingOrder: 'images_first',
-      maxRetries: 2,
-      logLevel: 'INFO',
-    };
-
-    if (!fs.existsSync(filePath)) {
-      return defaults;
-    }
-
-    try {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      return { ...defaults, ...JSON.parse(content) };
-    } catch {
-      return defaults;
-    }
+    return SettingsManager.getSanitizedSettings();
   }
 
-  static writeSettings(patch: Partial<AppSettings>): AppSettings {
-    const current = this.readSettings();
-    const updated = { ...current, ...patch };
-    const filePath = this.settingsFilePath();
-    fs.writeFileSync(filePath, JSON.stringify(updated, null, 2), 'utf-8');
-    return updated;
+  static async writeSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+    return await SettingsManager.updateSettings(patch);
   }
 
   static register(ipcMain: IpcMainLike, deps: IpcDependencies): void {
     const { scheduler, sessionManager, getWebContents } = deps;
+    VideoFactoryPipelineManager.setScheduler(scheduler);
 
     // -------------------------------------------------------------------------
     // Projects API
@@ -388,7 +390,396 @@ export class IpcHandlers {
     });
 
     ipcMain.handle('settings:update', async (_event, patch: unknown) => {
-      return this.writeSettings(patch as Partial<AppSettings>);
+      return await this.writeSettings(patch as Partial<AppSettings>);
+    });
+
+    // -------------------------------------------------------------------------
+    // Video Factory API (ZBot Integration)
+    // -------------------------------------------------------------------------
+    ipcMain.handle('factory:getDraft', async () => {
+      return await StoryRepository.getDraft();
+    });
+
+    ipcMain.handle('factory:saveDraft', async (_event, draft: unknown) => {
+      return await StoryRepository.saveDraft(draft as Partial<VideoFactoryDraft>);
+    });
+
+    ipcMain.handle('factory:parseScript', async (_event, rawText: unknown) => {
+      if (typeof rawText !== 'string') throw new Error('Invalid script input: expected string.');
+      return ScriptParser.parse(rawText);
+    });
+
+    ipcMain.handle('factory:createProject', async (_event, configRaw: unknown) => {
+      const config = configRaw as VideoFactoryConfig;
+      if (!config || !config.story || !Array.isArray(config.story.scenes) || config.story.scenes.length === 0) {
+        throw new Error('Cannot create Video Factory project without scenes.');
+      }
+
+      const projectName = config.story.title?.trim() || `Faceless Video · ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+
+      // Create official Infinity Flow ProjectEntity with immutable slots mapping 1-to-1 with scenes
+      const project = await ProjectRepository.create({
+        name: projectName,
+        channelId: config.channelId,
+        channelName: config.channelName,
+        imageRatio: config.aspectRatio || '16:9',
+        videoRatio: config.aspectRatio || '16:9',
+        generationMode: config.mode === 'images_only' ? 'bulk_image' : 'bulk_video',
+        prompts: config.story.scenes.map((scene) => ({
+          text: scene.imagePrompt,
+          type: 'image',
+          narration: scene.narration,
+          mood: scene.mood,
+        })),
+      });
+
+      if (config.channelId) {
+        try {
+          const allProjects = await ProjectRepository.getAll();
+          const channelCount = allProjects.filter((p) => p.channelId === config.channelId).length;
+          await ChannelRepository.updateStats(config.channelId, { totalProjects: channelCount });
+        } catch (chErr) {
+          logger.warn('ipc', 'Failed to update channel stats on project creation', { error: (chErr as Error).message });
+        }
+      }
+
+      // Save story.json and factory_config.json in the project folder
+      await StoryRepository.saveStory(project.projectId, config.story);
+      await StoryRepository.saveConfig(project.projectId, {
+        ...config,
+        stage: 'assets_queued',
+      });
+
+      // Initialize persistent pipeline state for Phase 2 unified pipeline
+      const pipelineMode = config.mode || 'full_video';
+      const initialPipeline = StoryRepository.initializePipelineState(project.projectId, pipelineMode);
+      await StoryRepository.savePipelineState(project.projectId, initialPipeline);
+
+      logger.info('ipc', `Created Video Factory project ${project.projectId} with ${project.slots.length} scene slots`);
+
+      return { projectId: project.projectId, project };
+    });
+
+    ipcMain.handle('factory:getStory', async (_event, projectId: unknown) => {
+      if (typeof projectId !== 'string') throw new Error('Invalid projectId');
+      return await StoryRepository.getStory(projectId);
+    });
+
+    ipcMain.handle('factory:validateStory', async (_event, storyRaw: unknown) => {
+      return ScriptValidator.validate((storyRaw || {}) as Partial<StoryEntity>);
+    });
+
+    ipcMain.handle('factory:updateStory', async (_event, projectId: unknown, storyRaw: unknown) => {
+      if (typeof projectId !== 'string') throw new Error('Invalid projectId');
+      const updated = await StoryRepository.updateStory(projectId, storyRaw as StoryEntity);
+      return { success: true, story: updated };
+    });
+
+    ipcMain.handle('factory:getTtsEngines', async () => {
+      return await TtsManager.getEnginesMetadata();
+    });
+
+    ipcMain.handle('factory:listVoices', async (_event, providerRaw?: unknown) => {
+      const provider = typeof providerRaw === 'string' ? (providerRaw as TtsProviderId) : undefined;
+      return await TtsManager.listAllVoices(provider);
+    });
+
+    ipcMain.handle('factory:previewVoice', async (_event, providerRaw: unknown, voiceIdRaw: unknown, sampleTextRaw: unknown) => {
+      const provider = (typeof providerRaw === 'string' ? providerRaw : 'edge-tts') as TtsProviderId;
+      const voiceId = typeof voiceIdRaw === 'string' ? voiceIdRaw : '';
+      const sampleText = typeof sampleTextRaw === 'string' ? sampleTextRaw : undefined;
+      return await TtsManager.previewVoice(provider, voiceId, sampleText);
+    });
+
+    ipcMain.handle('factory:synthesizeVoice', async (_event, projectIdRaw: unknown, voiceIdRaw: unknown, providerRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for synthesizeVoice');
+      const voiceId = typeof voiceIdRaw === 'string' ? voiceIdRaw : undefined;
+      const provider = (typeof providerRaw === 'string' ? providerRaw : 'edge-tts') as TtsProviderId;
+      return await TtsManager.synthesizeProjectNarration(projectIdRaw, { provider, voiceId });
+    });
+
+    ipcMain.handle('factory:combineAudio', async (_event, projectIdRaw: unknown, outputFilenameRaw?: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for combineAudio');
+      const outputFilename = typeof outputFilenameRaw === 'string' && outputFilenameRaw.trim() ? outputFilenameRaw.trim() : 'final_audio.mp3';
+      return await TtsManager.combineProjectAudio(projectIdRaw, outputFilename);
+    });
+
+    ipcMain.handle('factory:testTtsConnection', async (_event, providerRaw: unknown) => {
+      const providerId = (typeof providerRaw === 'string' ? providerRaw : 'edge-tts') as TtsProviderId;
+      const provider = TtsManager.getProvider(providerId);
+      if (typeof provider.testConnection === 'function') {
+        return await provider.testConnection();
+      }
+      const isAvail = await provider.isAvailable();
+      return {
+        success: isAvail,
+        message: isAvail ? `${provider.name} is operational.` : (provider.getUnavailableReason() || 'Provider unavailable.'),
+      };
+    });
+
+    ipcMain.handle('factory:getAudioManifest', async (_event, projectIdRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for getAudioManifest');
+      return await TtsManager.getAudioManifest(projectIdRaw);
+    });
+
+    ipcMain.handle('factory:renderScene', async (_event, projectIdRaw: unknown, sceneNumberRaw: unknown, optionsRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for renderScene');
+      const sceneNumber = Number(sceneNumberRaw) || 1;
+      return await RenderManager.renderSingleScene(projectIdRaw, sceneNumber, optionsRaw as any);
+    });
+
+    ipcMain.handle('factory:renderProjectClips', async (_event, projectIdRaw: unknown, optionsRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for renderProjectClips');
+      return await RenderManager.renderProjectClips(projectIdRaw, optionsRaw as any);
+    });
+
+    ipcMain.handle('factory:cancelProjectRender', async (_event, projectIdRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for cancelProjectRender');
+      const success = RenderManager.cancelProjectRender(projectIdRaw);
+      return { success };
+    });
+
+    ipcMain.handle('factory:getRenderManifest', async (_event, projectIdRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for getRenderManifest');
+      return await RenderManager.getRenderManifest(projectIdRaw);
+    });
+
+    ipcMain.handle('factory:testTransition', async (_event, paramsRaw: unknown) => {
+      return await TransitionService.renderTransitionPreview(paramsRaw as any);
+    });
+
+    ipcMain.handle('factory:assembleFinalVideo', async (_event, projectIdRaw: unknown, optionsRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for assembleFinalVideo');
+      return await FinalRenderManager.assembleFinalVideo(projectIdRaw, optionsRaw as any);
+    });
+
+    ipcMain.handle('factory:cancelFinalRender', async (_event, projectIdRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for cancelFinalRender');
+      const success = FinalRenderManager.cancelFinalRender(projectIdRaw);
+      return { success };
+    });
+
+    ipcMain.handle('factory:getFinalRenderManifest', async (_event, projectIdRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for getFinalRenderManifest');
+      return await StoryRepository.getFinalRenderManifest(projectIdRaw);
+    });
+
+    // =========================================================================
+    // Unified Video Factory Pipeline (Phase 2)
+    // =========================================================================
+
+    ipcMain.handle('pipeline:start', async (_event, projectIdRaw: unknown, modeRaw?: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for pipeline:start');
+      const mode = typeof modeRaw === 'string' ? (modeRaw as any) : undefined;
+      return await VideoFactoryPipelineManager.startPipeline(projectIdRaw, mode);
+    });
+
+    ipcMain.handle('pipeline:pause', async (_event, projectIdRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for pipeline:pause');
+      return await VideoFactoryPipelineManager.pausePipeline(projectIdRaw);
+    });
+
+    ipcMain.handle('pipeline:resume', async (_event, projectIdRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for pipeline:resume');
+      return await VideoFactoryPipelineManager.resumePipeline(projectIdRaw);
+    });
+
+    ipcMain.handle('pipeline:cancel', async (_event, projectIdRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for pipeline:cancel');
+      return await VideoFactoryPipelineManager.cancelPipeline(projectIdRaw);
+    });
+
+    ipcMain.handle('pipeline:retryStage', async (_event, projectIdRaw: unknown, stageRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for pipeline:retryStage');
+      if (typeof stageRaw !== 'string' || !stageRaw) throw new Error('Invalid stage for pipeline:retryStage');
+      return await VideoFactoryPipelineManager.retryStage(projectIdRaw, stageRaw as VideoFactoryStage);
+    });
+
+    ipcMain.handle('pipeline:getState', async (_event, projectIdRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId for pipeline:getState');
+      return await VideoFactoryPipelineManager.getPipelineState(projectIdRaw);
+    });
+
+    // =========================================================================
+    // Channels & Channel Management (Phase 7)
+    // =========================================================================
+
+    ipcMain.handle('channels:list', async () => {
+      return await ChannelRepository.getAll();
+    });
+
+    ipcMain.handle('channels:get', async (_event, channelIdRaw: unknown) => {
+      if (typeof channelIdRaw !== 'string' || !channelIdRaw) throw new Error('Invalid channelId');
+      return await ChannelRepository.get(channelIdRaw);
+    });
+
+    ipcMain.handle('channels:create', async (_event, paramsRaw: unknown) => {
+      return await ChannelRepository.create(paramsRaw as CreateChannelParams);
+    });
+
+    ipcMain.handle('channels:update', async (_event, channelIdRaw: unknown, patchRaw: unknown) => {
+      if (typeof channelIdRaw !== 'string' || !channelIdRaw) throw new Error('Invalid channelId');
+      return await ChannelRepository.update(channelIdRaw, patchRaw as any);
+    });
+
+    ipcMain.handle('channels:delete', async (_event, channelIdRaw: unknown) => {
+      if (typeof channelIdRaw !== 'string' || !channelIdRaw) throw new Error('Invalid channelId');
+      return await ChannelRepository.delete(channelIdRaw);
+    });
+
+    ipcMain.handle('channels:assignProject', async (_event, projectIdRaw: unknown, channelIdRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId');
+      const channelId = typeof channelIdRaw === 'string' && channelIdRaw ? channelIdRaw : undefined;
+
+      let channelName: string | undefined;
+      if (channelId) {
+        const ch = await ChannelRepository.get(channelId);
+        if (!ch) throw new Error(`Channel ${channelId} not found`);
+        channelName = ch.name;
+      }
+
+      const updatedProject = await ProjectRepository.update(projectIdRaw, {
+        channelId,
+        channelName,
+      });
+
+      // Update channel totalProjects stat if channelId provided
+      if (channelId) {
+        const allProjects = await ProjectRepository.getAll();
+        const count = allProjects.filter((p) => p.channelId === channelId).length;
+        await ChannelRepository.updateStats(channelId, { totalProjects: count });
+      }
+
+      return updatedProject;
+    });
+
+    ipcMain.handle('channels:deliverProject', async (_event, projectIdRaw: unknown, channelIdRaw: unknown) => {
+      if (typeof projectIdRaw !== 'string' || !projectIdRaw) throw new Error('Invalid projectId');
+      const channelId = typeof channelIdRaw === 'string' && channelIdRaw ? channelIdRaw : undefined;
+      return await ChannelDeliveryService.deliverProject(projectIdRaw, channelId);
+    });
+
+    ipcMain.handle('channels:getHistory', async (_event, queryRaw: unknown) => {
+      return await ChannelHistoryRepository.query(queryRaw as ChannelHistoryQuery);
+    });
+
+    ipcMain.handle('channels:retryDelivery', async (_event, deliveryIdRaw: unknown) => {
+      if (typeof deliveryIdRaw !== 'string' || !deliveryIdRaw) throw new Error('Invalid deliveryId');
+      return await ChannelDeliveryService.retryDelivery(deliveryIdRaw);
+    });
+
+    // -----------------------------------------------------------------------
+    // Skills & Script AI Handlers (Phase 8)
+    // -----------------------------------------------------------------------
+
+    ipcMain.handle('skills:list', async () => {
+      return await SkillRepository.getAll();
+    });
+
+    ipcMain.handle('skills:get', async (_event, skillIdRaw: unknown) => {
+      if (typeof skillIdRaw !== 'string' || !skillIdRaw) throw new Error('Invalid skillId');
+      return await SkillRepository.get(skillIdRaw);
+    });
+
+    ipcMain.handle('skills:create', async (_event, paramsRaw: unknown) => {
+      return await SkillRepository.create(paramsRaw as CreateSkillParams);
+    });
+
+    ipcMain.handle('skills:update', async (_event, skillIdRaw: unknown, patchRaw: unknown) => {
+      if (typeof skillIdRaw !== 'string' || !skillIdRaw) throw new Error('Invalid skillId');
+      return await SkillRepository.update(skillIdRaw, patchRaw as UpdateSkillParams);
+    });
+
+    ipcMain.handle('skills:delete', async (_event, skillIdRaw: unknown) => {
+      if (typeof skillIdRaw !== 'string' || !skillIdRaw) throw new Error('Invalid skillId');
+      const deleted = await SkillRepository.delete(skillIdRaw);
+      return { success: deleted };
+    });
+
+    ipcMain.handle('skills:import', async (_event, contentRaw: unknown, fileNameRaw: unknown) => {
+      let content: string | Buffer;
+      if (typeof contentRaw === 'string') {
+        content = contentRaw;
+      } else if (Buffer.isBuffer(contentRaw)) {
+        content = contentRaw;
+      } else if (contentRaw instanceof Uint8Array || (contentRaw && (contentRaw as any).byteLength !== undefined)) {
+        content = Buffer.from(contentRaw as any);
+      } else {
+        throw new Error('Invalid skill content');
+      }
+      const fileName = typeof fileNameRaw === 'string' ? fileNameRaw : undefined;
+      return await SkillRepository.importSkill(content, fileName);
+    });
+
+    ipcMain.handle('scriptAi:generate', async (_event, paramsRaw: unknown) => {
+      return await ScriptAiService.generateScript(paramsRaw as ScriptAiGenerateParams);
+    });
+
+    ipcMain.handle('scriptAi:refineScene', async (_event, paramsRaw: unknown) => {
+      return await ScriptAiService.refineScene(paramsRaw as RefineSceneParams);
+    });
+
+    ipcMain.handle('scriptAi:reReadScript', async (_event, paramsRaw: unknown) => {
+      return await ScriptAiService.reReadScript(paramsRaw as AnalyzeAlignParams);
+    });
+
+    ipcMain.handle('scriptAi:testConnection', async () => {
+      return await ScriptAiService.testConnection();
+    });
+
+    ipcMain.handle('script:parseSeparateFiles', async (_event, inputRaw: unknown) => {
+      return ScriptParser.parseSeparateFiles(inputRaw as SeparateFilesInput);
+    });
+
+    ipcMain.handle('system:getSystemMetrics', async (): Promise<SystemMetrics> => {
+      const cpus = os.cpus();
+      let cpuPercent = 0;
+      if (cpus && cpus.length > 0) {
+        let totalTick = 0;
+        let totalIdle = 0;
+        for (const cpu of cpus) {
+          for (const type in cpu.times) {
+            totalTick += (cpu.times as any)[type];
+          }
+          totalIdle += cpu.times.idle;
+        }
+        const idleRatio = totalTick > 0 ? totalIdle / totalTick : 1;
+        cpuPercent = Math.max(0, Math.min(100, Math.round((1 - idleRatio) * 100)));
+      }
+
+      const totalMem = os.totalmem();
+      const freeMem = os.freemem();
+      const usedMem = Math.max(0, totalMem - freeMem);
+      const memPercent = totalMem > 0 ? Math.round((usedMem / totalMem) * 100) : 0;
+      const freeMemMb = Math.round(freeMem / (1024 * 1024));
+      const totalMemMb = Math.round(totalMem / (1024 * 1024));
+
+      return {
+        cpuPercent,
+        freeMemMb,
+        totalMemMb,
+        memPercent,
+        pingMs: 20, // baseline local roundtrip estimate
+        timestamp: new Date().toISOString(),
+      };
+    });
+
+    ipcMain.handle('system:selectOutputDir', async () => {
+      try {
+        const electron = require('electron');
+        if (electron?.dialog?.showOpenDialog) {
+          const result = await electron.dialog.showOpenDialog({
+            title: 'Select Destination Output Folder',
+            properties: ['openDirectory', 'createDirectory'],
+          });
+          if (!result.canceled && result.filePaths.length > 0) {
+            return result.filePaths[0];
+          }
+        }
+      } catch (err) {
+        logger.warn('ipc', 'Failed to open output directory dialog', { error: (err as Error).message });
+      }
+      return null;
     });
 
     ipcMain.handle('system:revealAsset', async (_event, mediaPath: unknown) => {
@@ -464,6 +855,27 @@ export class IpcHandlers {
         }
       } catch (err) {
         logger.warn('ipc', 'Failed to open ZIP dialog', { error: (err as Error).message });
+      }
+      return null;
+    });
+
+    ipcMain.handle('system:selectMusicFile', async () => {
+      try {
+        const electron = require('electron');
+        if (electron?.dialog?.showOpenDialog) {
+          const result = await electron.dialog.showOpenDialog({
+            title: 'Select Background Music Track',
+            properties: ['openFile'],
+            filters: [
+              { name: 'Audio Files (*.mp3, *.wav, *.m4a, *.aac, *.flac, *.ogg)', extensions: ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg'] },
+            ],
+          });
+          if (!result.canceled && result.filePaths.length > 0) {
+            return result.filePaths[0];
+          }
+        }
+      } catch (err) {
+        logger.warn('ipc', 'Failed to open music file dialog', { error: (err as Error).message });
       }
       return null;
     });
@@ -552,6 +964,22 @@ export class IpcHandlers {
         profileId,
         status: 'ready',
       });
+    });
+
+    generationEventBus.on('render:progress' as any, (event: any) => {
+      getWebContents?.()?.send('flow:render:progress', event);
+    });
+
+    generationEventBus.on('final-render:progress' as any, (event: any) => {
+      getWebContents?.()?.send('flow:final-render:progress', event);
+    });
+
+    generationEventBus.on('script-ai:progress' as any, (event: any) => {
+      getWebContents?.()?.send('flow:script-ai:progress', event);
+    });
+
+    generationEventBus.on('pipeline:progress' as any, (event: any) => {
+      getWebContents?.()?.send('flow:pipeline:progress', event);
     });
 
     if (typeof (sessionManager as any)?.on === 'function') {

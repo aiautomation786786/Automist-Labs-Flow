@@ -109,6 +109,8 @@ export class ProjectRepository {
       projectId,
       name: params.name.trim(),
       campaignTag: params.campaignTag?.trim(),
+      channelId: params.channelId,
+      channelName: params.channelName,
       createdAt: now,
       updatedAt: now,
       status: 'draft',

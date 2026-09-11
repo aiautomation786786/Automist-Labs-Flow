@@ -52,6 +52,42 @@ export const PromptSlotCardComponent: React.FC<PromptSlotCardProps> = ({
     : '16 / 9';
 
   const getStatusBadge = () => {
+    const retryState = slot.retryState;
+    if (retryState?.cancelledByUser || slot.status === 'cancelled') {
+      return <span className="badge badge-draft" title="Cancelled by user">Cancelled</span>;
+    }
+    if (retryState?.retryReason === 'IDENTICAL_ERROR_BAILOUT') {
+      return (
+        <span
+          className="badge badge-failed"
+          title={`Auto-retry halted: identical error repeated ${retryState.identicalErrorCount || 3} times.`}
+          style={{ cursor: 'help' }}
+        >
+          Retry Halted (Identical)
+        </span>
+      );
+    }
+    if (retryState?.retryReason === 'RETRY_LIMIT_EXCEEDED') {
+      return (
+        <span
+          className="badge badge-failed"
+          title={`Retry limit reached (${retryState.attempt}/${retryState.maxAttempts})`}
+          style={{ cursor: 'help' }}
+        >
+          Retry Limit Reached
+        </span>
+      );
+    }
+    if (slot.status === 'queued' && retryState && retryState.attempt > 0) {
+      return (
+        <span
+          className="badge badge-retrying"
+          title={`Attempt ${retryState.attempt} of ${retryState.maxAttempts}`}
+        >
+          Retrying ({retryState.attempt}/{retryState.maxAttempts})
+        </span>
+      );
+    }
     switch (slot.status) {
       case 'completed':
         return <span className="badge badge-completed">Completed</span>;
@@ -63,8 +99,6 @@ export const PromptSlotCardComponent: React.FC<PromptSlotCardProps> = ({
         return <span className="badge badge-draft">Draft</span>;
       case 'failed':
         return <span className="badge badge-failed">Failed</span>;
-      case 'cancelled':
-        return <span className="badge badge-draft">Cancelled</span>;
       default:
         return <span className="badge badge-draft">{slot.status}</span>;
     }
@@ -532,7 +566,7 @@ export const PromptSlotCardComponent: React.FC<PromptSlotCardProps> = ({
         </div>
 
         <div style={{ display: 'flex', gap: '6px' }}>
-          {slot.status === 'failed' && onRetry && (
+          {(slot.status === 'failed' || slot.status === 'cancelled') && onRetry && (
             <button
               className="btn-secondary btn-sm"
               onClick={() => onRetry(slot)}

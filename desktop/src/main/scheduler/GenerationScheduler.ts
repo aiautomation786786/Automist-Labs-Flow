@@ -36,6 +36,8 @@ import { GeminiImageExecutionService } from '../execution/GeminiImageExecutionSe
 import { ProviderRouter } from '../../shared/ProviderRouter';
 import { CreditFailureDetector } from '../engine/CreditFailureDetector';
 import { generationEventBus } from '../events/GenerationEventBus';
+import { RetryCoordinator } from '../retry/RetryCoordinator';
+import { ErrorClassifier } from '../retry/ErrorClassifier';
 import { AppLogger } from '../utils/AppLogger';
 
 const logger = new AppLogger({ mirrorToStderr: false });
@@ -141,9 +143,24 @@ export class GenerationScheduler {
       return;
     }
 
+    RetryCoordinator.getInstance().cancelRetries(projectId, jobId);
     this.inFlightJobIds.delete(jobId);
-    const cancelledJob = await JobRepository.updateJob(projectId, jobId, { status: 'cancelled' });
-    await ProjectRepository.updateSlot(projectId, job.slotIndex, { status: 'cancelled' });
+    const cancelState = {
+      attempt: job.retryCount,
+      maxAttempts: job.maxRetries || 60,
+      isAutoRetry: false,
+      cancelledByUser: true,
+      identicalErrorCount: 0,
+      retryReason: 'CANCELLED_BY_USER' as const,
+    };
+    const cancelledJob = await JobRepository.updateJob(projectId, jobId, {
+      status: 'cancelled',
+      retryState: cancelState,
+    });
+    await ProjectRepository.updateSlot(projectId, job.slotIndex, {
+      status: 'cancelled',
+      retryState: cancelState,
+    });
 
     generationEventBus.emitTyped('job:cancelled', cancelledJob);
     logger.info('scheduler', `Cancelled job ${jobId}`);
@@ -189,6 +206,7 @@ export class GenerationScheduler {
    */
   async cancelProject(projectId: string): Promise<void> {
     this.activeProjectIds.delete(projectId);
+    RetryCoordinator.getInstance().cancelRetries(projectId);
     try {
       await ProjectRepository.update(projectId, { status: 'deleting' }).catch(() => {});
       const jobs = await JobRepository.getJobsByProject(projectId).catch(() => []);
@@ -225,6 +243,13 @@ export class GenerationScheduler {
       throw new Error(`Slot ${slotIndex} is already running.`);
     }
 
+    // Phase 3: Manual user retry strictly resets safety counters while preserving upstream work
+    const oldJobId = slot.activeJobId;
+    if (oldJobId) {
+      RetryCoordinator.getInstance().recordManualRetry(projectId, oldJobId);
+    }
+    RetryCoordinator.getInstance().recordManualRetry(projectId, `slot_${slotIndex}`);
+
     // Create a new job for this slot
     const job = await JobRepository.createJob({
       projectId,
@@ -236,12 +261,18 @@ export class GenerationScheduler {
       maxRetries: project.settings.maxRetries,
     });
 
-    const queuedJob = await JobRepository.updateJob(projectId, job.jobId, { status: 'queued' });
+    const resetRetryState = RetryCoordinator.getInstance().recordManualRetry(projectId, job.jobId);
+
+    const queuedJob = await JobRepository.updateJob(projectId, job.jobId, {
+      status: 'queued',
+      retryState: resetRetryState,
+    });
 
     await ProjectRepository.updateSlot(projectId, slot.slotIndex, {
       status: 'queued',
       activeJobId: job.jobId,
       error: undefined,
+      retryState: resetRetryState,
     });
 
     await ProjectRepository.update(projectId, { status: 'running' });
@@ -553,30 +584,169 @@ export class GenerationScheduler {
       }
     }
 
-    // RULE 2 & 7: Generic Timeout or Other Failures
+    // Check if error is due to user cancellation or abort
+    if (ErrorClassifier.isCancellation(errorMessage)) {
+      logger.warn('scheduler', `Job ${job.jobId} was cancelled by user: ${errorMessage}`);
+      RetryCoordinator.getInstance().cancelRetries(job.projectId, job.jobId);
+      const cancelState = {
+        attempt: job.retryCount,
+        maxAttempts: job.maxRetries || 60,
+        isAutoRetry: false,
+        cancelledByUser: true,
+        identicalErrorCount: 0,
+        retryReason: 'CANCELLED_BY_USER' as const,
+      };
+      await JobRepository.updateJob(job.projectId, job.jobId, {
+        status: 'cancelled',
+        errorMessage,
+        retryState: cancelState,
+      });
+      await ProjectRepository.updateSlot(job.projectId, job.slotIndex, {
+        status: 'cancelled',
+        retryState: cancelState,
+      });
+      return;
+    }
+
+    // RULE 2 & 7: Evaluate auto-retry safety centrally through RetryCoordinator
     const isManualAction = MANUAL_ACTION_KEYWORDS.some((kw) =>
       errorMessage.toLowerCase().includes(kw.toLowerCase())
     );
 
-    const isRetryable = !isManualAction && job.retryCount < job.maxRetries;
+    const coordinator = RetryCoordinator.getInstance();
+    const evalResult = coordinator.recordError(job.projectId, job.jobId, errorMessage, {
+      policy: {
+        maxAutoRetries: job.maxRetries || 60,
+      },
+    });
 
-    if (isRetryable) {
-      const newRetryCount = job.retryCount + 1;
-      logger.info('scheduler', `Scheduling retry for job ${job.jobId} (Attempt ${newRetryCount}/${job.maxRetries})`);
-
+    if (evalResult.reason === 'CANCELLED_BY_USER') {
+      logger.warn('scheduler', `Job ${job.jobId} retry cancelled by user.`);
+      const cancelState = evalResult.retryState || coordinator.getRetryState(job.projectId, job.jobId) || undefined;
       await JobRepository.updateJob(job.projectId, job.jobId, {
-        status: 'retry_waiting',
-        submissionState: 'not_submitted',
-        retryCount: newRetryCount,
-        errorMessage,
+        status: 'cancelled',
+        errorMessage: 'Cancelled by user',
+        retryState: cancelState,
       });
+      await ProjectRepository.updateSlot(job.projectId, job.slotIndex, {
+        status: 'cancelled',
+        retryState: cancelState,
+      });
+      return;
+    }
 
-      generationEventBus.emitTyped('job:retrying', job, newRetryCount);
+    if (isManualAction || !evalResult.shouldRetry) {
+      const retryState = evalResult.retryState || coordinator.getRetryState(job.projectId, job.jobId) || undefined;
+      if (evalResult.reason === 'IDENTICAL_ERROR_BAILOUT') {
+        const count = evalResult.retryState.identicalErrorCount || 3;
+        const bailoutMsg = `Auto-retry halted: identical error repeated ${count} times.`;
+        logger.error('scheduler', `Job ${job.jobId} identical-error bailout: ${bailoutMsg}`);
+        await JobRepository.updateJob(job.projectId, job.jobId, {
+          status: 'failed',
+          errorMessage: bailoutMsg,
+          retryState,
+        });
+        await ProjectRepository.updateSlot(job.projectId, job.slotIndex, {
+          status: 'failed',
+          error: {
+            code: 'IDENTICAL_ERROR_BAILOUT',
+            message: bailoutMsg,
+            timestamp: new Date().toISOString(),
+            retryCount: evalResult.retryState.attempt,
+            profileId: worker?.profileId,
+          },
+          retryState,
+        });
+      } else if (evalResult.reason === 'RETRY_LIMIT_EXCEEDED') {
+        logger.error('scheduler', `Job ${job.jobId} permanently failed. Retry limit reached (${evalResult.retryState.attempt}/${evalResult.retryState.maxAttempts}).`);
+        await JobRepository.updateJob(job.projectId, job.jobId, {
+          status: 'failed',
+          errorMessage: `Retry limit reached (${evalResult.retryState.attempt}/${evalResult.retryState.maxAttempts}). ${errorMessage}`,
+          retryState,
+        });
+        await ProjectRepository.updateSlot(job.projectId, job.slotIndex, {
+          status: 'failed',
+          error: {
+            code: 'RETRY_LIMIT_EXCEEDED',
+            message: `Retries exhausted: ${errorMessage}`,
+            timestamp: new Date().toISOString(),
+            retryCount: evalResult.retryState.attempt,
+            profileId: worker?.profileId,
+          },
+          retryState,
+        });
+      } else if (isManualAction) {
+        logger.warn('scheduler', `Job ${job.jobId} requires manual intervention: ${errorMessage}`);
+        await JobRepository.updateJob(job.projectId, job.jobId, {
+          status: 'manual_action_required',
+          errorMessage,
+          retryState,
+        });
+        await ProjectRepository.updateSlot(job.projectId, job.slotIndex, {
+          status: 'failed',
+          error: {
+            code: 'MANUAL_ACTION_REQUIRED',
+            message: errorMessage,
+            timestamp: new Date().toISOString(),
+            retryCount: evalResult.retryState.attempt,
+            profileId: worker?.profileId,
+          },
+          retryState,
+        });
+      } else {
+        logger.error('scheduler', `Job ${job.jobId} permanently failed: ${errorMessage}`);
+        await JobRepository.updateJob(job.projectId, job.jobId, {
+          status: 'failed',
+          errorMessage,
+          retryState,
+        });
+        await ProjectRepository.updateSlot(job.projectId, job.slotIndex, {
+          status: 'failed',
+          error: {
+            code: 'FAILED',
+            message: errorMessage,
+            timestamp: new Date().toISOString(),
+            retryCount: evalResult.retryState.attempt,
+            profileId: worker?.profileId,
+          },
+          retryState,
+        });
+      }
+      return;
+    }
 
-      // Backoff delay before re-queuing (e.g., 3s)
-      setTimeout(async () => {
+    // Schedule retry with RetryCoordinator (bounded backoff, cancellable)
+    const newRetryCount = evalResult.retryState.attempt;
+    const retryState = evalResult.retryState || coordinator.getRetryState(job.projectId, job.jobId) || undefined;
+    logger.info('scheduler', `Scheduling auto-retry for job ${job.jobId} (Attempt ${newRetryCount}/${evalResult.retryState.maxAttempts}, delay: ${evalResult.delayMs}ms, reason: ${evalResult.reason})`);
+
+    await JobRepository.updateJob(job.projectId, job.jobId, {
+      status: 'retry_waiting',
+      submissionState: 'not_submitted',
+      retryCount: newRetryCount,
+      errorMessage,
+      retryState,
+    });
+
+    await ProjectRepository.updateSlot(job.projectId, job.slotIndex, {
+      retryState,
+    });
+
+    generationEventBus.emitTyped('job:retrying', job, newRetryCount);
+
+    coordinator.scheduleRetry(
+      job.projectId,
+      job.jobId,
+      'job',
+      evalResult.delayMs,
+      async () => {
         if (this.isStopped) return;
         try {
+          const freshJob = await JobRepository.getJob(job.projectId, job.jobId);
+          if (!freshJob || freshJob.status === 'cancelled') {
+            logger.info('scheduler', `Retry callback for job ${job.jobId} cancelled or job deleted.`);
+            return;
+          }
           const reQueued = await JobRepository.updateJob(job.projectId, job.jobId, {
             status: 'queued',
             submissionState: 'not_submitted',
@@ -588,20 +758,10 @@ export class GenerationScheduler {
             error: (e as Error).message,
           });
         }
-      }, 3000);
-    } else if (isManualAction) {
-      logger.warn('scheduler', `Job ${job.jobId} requires manual intervention: ${errorMessage}`);
-      await JobRepository.updateJob(job.projectId, job.jobId, {
-        status: 'manual_action_required',
-        errorMessage,
-      });
-    } else {
-      logger.error('scheduler', `Job ${job.jobId} permanently failed. Retries exhausted.`);
-      await JobRepository.updateJob(job.projectId, job.jobId, {
-        status: 'failed',
-        errorMessage,
-      });
-    }
+      }
+    ).catch((err) => {
+      logger.warn('scheduler', `Error during scheduled retry execution for job ${job.jobId}: ${(err as Error).message}`);
+    });
   }
 
   /**
