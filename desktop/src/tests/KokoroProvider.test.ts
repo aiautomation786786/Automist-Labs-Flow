@@ -170,5 +170,41 @@ describe('KokoroProvider Truthful Runtime Detection & Synthesis', () => {
     expect(result.audioBuffer.toString('ascii', 8, 12)).toBe('WAVE');
     expect(result.audioBuffer.toString('ascii', 12, 16)).toBe('fmt ');
     expect(result.audioBuffer.readUInt32LE(24)).toBe(24000); // 24kHz
+  }, 60000);
+
+  it('10. Multi-voice distinctiveness: changing voice from am_eric to af_bella changes output audio characteristics', async () => {
+    KokoroProvider.resetRuntimeStatus();
+    expect(await provider.isAvailable()).toBe(true);
+
+    const text = 'Infinity Flow provides multi-voice neural narration.';
+    const resEric = await provider.synthesize({ text, voiceId: 'am_eric' });
+    const resBella = await provider.synthesize({ text, voiceId: 'af_bella' });
+
+    expect(resEric.audioBuffer.length).toBeGreaterThan(44);
+    expect(resBella.audioBuffer.length).toBeGreaterThan(44);
+
+    // Verify both are valid WAVs
+    expect(resEric.audioBuffer.toString('ascii', 0, 4)).toBe('RIFF');
+    expect(resBella.audioBuffer.toString('ascii', 0, 4)).toBe('RIFF');
+
+    // Verify the generated audio bytes are genuinely distinct between voices
+    const ericSlice = resEric.audioBuffer.subarray(44, 1000);
+    const bellaSlice = resBella.audioBuffer.subarray(44, 1000);
+    expect(Buffer.compare(ericSlice, bellaSlice)).not.toBe(0);
+  }, 60000);
+
+  it('11. Text normalization & phonemization correctly prepares speech tokens', async () => {
+    const raw = 'Dr. Smith visited Mr. Jones and spent $25 on 50% discounts etc.';
+    const norm = KokoroProvider.normalizeText(raw);
+    expect(norm).toContain('Doctor Smith');
+    expect(norm).toContain('Mister Jones');
+    expect(norm).toContain('25 dollars');
+    expect(norm).toContain('50 percent');
+    expect(norm).toContain('etcetera');
+
+    const tokens = await KokoroProvider.tokenizeText(raw, 'am_eric');
+    expect(tokens.length).toBeGreaterThan(10);
+    expect(tokens[0]).toBe(0); // Bos
+    expect(tokens[tokens.length - 1]).toBe(0); // Eos
   });
 });
