@@ -135,6 +135,60 @@ const DEFAULT_PROVIDER_VOICES: Record<TtsProviderId, VoiceInfo[]> = {
   ],
 };
 
+const MOTION_DESCRIPTIONS: Record<string, string> = {
+  // SMART
+  auto: 'Anti-repetition rotation across scenes',
+  ai_director: 'Mood-adaptive camera motion selected per scene',
+  // PRO
+  breathe: 'Organic subtle breathing zoom',
+  zoom_in: 'Gradual dramatic zoom into focus',
+  zoom_out: 'Expansive reveal of wider scene',
+  pan_left: 'Smooth horizontal scan to the left',
+  pan_right: 'Smooth horizontal scan to the right',
+  pan_up: 'Smooth upward vertical reveal',
+  pan_down: 'Smooth downward vertical tilt',
+  cinematic_dolly: 'Diagonal camera drift push',
+  drift: 'Slow atmospheric floating motion',
+  parallax: 'Compound depth perspective scan',
+  // ULTRA
+  crash_zoom: 'High-speed acceleration snap into focal point',
+  bullet_time: 'Slow-motion matrix pan orbital drift',
+  ken_burns: 'Documentary diagonal pan + zoom sweep',
+  whip_pan_left: 'High-speed kinetic horizontal blur left',
+  whip_pan_right: 'High-speed kinetic horizontal blur right',
+  snap_zoom: 'Instant optical focal leap for emphasis',
+  dolly_zoom: 'Vertigo effect counter-scale perspective warp',
+  shake: 'Handheld tension vibration & rumble',
+  pulse: 'Rhythmic heartbeat pump expansion',
+  // STATIC
+  none: 'Fixed tripod framing without motion',
+};
+
+const MOTION_NAMES: Record<string, string> = {
+  auto: 'AUTO Rotation',
+  ai_director: 'AI Director',
+  breathe: 'Breathe (Default)',
+  zoom_in: 'Slow Push In',
+  zoom_out: 'Slow Pull Out',
+  pan_left: 'Pan Left',
+  pan_right: 'Pan Right',
+  pan_up: 'Pan Up',
+  pan_down: 'Pan Down',
+  cinematic_dolly: 'Cinematic Dolly',
+  drift: 'Drift',
+  parallax: 'Parallax',
+  crash_zoom: 'Crash Zoom',
+  bullet_time: 'Bullet Time',
+  ken_burns: 'Ken Burns',
+  whip_pan_left: 'Whip Pan Left',
+  whip_pan_right: 'Whip Pan Right',
+  snap_zoom: 'Snap Zoom',
+  dolly_zoom: 'Dolly Zoom',
+  shake: 'Camera Shake',
+  pulse: 'Pulse',
+  none: 'Static Frame',
+};
+
 export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
   initialMode,
   initialSkillId,
@@ -184,7 +238,6 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
 
   const [motionEnabled, setMotionEnabled] = useState<boolean>(true);
   const [motionStyle, setMotionStyle] = useState<MotionStyle>('breathe');
-  const [motionTierFilter, setMotionTierFilter] = useState<'all' | 'smart' | 'pro' | 'ultra'>('all');
   const [transitionStyle, setTransitionStyle] = useState<TransitionStyle>('hard_cut');
   const [voiceEngine, setVoiceEngine] = useState<string>('edge-tts');
   const [voiceId, setVoiceId] = useState<string>('en-US-ChristopherNeural');
@@ -3538,196 +3591,174 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                 >
                   <div>
                     <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                      Master Camera Motion
+                      Move the camera over each image
                     </div>
                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                      Motion ON breathes life into still images. Turn OFF for flat artwork or whiteboard slides.
+                      Smooth dynamic pan and zoom over still scenes. Turn OFF for static framing.
                     </div>
                   </div>
                   <button
                     type="button"
+                    data-testid="master-motion-toggle"
                     onClick={() => {
                       const next = !motionEnabled;
                       setMotionEnabled(next);
                       persistDraft({ motionEnabled: next });
                     }}
                     className={motionEnabled ? 'btn-primary' : 'btn-secondary'}
-                    style={{ padding: '6px 16px', fontSize: '12px' }}
+                    style={{
+                      padding: '6px 20px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      minWidth: '70px',
+                      backgroundColor: motionEnabled ? '#a855f7' : '#27272a',
+                      borderColor: motionEnabled ? '#9333ea' : '#3f3f46',
+                      color: '#ffffff',
+                    }}
                   >
-                    {motionEnabled ? 'Motion ON' : 'Motion OFF'}
+                    {motionEnabled ? 'ON' : 'OFF'}
                   </button>
                 </div>
 
-                {/* Complete Motion Catalogue */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-                    <div>
-                      <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                        Default Motion Style
-                      </label>
-                      <div style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
-                        Select smart dynamic rotation or precise PRO/ULTRA cinematic camera styles
-                      </div>
+                {/* Camera Motion & Transition Controls */}
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '18px',
+                    opacity: motionEnabled ? 1 : 0.45,
+                    pointerEvents: motionEnabled ? 'auto' : 'none',
+                    transition: 'opacity 0.15s ease',
+                  }}
+                >
+                  {/* Camera Motion Dropdown */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Camera Motion
+                    </label>
+                    <select
+                      value={motionStyle}
+                      disabled={!motionEnabled}
+                      onChange={(e) => {
+                        const val = e.target.value as MotionStyle;
+                        setMotionStyle(val);
+                        persistDraft({ motionStyle: val });
+                      }}
+                      style={{
+                        padding: '10px 14px',
+                        fontSize: '13px',
+                        backgroundColor: 'var(--bg-subtle)',
+                        color: 'var(--text-primary)',
+                        borderRadius: 'var(--radius-sm)',
+                        border: '1px solid var(--border-color)',
+                        outline: 'none',
+                        cursor: motionEnabled ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      <optgroup label="SMART">
+                        <option value="auto">AUTO Rotation</option>
+                        <option value="ai_director">AI Director</option>
+                      </optgroup>
+                      <optgroup label="PRO">
+                        <option value="breathe">Breathe (Default)</option>
+                        <option value="zoom_in">Slow Push In</option>
+                        <option value="zoom_out">Slow Pull Out</option>
+                        <option value="pan_left">Pan Left</option>
+                        <option value="pan_right">Pan Right</option>
+                        <option value="pan_up">Pan Up</option>
+                        <option value="pan_down">Pan Down</option>
+                        <option value="cinematic_dolly">Cinematic Dolly</option>
+                        <option value="drift">Drift</option>
+                        <option value="parallax">Parallax</option>
+                      </optgroup>
+                      <optgroup label="ULTRA">
+                        <option value="crash_zoom">Crash Zoom</option>
+                        <option value="bullet_time">Bullet Time</option>
+                        <option value="ken_burns">Ken Burns</option>
+                        <option value="whip_pan_left">Whip Pan Left</option>
+                        <option value="whip_pan_right">Whip Pan Right</option>
+                        <option value="snap_zoom">Snap Zoom</option>
+                        <option value="dolly_zoom">Dolly Zoom</option>
+                        <option value="shake">Camera Shake</option>
+                        <option value="pulse">Pulse</option>
+                      </optgroup>
+                    </select>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      {MOTION_DESCRIPTIONS[motionStyle] || 'Smooth dynamic camera motion'}
+                    </div>
+                  </div>
+
+                  {/* Scene Transition Dropdown */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Scene Transition
+                    </label>
+                    <select
+                      value={transitionStyle}
+                      disabled={!motionEnabled}
+                      onChange={(e) => {
+                        const val = e.target.value as TransitionStyle;
+                        setTransitionStyle(val);
+                        persistDraft({ transitionStyle: val });
+                      }}
+                      style={{
+                        padding: '10px 14px',
+                        fontSize: '13px',
+                        backgroundColor: 'var(--bg-subtle)',
+                        color: 'var(--text-primary)',
+                        borderRadius: 'var(--radius-sm)',
+                        border: '1px solid var(--border-color)',
+                        outline: 'none',
+                        cursor: motionEnabled ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      <option value="hard_cut">Hard Cut (Recommended)</option>
+                      <option value="cross_fade">Cross Fade</option>
+                    </select>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      {transitionStyle === 'cross_fade'
+                        ? 'Smooth fade between scenes'
+                        : 'Clean cut from one scene to the next'}
                     </div>
 
-                    {/* Tier Filter Tabs */}
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      {(['all', 'smart', 'pro', 'ultra'] as const).map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={() => setMotionTierFilter(t)}
-                          style={{
-                            padding: '4px 10px',
-                            fontSize: '11px',
-                            fontWeight: 600,
-                            borderRadius: '4px',
-                            border: motionTierFilter === t ? '1px solid #a855f7' : '1px solid var(--border-color)',
-                            backgroundColor: motionTierFilter === t ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-subtle)',
-                            color: motionTierFilter === t ? '#c084fc' : 'var(--text-secondary)',
-                            cursor: 'pointer',
-                            textTransform: 'uppercase',
-                          }}
-                        >
-                          {t}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '10px', maxHeight: '340px', overflowY: 'auto', paddingRight: '4px' }}>
-                    {[
-                      // SMART
-                      { id: 'auto' as MotionStyle, name: 'AUTO Rotation', desc: 'Anti-repetition rotation across scenes', tier: 'smart', badgeColor: '#3b82f6' },
-                      { id: 'ai_director' as MotionStyle, name: 'AI Director', desc: 'Mood-adaptive dynamic camera motion', tier: 'smart', badgeColor: '#ec4899' },
-                      // PRO
-                      { id: 'breathe' as MotionStyle, name: 'Breathe (Default)', desc: 'Organic subtle breathing zoom', tier: 'pro', badgeColor: '#a855f7' },
-                      { id: 'zoom_in' as MotionStyle, name: 'Slow Push In', desc: 'Gradual dramatic zoom into focus', tier: 'pro', badgeColor: '#a855f7' },
-                      { id: 'zoom_out' as MotionStyle, name: 'Slow Pull Out', desc: 'Expansive reveal of wider scene', tier: 'pro', badgeColor: '#a855f7' },
-                      { id: 'pan_left' as MotionStyle, name: 'Pan Left', desc: 'Smooth horizontal scan to the left', tier: 'pro', badgeColor: '#a855f7' },
-                      { id: 'pan_right' as MotionStyle, name: 'Pan Right', desc: 'Smooth horizontal scan to the right', tier: 'pro', badgeColor: '#a855f7' },
-                      { id: 'pan_up' as MotionStyle, name: 'Pan Up', desc: 'Smooth upward vertical reveal', tier: 'pro', badgeColor: '#a855f7' },
-                      { id: 'pan_down' as MotionStyle, name: 'Pan Down', desc: 'Smooth downward vertical tilt', tier: 'pro', badgeColor: '#a855f7' },
-                      { id: 'cinematic_dolly' as MotionStyle, name: 'Cinematic Dolly', desc: 'Diagonal camera drift push', tier: 'pro', badgeColor: '#a855f7' },
-                      { id: 'drift' as MotionStyle, name: 'Drift', desc: 'Slow atmospheric floating motion', tier: 'pro', badgeColor: '#a855f7' },
-                      { id: 'parallax' as MotionStyle, name: 'Parallax', desc: 'Compound depth perspective scan', tier: 'pro', badgeColor: '#a855f7' },
-                      // ULTRA
-                      { id: 'crash_zoom' as MotionStyle, name: 'Crash Zoom', desc: 'High-speed acceleration snap into focal point', tier: 'ultra', badgeColor: '#f97316' },
-                      { id: 'bullet_time' as MotionStyle, name: 'Bullet Time', desc: 'Slow-motion matrix pan orbital drift', tier: 'ultra', badgeColor: '#f97316' },
-                      { id: 'ken_burns' as MotionStyle, name: 'Ken Burns', desc: 'Documentary diagonal pan + zoom sweep', tier: 'ultra', badgeColor: '#f97316' },
-                      { id: 'whip_pan_left' as MotionStyle, name: 'Whip Pan Left', desc: 'High-speed kinetic horizontal blur left', tier: 'ultra', badgeColor: '#f97316' },
-                      { id: 'whip_pan_right' as MotionStyle, name: 'Whip Pan Right', desc: 'High-speed kinetic horizontal blur right', tier: 'ultra', badgeColor: '#f97316' },
-                      { id: 'snap_zoom' as MotionStyle, name: 'Snap Zoom', desc: 'Instant optical focal leap for emphasis', tier: 'ultra', badgeColor: '#f97316' },
-                      { id: 'dolly_zoom' as MotionStyle, name: 'Dolly Zoom', desc: 'Vertigo effect counter-scale perspective warp', tier: 'ultra', badgeColor: '#f97316' },
-                      { id: 'shake' as MotionStyle, name: 'Camera Shake', desc: 'Handheld tension vibration & rumble', tier: 'ultra', badgeColor: '#f97316' },
-                      { id: 'pulse' as MotionStyle, name: 'Pulse', desc: 'Rhythmic heartbeat pump expansion', tier: 'ultra', badgeColor: '#f97316' },
-                      // STATIC
-                      { id: 'none' as MotionStyle, name: 'Static Frame', desc: 'Fixed tripod framing without motion', tier: 'static', badgeColor: '#6b7280' },
-                    ]
-                      .filter((ms) => motionTierFilter === 'all' || ms.tier === motionTierFilter)
-                      .map((ms) => {
-                        const isSel = motionStyle === ms.id;
-                        return (
-                          <div
-                            key={ms.id}
-                            onClick={() => {
-                              if (motionEnabled) {
-                                setMotionStyle(ms.id);
-                                persistDraft({ motionStyle: ms.id });
-                              }
-                            }}
-                            style={{
-                              padding: '10px 12px',
-                              borderRadius: 'var(--radius-sm)',
-                              border: isSel && motionEnabled ? '2px solid #a855f7' : '1px solid var(--border-color)',
-                              backgroundColor: isSel && motionEnabled ? 'rgba(168, 85, 247, 0.12)' : 'var(--bg-subtle)',
-                              opacity: motionEnabled ? 1 : 0.5,
-                              cursor: motionEnabled ? 'pointer' : 'default',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: '4px',
-                              position: 'relative',
-                            }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}>
-                              <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>{ms.name}</div>
-                              <span
-                                style={{
-                                  fontSize: '8.5px',
-                                  fontWeight: 700,
-                                  textTransform: 'uppercase',
-                                  padding: '1px 5px',
-                                  borderRadius: '3px',
-                                  backgroundColor: `${ms.badgeColor}22`,
-                                  color: ms.badgeColor,
-                                  border: `1px solid ${ms.badgeColor}44`,
-                                }}
-                              >
-                                {ms.tier}
-                              </span>
-                            </div>
-                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.3' }}>{ms.desc}</div>
-                          </div>
-                        );
-                      })}
-                  </div>
-                </div>
-
-                {/* Transition Selector */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    Scene Transition Style
-                  </label>
-                  <div style={{ display: 'flex', gap: '10px' }}>
-                    {[
-                      { id: 'hard_cut' as TransitionStyle, name: 'Hard Cut (Recommended)', desc: 'Clean, punchy cut without dark artifacts' },
-                      { id: 'cross_fade' as TransitionStyle, name: 'Cross Fade', desc: 'Smooth alpha blend between scenes' },
-                    ].map((ts) => {
-                      const isSel = transitionStyle === ts.id;
-                      return (
-                        <button
-                          key={ts.id}
-                          type="button"
-                          onClick={() => {
-                            setTransitionStyle(ts.id);
-                            persistDraft({ transitionStyle: ts.id });
-                          }}
-                          className={isSel ? 'btn-primary' : 'btn-secondary'}
-                          style={{ padding: '8px 16px', fontSize: '12px' }}
-                        >
-                          {ts.name}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {transitionStyle === 'cross_fade' && (
-                    <div style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <label style={{ fontSize: '12px', color: 'var(--text-secondary)', minWidth: '130px' }}>
-                        Crossfade Duration:
-                      </label>
-                      <input
-                        type="range"
-                        min="0.3"
-                        max="2.0"
-                        step="0.05"
-                        value={crossfadeDuration}
-                        onChange={(e) => {
-                          const val = parseFloat(e.target.value);
-                          setCrossfadeDuration(val);
-                          persistDraft({ crossfadeDuration: val });
+                    {/* Crossfade Duration Slider (shown only when cross_fade selected) */}
+                    {transitionStyle === 'cross_fade' && (
+                      <div
+                        style={{
+                          marginTop: '8px',
+                          padding: '12px 16px',
+                          backgroundColor: 'var(--bg-subtle)',
+                          borderRadius: 'var(--radius-sm)',
+                          border: '1px solid var(--border-color)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '8px',
                         }}
-                        style={{ flex: 1, accentColor: 'var(--accent-color)' }}
-                      />
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', minWidth: '45px' }}>
-                        {crossfadeDuration.toFixed(2)}s
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Motion Status */}
-                <div style={{ padding: '10px 14px', borderRadius: 'var(--radius-sm)', backgroundColor: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', fontSize: '11.5px', color: '#10b981' }}>
-                  <strong>Motion:</strong> Camera motion filters (zoompan) and transitions are actively rendered into video clips via local FFmpeg.
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                            Crossfade Duration
+                          </label>
+                          <span style={{ fontSize: '12px', fontWeight: 700, color: '#a855f7' }}>
+                            {crossfadeDuration.toFixed(2)}s
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.3"
+                          max="2.0"
+                          step="0.05"
+                          value={crossfadeDuration}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            setCrossfadeDuration(val);
+                            persistDraft({ crossfadeDuration: val });
+                          }}
+                          style={{ width: '100%', accentColor: '#a855f7', cursor: 'pointer' }}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -4131,7 +4162,7 @@ export const CreateVideoScreen: React.FC<CreateVideoScreenProps> = ({
                   <div style={{ padding: '14px', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Motion & Transitions</span>
                     <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                      {motionEnabled ? `Motion ON · ${motionStyle}` : 'Motion OFF (Static Frames)'}
+                      {motionEnabled ? `Motion ON · ${MOTION_NAMES[motionStyle] || motionStyle}` : 'Motion OFF (Static Frames)'}
                     </span>
                     <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
                       Transition: {transitionStyle === 'cross_fade' ? `Cross Fade (${crossfadeDuration}s)` : 'Hard Cut'}

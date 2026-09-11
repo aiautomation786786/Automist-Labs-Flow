@@ -163,7 +163,7 @@ describe('ZBot Create Video Parity Test Suite', () => {
     expect(screen.getByText(/Live Subtitle Interactive Preview/i)).toBeDefined();
   });
 
-  it('5. Step 4 (Motion): renders tier filter tabs, all 22 styles, and crossfade duration slider', async () => {
+  it('5. Step 4 (Motion): renders master switch, Camera Motion dropdown with optgroups, Scene Transition dropdown, and no dummy blocks', async () => {
     await setupScreen();
 
     // Step 1 -> Step 2 -> Step 3 -> Step 4
@@ -172,14 +172,47 @@ describe('ZBot Create Video Parity Test Suite', () => {
     fireEvent.click(screen.getByRole('button', { name: /Next Step/i }));
 
     expect(screen.getByText(/Camera Motion & Transitions/i)).toBeDefined();
-    // Tier buttons
-    expect(screen.getByRole('button', { name: /SMART/i })).toBeDefined();
-    expect(screen.getByRole('button', { name: /PRO/i })).toBeDefined();
-    expect(screen.getByRole('button', { name: /ULTRA/i })).toBeDefined();
-    // Transition
-    expect(screen.getByRole('button', { name: /Cross Fade/i })).toBeDefined();
-    fireEvent.click(screen.getByRole('button', { name: /Cross Fade/i }));
-    expect(screen.getByText(/Crossfade Duration:/i)).toBeDefined();
+
+    // 1. Master Camera Motion Switch
+    expect(screen.getByText(/Move the camera over each image/i)).toBeDefined();
+    const motionToggleBtn = screen.getByRole('button', { name: /^ON$/i });
+    expect(motionToggleBtn).toBeDefined();
+
+    // 2. Camera Motion Dropdown
+    expect(screen.getByText(/^Camera Motion$/i)).toBeDefined();
+    expect(screen.getByText(/Organic subtle breathing zoom/i)).toBeDefined();
+
+    // 3. Scene Transition Dropdown
+    expect(screen.getByText(/^Scene Transition$/i)).toBeDefined();
+    expect(screen.getByText(/Clean cut from one scene to the next/i)).toBeDefined();
+
+    // Crossfade Duration should NOT be visible when Hard Cut is selected
+    expect(screen.queryByText(/Crossfade Duration/i)).toBeNull();
+
+    // Select Cross Fade -> Crossfade Duration slider appears with dynamic description
+    const selects = screen.getAllByRole('combobox');
+    const transitionSelect = selects.find((s) => (s as HTMLSelectElement).value === 'hard_cut');
+    expect(transitionSelect).toBeDefined();
+    fireEvent.change(transitionSelect!, { target: { value: 'cross_fade' } });
+
+    expect(screen.getByText(/Smooth fade between scenes/i)).toBeDefined();
+    expect(screen.getByText(/Crossfade Duration/i)).toBeDefined();
+
+    // 4. Select another motion style (e.g. AI Director) -> dynamic description updates
+    const motionSelect = selects.find((s) => (s as HTMLSelectElement).value === 'breathe');
+    expect(motionSelect).toBeDefined();
+    fireEvent.change(motionSelect!, { target: { value: 'ai_director' } });
+    expect(screen.getByText(/Mood-adaptive camera motion selected per scene/i)).toBeDefined();
+
+    // 5. Verify old tier filter buttons and dummy technical blocks are removed
+    expect(screen.queryByRole('button', { name: /^SMART$/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^PRO$/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^ULTRA$/i })).toBeNull();
+    expect(screen.queryByText(/Camera motion filters \(zoompan\)/i)).toBeNull();
+
+    // 6. Test toggling master switch to OFF
+    fireEvent.click(motionToggleBtn);
+    expect(screen.getByRole('button', { name: /^OFF$/i })).toBeDefined();
   });
 
   it('6. Step 5 (Voice & Music): renders 5 TTS engines and Background Music controls with ducking', async () => {
@@ -213,8 +246,12 @@ describe('ZBot Create Video Parity Test Suite', () => {
     fireEvent.click(screen.getByText(/Neon Punch/i));
 
     fireEvent.click(screen.getByRole('button', { name: /Next Step/i })); // to 4
-    // Select Cross Fade
-    fireEvent.click(screen.getByRole('button', { name: /Cross Fade/i }));
+    // Select Cross Fade from transition dropdown
+    const selectsStep4 = screen.getAllByRole('combobox');
+    const transitionSelect = selectsStep4.find((s) => (s as HTMLSelectElement).value === 'hard_cut');
+    if (transitionSelect) {
+      fireEvent.change(transitionSelect, { target: { value: 'cross_fade' } });
+    }
 
     fireEvent.click(screen.getByRole('button', { name: /Next Step/i })); // to 5
     // Enable background music
