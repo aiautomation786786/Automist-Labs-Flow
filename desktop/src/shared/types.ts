@@ -526,7 +526,61 @@ export interface QuarantineRecord {
  */
 export type ProjectStatus = 'draft' | 'queued' | 'running' | 'paused' | 'completed' | 'cancelled' | 'deleting';
 /**
- * Complete persistent entity representing a Google Flow creation project.
+ * Origin type of a project.
+ *  - 'created': Standard first-party AI generation project.
+ *  - 'imported': Imported local media project (Path B).
+ *  - 'hybrid': Future hybrid combining imported media with AI generation.
+ */
+export type ProjectOriginType = 'created' | 'imported' | 'hybrid';
+
+/**
+ * Persistent source media metadata for imported projects.
+ * Privacy invariant: Original host filesystem paths are NEVER exposed to renderer/UI.
+ */
+export interface ProjectSourceMedia {
+    sourceType: 'local_file';
+    originalFilename: string;
+    fileSizeBytes: number;
+    hashSha256: string;
+    durationSeconds: number;
+    width: number;
+    height: number;
+    fps: number;
+    videoCodec: string;
+    audioCodec?: string;
+    hasAudio: boolean;
+    importedAt: string;
+    mediaPath: string; // Project-local relative path, e.g. "videos/source_video.mp4"
+}
+
+/**
+ * Validated segment cue representing a time-bounded phrase or sentence of transcribed speech.
+ */
+export interface TranscriptCue {
+    cueIndex: number;
+    startMs: number;
+    endMs: number;
+    text: string;
+    words?: Array<{ word: string; startMs: number; endMs: number }>;
+    confidence?: number;
+}
+
+/**
+ * Persistent transcript entity stored at metadata/transcript.json.
+ */
+export interface TranscriptEntity {
+    version: 1;
+    projectId: string;
+    sourceMediaPath: string;
+    fullText: string;
+    cues: TranscriptCue[];
+    language?: string;
+    createdAt: string;
+    provider: 'gemini' | 'mock';
+}
+
+/**
+ * Complete persistent entity representing a Google Flow creation or imported media project.
  * Stored at: %LOCALAPPDATA%\GoogleFlowApp\projects\{projectId}\project.json
  */
 export interface ProjectEntity {
@@ -538,6 +592,9 @@ export interface ProjectEntity {
     createdAt: string;
     updatedAt: string;
     status: ProjectStatus;
+    origin?: ProjectOriginType;
+    sourceMedia?: ProjectSourceMedia;
+    transcript?: TranscriptEntity;
     settings: ProjectSettings;
     slots: PromptSlotEntity[];
     stats: ProjectStats;
@@ -1281,6 +1338,46 @@ export interface CreateProjectParams {
         provider?: GenerationProvider;
     }>;
 }
+export interface MediaProbeResult {
+    valid: boolean;
+    durationSeconds: number;
+    width: number;
+    height: number;
+    fps: number;
+    videoCodec: string;
+    audioCodec?: string;
+    hasAudio: boolean;
+    fileSizeBytes: number;
+    error?: string;
+}
+
+export interface ImportMediaParams {
+    filePath: string;
+    name?: string;
+    channelId?: string;
+    channelName?: string;
+}
+
+export interface TranscribeMediaParams {
+    projectId: string;
+}
+
+export interface BurnImportedSubtitlesParams {
+    projectId: string;
+    subtitleStyle?: string;
+    subtitleConfig?: SubtitleConfig;
+    rawModeOnly?: boolean;
+}
+
+export interface TranscriptProgressEvent {
+    projectId: string;
+    percent: number;
+    stage: string;
+    message?: string;
+    status?: 'running' | 'completed' | 'failed';
+    error?: string;
+}
+
 export interface SchedulerCapacityMetrics {
     totalProfiles: number;
     readyProfiles: number;
@@ -1516,6 +1613,14 @@ export interface FlowApi {
     getSystemMetrics?: () => Promise<SystemMetrics>;
     parseSeparateFiles?: (input: SeparateFilesInput) => Promise<ScriptParseResult>;
     selectScriptFile?: () => Promise<{ filePath: string; fileName: string; content: string } | null>;
+    selectVideoFile?: () => Promise<string | null>;
+    probeVideoFile?: (filePath: string) => Promise<MediaProbeResult>;
+    importMediaToProject?: (params: ImportMediaParams) => Promise<ProjectEntity>;
+    transcribeProjectAudio?: (params: TranscribeMediaParams) => Promise<TranscriptEntity>;
+    cancelTranscription?: (projectId: string) => Promise<void>;
+    getProjectTranscript?: (projectId: string) => Promise<TranscriptEntity | null>;
+    burnImportedSubtitles?: (params: BurnImportedSubtitlesParams) => Promise<FinalRenderManifest>;
+    onTranscriptProgress?: (callback: (event: TranscriptProgressEvent) => void) => () => void;
 }
 export interface DiscoveredLocalProfile {
     profileDirectory: string;

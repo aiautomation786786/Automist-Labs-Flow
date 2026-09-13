@@ -131,6 +131,18 @@ export class ProjectRepository {
   }
 
   /**
+   * Concurrency-safe atomic persistence of an arbitrary ProjectEntity.
+   */
+  static async save(project: ProjectEntity): Promise<ProjectEntity> {
+    return await fileMutex.runExclusive(project.projectId, async () => {
+      AssetManager.ensureProjectDirectories(project.projectId);
+      project.updatedAt = new Date().toISOString();
+      await this.writeProjectAtomic(project);
+      return project;
+    });
+  }
+
+  /**
    * Retrieves a project by ID with mtime-verified cache lookup.
    */
   static async get(projectId: string): Promise<ProjectEntity | null> {

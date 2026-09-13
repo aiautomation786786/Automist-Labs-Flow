@@ -46,6 +46,10 @@ import { SkillRepository } from '../storage/SkillRepository';
 import { ScriptAiService } from '../ai/ScriptAiService';
 import { GeminiApiKeyManager } from '../ai/GeminiApiKeyManager';
 import { VideoFactoryPipelineManager } from '../pipeline/VideoFactoryPipelineManager';
+import { MediaProbeService } from '../import/MediaProbeService';
+import { MediaImportService } from '../import/MediaImportService';
+import { AudioTranscriptionService } from '../transcription/AudioTranscriptionService';
+import { ImportedMediaRenderer } from '../render/ImportedMediaRenderer';
 import type {
   VideoFactoryConfig,
   VideoFactoryStage,
@@ -59,6 +63,8 @@ import type {
   ScriptAiGenerateParams,
   RefineSceneParams,
   AnalyzeAlignParams,
+  ImportMediaParams,
+  BurnImportedSubtitlesParams,
 } from '../../shared/types';
 
 const logger = new AppLogger({ mirrorToStderr: false });
@@ -851,6 +857,27 @@ export class IpcHandlers {
       return null;
     });
 
+    ipcMain.handle('system:selectVideoFile', async () => {
+      try {
+        const electron = require('electron');
+        if (electron?.dialog?.showOpenDialog) {
+          const result = await electron.dialog.showOpenDialog({
+            title: 'Select Video File for Import',
+            properties: ['openFile'],
+            filters: [
+              { name: 'Video Files', extensions: ['mp4', 'mov', 'mkv'] },
+            ],
+          });
+          if (!result.canceled && result.filePaths.length > 0) {
+            return result.filePaths[0];
+          }
+        }
+      } catch (err) {
+        logger.warn('ipc', 'Failed to open video file dialog', { error: (err as Error).message });
+      }
+      return null;
+    });
+
     ipcMain.handle('system:selectMultipleImageFiles', async () => {
       try {
         const electron = require('electron');
@@ -1042,6 +1069,45 @@ export class IpcHandlers {
 
     generationEventBus.on('pipeline:progress' as any, (event: any) => {
       getWebContents?.()?.send('flow:pipeline:progress', event);
+    });
+
+    generationEventBus.on('transcript:progress' as any, (event: any) => {
+      getWebContents?.()?.send('flow:transcript:progress', event);
+    });
+
+    // -------------------------------------------------------------------------
+    // Media Import & Transcription API
+    // -------------------------------------------------------------------------
+    ipcMain.handle('media:probeVideo', async (_event, filePath: unknown) => {
+      if (typeof filePath !== 'string') throw new Error('Invalid filePath for probeVideo');
+      return await MediaProbeService.probeMedia(filePath);
+    });
+
+    ipcMain.handle('media:importToProject', async (_event, params: unknown) => {
+      if (!params || typeof params !== 'object') throw new Error('Invalid importToProject params');
+      return await MediaImportService.importMedia(params as ImportMediaParams);
+    });
+
+    ipcMain.handle('media:transcribe', async (_event, params: unknown) => {
+      const p = params as { projectId: string };
+      if (!p || typeof p.projectId !== 'string') throw new Error('Invalid transcribe params');
+      return await AudioTranscriptionService.transcribeProject(p.projectId);
+    });
+
+    ipcMain.handle('media:cancelTranscription', async (_event, projectId: unknown) => {
+      if (typeof projectId !== 'string') throw new Error('Invalid projectId for cancelTranscription');
+      AudioTranscriptionService.cancelTranscription(projectId);
+      return { success: true };
+    });
+
+    ipcMain.handle('media:getTranscript', async (_event, projectId: unknown) => {
+      if (typeof projectId !== 'string') throw new Error('Invalid projectId for getTranscript');
+      return await AudioTranscriptionService.getTranscript(projectId);
+    });
+
+    ipcMain.handle('media:burnSubtitles', async (_event, params: unknown) => {
+      if (!params || typeof params !== 'object') throw new Error('Invalid burnSubtitles params');
+      return await ImportedMediaRenderer.renderImportedVideo(params as BurnImportedSubtitlesParams);
     });
 
     if (typeof (sessionManager as any)?.on === 'function') {

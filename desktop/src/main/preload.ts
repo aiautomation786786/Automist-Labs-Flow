@@ -61,6 +61,12 @@ import type {
   SeparateFilesInput,
   SystemMetrics,
   GeminiKeySummary,
+  ImportMediaParams,
+  MediaProbeResult,
+  TranscribeMediaParams,
+  BurnImportedSubtitlesParams,
+  TranscriptProgressEvent,
+  TranscriptEntity,
 } from '../shared/types';
 
 const flowApi: FlowApi = {
@@ -310,6 +316,33 @@ const flowApi: FlowApi = {
 
   parseSeparateFiles: (input: SeparateFilesInput): Promise<ScriptParseResult> =>
     ipcRenderer.invoke('script:parseSeparateFiles', input),
+
+  selectVideoFile: (): Promise<string | null> =>
+    ipcRenderer.invoke('system:selectVideoFile'),
+
+  probeVideoFile: (filePath: string): Promise<MediaProbeResult> =>
+    ipcRenderer.invoke('media:probeVideo', filePath),
+
+  importMediaToProject: (params: ImportMediaParams): Promise<ProjectEntity> =>
+    ipcRenderer.invoke('media:importToProject', params),
+
+  transcribeProjectAudio: (params: TranscribeMediaParams): Promise<TranscriptEntity> =>
+    ipcRenderer.invoke('media:transcribe', params),
+
+  cancelTranscription: (projectId: string): Promise<void> =>
+    ipcRenderer.invoke('media:cancelTranscription', projectId),
+
+  getProjectTranscript: (projectId: string): Promise<TranscriptEntity | null> =>
+    ipcRenderer.invoke('media:getTranscript', projectId),
+
+  burnImportedSubtitles: (params: BurnImportedSubtitlesParams): Promise<FinalRenderManifest> =>
+    ipcRenderer.invoke('media:burnSubtitles', params),
+
+  onTranscriptProgress: (callback: (event: TranscriptProgressEvent) => void) => {
+    const handler = (_e: unknown, data: TranscriptProgressEvent) => callback(data);
+    ipcRenderer.on('flow:transcript:progress', handler);
+    return () => ipcRenderer.removeListener('flow:transcript:progress', handler);
+  },
 };
 
 contextBridge.exposeInMainWorld('flowApi', flowApi);

@@ -3,6 +3,7 @@ import type {
   SupportedAspectRatio,
   ProcessingOrder,
   ProfileSessionSnapshot,
+  MediaProbeResult,
 } from '../../shared/types';
 import { PromptParser, type ParsedPromptEntry } from '../../shared/PromptParser';
 import { FullPromptModal } from '../components/FullPromptModal';
@@ -48,6 +49,54 @@ export const NewProjectScreen: React.FC<NewProjectScreenProps> = ({
 
   // Modal inspection for review prompts
   const [inspectPrompt, setInspectPrompt] = useState<ParsedPromptEntry | null>(null);
+
+  // Pathway: 'create_ai' | 'import_video'
+  const [creationPathway, setCreationPathway] = useState<'create_ai' | 'import_video'>('create_ai');
+  const [importFilePath, setImportFilePath] = useState<string | null>(null);
+  const [importProbe, setImportProbe] = useState<MediaProbeResult | null>(null);
+  const [isProbing, setIsProbing] = useState(false);
+  const [importProjectName, setImportProjectName] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+
+  const handleSelectVideoFile = async () => {
+    if (!window.flowApi?.selectVideoFile || !window.flowApi?.probeVideoFile) return;
+    setErrorMsg(null);
+    try {
+      const selected = await window.flowApi.selectVideoFile();
+      if (!selected) return;
+      setImportFilePath(selected);
+      setIsProbing(true);
+      const probe = await window.flowApi.probeVideoFile(selected);
+      setIsProbing(false);
+      if (!probe.valid) {
+        setErrorMsg(probe.error || 'Failed to inspect media file.');
+        setImportProbe(null);
+        return;
+      }
+      setImportProbe(probe);
+      const baseName = selected.split(/[\\/]/).pop()?.replace(/\.[^/.]+$/, '') || 'Imported Video';
+      setImportProjectName(baseName);
+    } catch (err: any) {
+      setIsProbing(false);
+      setErrorMsg(err.message || 'Error selecting video file');
+    }
+  };
+
+  const handleExecuteImport = async () => {
+    if (!importFilePath || !window.flowApi?.importMediaToProject) return;
+    setIsImporting(true);
+    setErrorMsg(null);
+    try {
+      const project = await window.flowApi.importMediaToProject({
+        filePath: importFilePath,
+        name: importProjectName.trim() || undefined,
+      });
+      onProjectCreated(project.projectId);
+    } catch (err: any) {
+      setIsImporting(false);
+      setErrorMsg(err.message || 'Failed to import video into project.');
+    }
+  };
 
   // Load profiles on mount
   useEffect(() => {
@@ -130,62 +179,220 @@ export const NewProjectScreen: React.FC<NewProjectScreenProps> = ({
 
   return (
     <div style={{ padding: '24px', maxWidth: '780px', margin: '0 auto', width: '100%', height: '100%', overflowY: 'auto' }}>
-      {/* Wizard Step Progress Tracker */}
-      <div style={{ marginBottom: '24px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-          {[
-            { num: 1, label: 'Project' },
-            { num: 2, label: 'Content' },
-            { num: 3, label: 'Settings' },
-            { num: 4, label: 'Prompts' },
-            { num: 5, label: 'Review & Start' },
-          ].map((s) => {
-            const isActive = currentStep === s.num;
-            const isCompleted = currentStep > s.num;
-            return (
-              <div
-                key={s.num}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: '4px',
-                  opacity: isActive || isCompleted ? 1 : 0.45,
-                }}
-              >
-                <div
-                  style={{
-                    width: '28px',
-                    height: '28px',
-                    borderRadius: '50%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    backgroundColor: isActive ? 'var(--primary)' : isCompleted ? 'var(--success-bg)' : 'var(--bg-hover)',
-                    color: isActive ? 'var(--text-inverse)' : isCompleted ? 'var(--success)' : 'var(--text-secondary)',
-                    border: isCompleted ? '1px solid var(--success-border)' : '1px solid var(--border-color)',
-                  }}
-                >
-                  {s.num}
-                </div>
-                <span style={{ fontSize: '11px', fontWeight: isActive ? 600 : 400 }}>{s.label}</span>
-              </div>
-            );
-          })}
-        </div>
-        <div style={{ height: '2px', backgroundColor: 'var(--border-color)', borderRadius: '1px' }}>
+      {/* Top Creation Pathway Switcher */}
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px' }}>
+        <button
+          type="button"
+          className={creationPathway === 'create_ai' ? 'btn-primary' : 'btn-secondary'}
+          onClick={() => { setCreationPathway('create_ai'); setErrorMsg(null); }}
+          style={{ flex: 1, padding: '12px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}
+        >
+          <span style={{ fontWeight: 600, fontSize: '14px' }}>AI Prompt Campaign</span>
+          <span style={{ fontSize: '11px', opacity: 0.85 }}>Generate videos &amp; images via Google Flow</span>
+        </button>
+        <button
+          type="button"
+          className={creationPathway === 'import_video' ? 'btn-primary' : 'btn-secondary'}
+          onClick={() => { setCreationPathway('import_video'); setErrorMsg(null); }}
+          style={{ flex: 1, padding: '12px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}
+        >
+          <span style={{ fontWeight: 600, fontSize: '14px' }}>Import Existing Video</span>
+          <span style={{ fontSize: '11px', opacity: 0.85 }}>Transcribe, subtitle, and deliver local video</span>
+        </button>
+      </div>
+
+      {creationPathway === 'import_video' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div>
+            <h2>Import Video Project</h2>
+            <p style={{ marginTop: '4px' }}>
+              Import a local video (.mp4, .mov, .mkv) into Infinity Flow. Your original file remains untouched.
+            </p>
+          </div>
+
           <div
             style={{
-              height: '100%',
-              backgroundColor: 'var(--primary)',
-              width: `${((currentStep - 1) / 4) * 100}%`,
-              transition: 'width 0.2s ease',
+              padding: '28px',
+              border: '2px dashed var(--border-color)',
+              borderRadius: '8px',
+              textAlign: 'center',
+              backgroundColor: 'var(--bg-surface)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '12px',
             }}
-          />
+          >
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={handleSelectVideoFile}
+              disabled={isProbing || isImporting}
+              style={{ padding: '10px 24px', fontSize: '14px', fontWeight: 600 }}
+            >
+              {isProbing ? 'Inspecting Media...' : importFilePath ? 'Choose Different Video...' : 'Select Video File (.mp4, .mov, .mkv)'}
+            </button>
+            {importFilePath && (
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', wordBreak: 'break-all', maxWidth: '100%' }}>
+                Selected: <span style={{ fontFamily: 'monospace', color: 'var(--text-primary)' }}>{importFilePath}</span>
+              </div>
+            )}
+          </div>
+
+          {importProbe && importProbe.valid && (
+            <div
+              style={{
+                padding: '18px',
+                backgroundColor: 'var(--bg-surface)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '8px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '14px',
+              }}
+            >
+              <h3 style={{ fontSize: '14px', fontWeight: 600, margin: 0 }}>Probed Media Information</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px' }}>
+                <div style={{ background: 'var(--bg-primary)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Resolution</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, marginTop: '2px' }}>{importProbe.width} &times; {importProbe.height}</div>
+                </div>
+                <div style={{ background: 'var(--bg-primary)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Duration</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, marginTop: '2px' }}>{Math.round(importProbe.durationSeconds)}s</div>
+                </div>
+                <div style={{ background: 'var(--bg-primary)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Frame Rate</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, marginTop: '2px' }}>{importProbe.fps ? `${Math.round(importProbe.fps)} fps` : 'N/A'}</div>
+                </div>
+                <div style={{ background: 'var(--bg-primary)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Video Codec</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, marginTop: '2px' }}>{importProbe.videoCodec || 'Unknown'}</div>
+                </div>
+                <div style={{ background: 'var(--bg-primary)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Audio Track</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, marginTop: '2px', color: importProbe.hasAudio ? 'var(--success)' : 'var(--warning)' }}>
+                    {importProbe.hasAudio ? `Detected (${importProbe.audioCodec || 'audio'})` : 'No Audio'}
+                  </div>
+                </div>
+                <div style={{ background: 'var(--bg-primary)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>File Size</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, marginTop: '2px' }}>{(importProbe.fileSizeBytes / (1024 * 1024)).toFixed(1)} MB</div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 500 }}>Project Name *</label>
+                <input
+                  type="text"
+                  value={importProjectName}
+                  onChange={(e) => setImportProjectName(e.target.value)}
+                  placeholder="e.g. Imported Tutorial Reel"
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-primary)',
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {errorMsg && (
+            <div
+              style={{
+                padding: '12px 16px',
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid var(--danger)',
+                borderRadius: '6px',
+                color: 'var(--danger)',
+                fontSize: '13px',
+              }}
+            >
+              {errorMsg}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px' }}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={onCancel}
+              disabled={isImporting}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={handleExecuteImport}
+              disabled={!importFilePath || !importProbe?.valid || !importProjectName.trim() || isImporting}
+              style={{ minWidth: '220px' }}
+            >
+              {isImporting ? 'Importing Media...' : 'Import & Open Project'}
+            </button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <>
+          {/* Wizard Step Progress Tracker */}
+          <div style={{ marginBottom: '24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+              {[
+                { num: 1, label: 'Project' },
+                { num: 2, label: 'Content' },
+                { num: 3, label: 'Settings' },
+                { num: 4, label: 'Prompts' },
+                { num: 5, label: 'Review & Start' },
+              ].map((s) => {
+                const isActive = currentStep === s.num;
+                const isCompleted = currentStep > s.num;
+                return (
+                  <div
+                    key={s.num}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '4px',
+                      opacity: isActive || isCompleted ? 1 : 0.45,
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '50%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        backgroundColor: isActive ? 'var(--primary)' : isCompleted ? 'var(--success-bg)' : 'var(--bg-hover)',
+                        color: isActive ? 'var(--text-inverse)' : isCompleted ? 'var(--success)' : 'var(--text-secondary)',
+                        border: isCompleted ? '1px solid var(--success-border)' : '1px solid var(--border-color)',
+                      }}
+                    >
+                      {s.num}
+                    </div>
+                    <span style={{ fontSize: '11px', fontWeight: isActive ? 600 : 400 }}>{s.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ height: '2px', backgroundColor: 'var(--border-color)', borderRadius: '1px' }}>
+              <div
+                style={{
+                  height: '100%',
+                  backgroundColor: 'var(--primary)',
+                  width: `${((currentStep - 1) / 4) * 100}%`,
+                  transition: 'width 0.2s ease',
+                }}
+              />
+            </div>
+          </div>
 
       {/* STEP 1: Project Info */}
       {currentStep === 1 && (
@@ -662,6 +869,8 @@ export const NewProjectScreen: React.FC<NewProjectScreenProps> = ({
             </button>
           </div>
         </div>
+      )}
+      </>
       )}
 
       {/* Full Prompt Inspection Modal inside Review */}

@@ -418,7 +418,7 @@ export const AppShell: React.FC = () => {
             <ProjectsScreen
               initialTab={currentView.type === 'projects' ? currentView.initialTab : undefined}
               onOpenProject={(projectId) => setCurrentView({ type: 'workspace', projectId })}
-              onNavigateNewProject={() => setCurrentView({ type: 'single_image' })}
+              onNavigateNewProject={() => setCurrentView({ type: 'new_project' })}
               onNavigateVideoFactory={(channelId) =>
                 setCurrentView({ type: 'create_video', initialChannelId: channelId })
               }

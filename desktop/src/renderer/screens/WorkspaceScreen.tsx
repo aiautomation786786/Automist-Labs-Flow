@@ -11,6 +11,8 @@ import type {
   VideoFactoryPipelineState,
   VideoFactoryStage,
   SystemMetrics,
+  TranscriptEntity,
+  TranscriptProgressEvent,
 } from '../../shared/types';
 import { PromptSlotCard } from '../components/PromptSlotCard';
 import { FullPromptModal } from '../components/FullPromptModal';
@@ -85,6 +87,19 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
 
   // Phase 6 System Telemetry (CPU / RAM / Ping per ZBot §4)
   const [telemetry, setTelemetry] = useState<SystemMetrics | null>(null);
+
+  // Phase 2 Imported Media & Transcription State
+  const isImported = project?.origin === 'imported';
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcriptionProgress, setTranscriptionProgress] = useState<string | null>(null);
+  const [transcriptionPercent, setTranscriptionPercent] = useState<number>(0);
+  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
+  const [transcriptData, setTranscriptData] = useState<TranscriptEntity | null>(null);
+  const [subtitleStyle, setSubtitleStyle] = useState<'default' | 'classic' | 'boxed' | 'minimal'>('default');
+  const [subtitlePosition, setSubtitlePosition] = useState<'bottom' | 'center' | 'top'>('bottom');
+  const [rawMode, setRawMode] = useState(false);
+  const [isBurningSubtitles, setIsBurningSubtitles] = useState(false);
+  const [burnError, setBurnError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -165,6 +180,17 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
           window.flowApi.getPipelineState(projectId).then((pState) => {
             if (mountedRef.current && pState) {
               setPipelineState(pState);
+            }
+          }).catch(() => {});
+        }
+
+        // Load Phase 2 Transcript if exists
+        if (data.transcript) {
+          setTranscriptData(data.transcript);
+        } else if (data.origin === 'imported' && window.flowApi?.getProjectTranscript) {
+          window.flowApi.getProjectTranscript(projectId).then((t) => {
+            if (mountedRef.current && t) {
+              setTranscriptData(t);
             }
           }).catch(() => {});
         }
@@ -317,6 +343,23 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
         cancelAnimationFrame(animFrameId);
       }
     };
+  }, [projectId]);
+
+  // Listen to live transcript progress events
+  useEffect(() => {
+    if (!window.flowApi?.onTranscriptProgress) return;
+    const unsub = window.flowApi.onTranscriptProgress((event: TranscriptProgressEvent) => {
+      if (event.projectId !== projectId) return;
+      setTranscriptionPercent(event.percent);
+      setTranscriptionProgress(event.message || null);
+      if (event.status === 'completed' || event.status === 'failed') {
+        setIsTranscribing(false);
+        if (event.status === 'failed' && event.error) {
+          setTranscriptionError(event.error);
+        }
+      }
+    });
+    return () => unsub();
   }, [projectId]);
 
   // Separate image vs video slots, strictly ordered by slotIndex
@@ -630,6 +673,74 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
     }
   };
 
+  const handleTranscribe = async () => {
+    if (!window.flowApi?.transcribeProjectAudio || !project) return;
+    setIsTranscribing(true);
+    setTranscriptionError(null);
+    setTranscriptionProgress('Extracting audio & transcribing with Gemini...');
+    setTranscriptionPercent(10);
+    try {
+      const transcript = await window.flowApi.transcribeProjectAudio({ projectId });
+      if (mountedRef.current) {
+        setTranscriptData(transcript);
+        setTranscriptionProgress('Transcription complete!');
+        setTranscriptionPercent(100);
+      }
+      await loadProject();
+    } catch (err: any) {
+      if (mountedRef.current) {
+        setTranscriptionError(err.message || 'Transcription failed');
+      }
+    } finally {
+      if (mountedRef.current) {
+        setIsTranscribing(false);
+      }
+    }
+  };
+
+  const handleCancelTranscription = async () => {
+    if (!window.flowApi?.cancelTranscription || !project) return;
+    try {
+      await window.flowApi.cancelTranscription(projectId);
+      setIsTranscribing(false);
+      setTranscriptionProgress('Transcription cancelled');
+    } catch (err) {
+      console.error('Failed to cancel transcription', err);
+    }
+  };
+
+  const handleBurnSubtitles = async () => {
+    if (!window.flowApi?.burnImportedSubtitles || !project) return;
+    setIsBurningSubtitles(true);
+    setBurnError(null);
+    try {
+      await window.flowApi.burnImportedSubtitles({
+        projectId,
+        subtitleStyle,
+        subtitleConfig: {
+          preset: subtitleStyle,
+          position: subtitlePosition,
+        },
+        rawModeOnly: rawMode,
+      });
+      if (window.flowApi.getFinalRenderManifest) {
+        const manifest = await window.flowApi.getFinalRenderManifest(projectId);
+        if (mountedRef.current && manifest) {
+          setFinalManifest(manifest);
+        }
+      }
+      await loadProject();
+    } catch (err: any) {
+      if (mountedRef.current) {
+        setBurnError(err.message || 'Subtitle burning failed');
+      }
+    } finally {
+      if (mountedRef.current) {
+        setIsBurningSubtitles(false);
+      }
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
@@ -699,6 +810,24 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
                   }}
                 >
                   {project.settings.provider === 'gemini' ? 'Gemini' : project.settings.provider === 'auto' ? 'Auto Balanced' : 'Google Flow'}
+                </span>
+              )}
+              {project.origin === 'imported' && (
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    padding: '2px 8px',
+                    borderRadius: '999px',
+                    backgroundColor: 'rgba(168, 85, 247, 0.15)',
+                    color: '#c084fc',
+                    border: '1px solid rgba(168, 85, 247, 0.3)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  Imported Media
                 </span>
               )}
             </div>
@@ -803,6 +932,282 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
           </button>
         </div>
       </div>
+
+      {/* PHASE 2 IMPORTED MEDIA STUDIO */}
+      {isImported && (
+        <div
+          data-testid="imported-media-studio"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px',
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)',
+            padding: '20px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '16px', fontWeight: 700 }}>Imported Media &amp; Subtitle Studio</span>
+              <span className="badge badge-completed" style={{ fontSize: '11px' }}>
+                {project.sourceMedia?.originalFilename || 'Imported Video'}
+              </span>
+            </div>
+            {project.sourceMedia && (
+              <div style={{ display: 'flex', gap: '8px', fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                <span>{project.sourceMedia.width} &times; {project.sourceMedia.height}</span>
+                <span>&bull;</span>
+                <span>{Math.round(project.sourceMedia.durationSeconds)}s</span>
+                <span>&bull;</span>
+                <span>{project.sourceMedia.fps ? `${Math.round(project.sourceMedia.fps)} fps` : 'N/A'}</span>
+                <span>&bull;</span>
+                <span>{project.sourceMedia.videoCodec || 'Unknown'} / {project.sourceMedia.hasAudio ? (project.sourceMedia.audioCodec || 'audio') : 'No Audio'}</span>
+                <span>&bull;</span>
+                <span title={`SHA-256: ${project.sourceMedia.hashSha256}`}>SHA: {project.sourceMedia.hashSha256.slice(0, 8)}...</span>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1fr) minmax(360px, 1.2fr)', gap: '20px' }}>
+            {/* Left Column: Video Preview */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div
+                style={{
+                  width: '100%',
+                  aspectRatio: project.sourceMedia ? `${project.sourceMedia.width} / ${project.sourceMedia.height}` : '16/9',
+                  maxHeight: '380px',
+                  backgroundColor: '#000',
+                  borderRadius: '6px',
+                  overflow: 'hidden',
+                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {project.sourceMedia?.mediaPath ? (
+                  <video
+                    src={formatAssetUrl(project.sourceMedia.mediaPath, project.projectId)}
+                    controls
+                    style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                  />
+                ) : (
+                  <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>No video loaded</div>
+                )}
+              </div>
+            </div>
+
+            {/* Right Column: Transcription & Subtitles */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {/* Section 1: Gemini Transcription */}
+              <div
+                style={{
+                  backgroundColor: 'var(--bg-card)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 600 }}>Gemini Audio Transcription</span>
+                    {transcriptData && (
+                      <span className="badge badge-completed" style={{ fontSize: '10px' }}>
+                        {transcriptData.cues.length} Cues ({transcriptData.language})
+                      </span>
+                    )}
+                  </div>
+                  {!transcriptData && !isTranscribing && (
+                    <button
+                      type="button"
+                      className="btn-primary btn-sm"
+                      onClick={handleTranscribe}
+                      disabled={!project.sourceMedia?.hasAudio}
+                    >
+                      Transcribe with Gemini
+                    </button>
+                  )}
+                  {transcriptData && !isTranscribing && (
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={handleTranscribe}
+                      style={{ fontSize: '11px' }}
+                    >
+                      Re-Transcribe
+                    </button>
+                  )}
+                </div>
+
+                {!project.sourceMedia?.hasAudio && (
+                  <div style={{ fontSize: '11.5px', color: 'var(--warning)' }}>
+                    Note: Probed video has no detected audio track. Transcription requires audio.
+                  </div>
+                )}
+
+                {isTranscribing && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                      <span>{transcriptionProgress || 'Transcribing...'}</span>
+                      <span style={{ fontWeight: 600 }}>{transcriptionPercent}%</span>
+                    </div>
+                    <div style={{ height: '6px', backgroundColor: 'var(--bg-subtle)', borderRadius: '3px', overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          width: `${transcriptionPercent}%`,
+                          height: '100%',
+                          backgroundColor: 'var(--primary)',
+                          transition: 'width 0.3s ease',
+                        }}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={handleCancelTranscription}
+                      style={{ alignSelf: 'flex-start', fontSize: '11px', color: 'var(--danger)' }}
+                    >
+                      Cancel Transcription
+                    </button>
+                  </div>
+                )}
+
+                {transcriptionError && (
+                  <div
+                    style={{
+                      padding: '8px 12px',
+                      backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid var(--danger)',
+                      borderRadius: '4px',
+                      color: 'var(--danger)',
+                      fontSize: '12px',
+                    }}
+                  >
+                    {transcriptionError}
+                  </div>
+                )}
+
+                {/* Cue Viewer */}
+                {transcriptData && transcriptData.cues.length > 0 && (
+                  <div
+                    style={{
+                      maxHeight: '140px',
+                      overflowY: 'auto',
+                      backgroundColor: 'var(--bg-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '4px',
+                      padding: '8px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px',
+                      fontSize: '11.5px',
+                    }}
+                  >
+                    {transcriptData.cues.map((c, idx) => (
+                      <div key={idx} style={{ display: 'flex', gap: '8px', lineHeight: 1.4 }}>
+                        <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)', flexShrink: 0 }}>
+                          {(c.startMs / 1000).toFixed(1)}s - {(c.endMs / 1000).toFixed(1)}s:
+                        </span>
+                        <span style={{ color: 'var(--text-primary)' }}>{c.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Section 2: Subtitle Burning & Video Assembly */}
+              <div
+                style={{
+                  backgroundColor: 'var(--bg-card)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                }}
+              >
+                <span style={{ fontSize: '13px', fontWeight: 600 }}>Subtitle Styling &amp; Assembly</span>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Preset Style:</span>
+                  {(['default', 'classic', 'boxed', 'minimal'] as const).map((st) => (
+                    <button
+                      key={st}
+                      type="button"
+                      className={subtitleStyle === st ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
+                      onClick={() => setSubtitleStyle(st)}
+                      disabled={isBurningSubtitles || rawMode}
+                      style={{ fontSize: '11px', padding: '2px 8px', textTransform: 'capitalize' }}
+                    >
+                      {st}
+                    </button>
+                  ))}
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Position:</span>
+                  {(['bottom', 'center', 'top'] as const).map((pos) => (
+                    <button
+                      key={pos}
+                      type="button"
+                      className={subtitlePosition === pos ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
+                      onClick={() => setSubtitlePosition(pos)}
+                      disabled={isBurningSubtitles || rawMode}
+                      style={{ fontSize: '11px', padding: '2px 8px', textTransform: 'capitalize' }}
+                    >
+                      {pos}
+                    </button>
+                  ))}
+                </div>
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={rawMode}
+                    onChange={(e) => setRawMode(e.target.checked)}
+                    disabled={isBurningSubtitles}
+                  />
+                  <span>Fast Remux / Raw Passthrough (skip burning subtitles, direct stream copy)</span>
+                </label>
+
+                {burnError && (
+                  <div
+                    style={{
+                      padding: '8px 12px',
+                      backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid var(--danger)',
+                      borderRadius: '4px',
+                      color: 'var(--danger)',
+                      fontSize: '12px',
+                    }}
+                  >
+                    {burnError}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleBurnSubtitles}
+                  disabled={isBurningSubtitles || (!transcriptData && !rawMode)}
+                  style={{ alignSelf: 'flex-start', padding: '8px 18px', fontWeight: 600, fontSize: '13px' }}
+                >
+                  {isBurningSubtitles
+                    ? 'Processing Video...'
+                    : rawMode
+                    ? 'Remux & Assemble Video'
+                    : 'Burn Subtitles & Assemble Video'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Phase 2/3 Video Factory Pipeline Panel */}
       {pipelineState && (
@@ -1110,40 +1515,42 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
       )}
 
       {/* Progress Summary Bar (Unboxed & Sleek) */}
-      <div
-        style={{
-          backgroundColor: 'var(--bg-surface)',
-          border: '1px solid var(--border-color)',
-          borderRadius: 'var(--radius-md)',
-          padding: '12px 18px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '20px',
-        }}
-      >
-        <div style={{ display: 'flex', gap: '20px', fontSize: '13px' }}>
-          <span>Total: <strong>{totalSlots}</strong></span>
-          <span>Completed: <strong style={{ color: 'var(--success)' }}>{completedSlots}</strong></span>
-          {project.stats.failedCount > 0 && (
-            <span>Failed: <strong style={{ color: 'var(--danger)' }}>{project.stats.failedCount}</strong></span>
-          )}
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: '240px' }}>
-          <div style={{ flex: 1, height: '7px', backgroundColor: 'var(--bg-subtle)', borderRadius: '4px', overflow: 'hidden' }}>
-            <div
-              style={{
-                width: `${progressPercent}%`,
-                height: '100%',
-                backgroundColor: project.status === 'completed' ? 'var(--success)' : 'var(--primary)',
-                transition: 'width 0.3s ease',
-              }}
-            />
+      {totalSlots > 0 && (
+        <div
+          style={{
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)',
+            padding: '12px 18px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '20px',
+          }}
+        >
+          <div style={{ display: 'flex', gap: '20px', fontSize: '13px' }}>
+            <span>Total: <strong>{totalSlots}</strong></span>
+            <span>Completed: <strong style={{ color: 'var(--success)' }}>{completedSlots}</strong></span>
+            {project.stats.failedCount > 0 && (
+              <span>Failed: <strong style={{ color: 'var(--danger)' }}>{project.stats.failedCount}</strong></span>
+            )}
           </div>
-          <span style={{ fontSize: '12px', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{progressPercent}%</span>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: '240px' }}>
+            <div style={{ flex: 1, height: '7px', backgroundColor: 'var(--bg-subtle)', borderRadius: '4px', overflow: 'hidden' }}>
+              <div
+                style={{
+                  width: `${progressPercent}%`,
+                  height: '100%',
+                  backgroundColor: project.status === 'completed' ? 'var(--success)' : 'var(--primary)',
+                  transition: 'width 0.3s ease',
+                }}
+              />
+            </div>
+            <span style={{ fontSize: '12px', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{progressPercent}%</span>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Final Video & Music Assembly Panel */}
       {shouldShowAssemblyPanel && (
