@@ -351,4 +351,56 @@ describe('FinalAssemblyService (Real FFmpeg Execution)', () => {
     expect(fs.existsSync(outputWithBgm)).toBe(true);
     expect(resultWithBgm.audioCodec).toBe('aac');
   }, 40000);
+
+  it('watchdog triggers and terminates stalled process when watchdogTimeoutMs expires', async () => {
+    const outputVideoPath = path.join(tempDir, 'watchdog_stalled.mp4');
+
+    // 5ms timeout is guaranteed to expire before real FFmpeg encoding finishes
+    await expect(
+      FinalAssemblyService.assembleFinalVideo({
+        projectId: 'watchdog_test_proj',
+        sceneClips,
+        outputVideoPath,
+        options: {
+          transitionStyle: 'hard_cut',
+          watchdogTimeoutMs: 5,
+        },
+      })
+    ).rejects.toThrow(/watchdog triggered/);
+  });
+
+  it('emits deterministic progress events parsed via -progress pipe:1 during assembly', async () => {
+    const outputVideoPath = path.join(tempDir, 'progress_test.mp4');
+    const progressEvents: any[] = [];
+
+    const result = await FinalAssemblyService.assembleFinalVideo({
+      projectId: 'progress_test_proj',
+      sceneClips,
+      outputVideoPath,
+      options: {
+        transitionStyle: 'hard_cut',
+      },
+      onProgress: (evt) => {
+        progressEvents.push({ ...evt });
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(progressEvents.length).toBeGreaterThanOrEqual(4);
+
+    // Verify muxing progress events exist
+    const muxingEvents = progressEvents.filter((e) => e.status === 'muxing');
+    expect(muxingEvents.length).toBeGreaterThan(0);
+    // Initial muxing is 40%
+    expect(muxingEvents[0].progressPercent).toBe(40);
+    // Later muxing events or completion reach 74%
+    const maxMuxPercent = Math.max(...muxingEvents.map((e) => e.progressPercent));
+    expect(maxMuxPercent).toBeGreaterThanOrEqual(40);
+    expect(maxMuxPercent).toBeLessThanOrEqual(75);
+
+    // Validating event is 75%
+    const validatingEvent = progressEvents.find((e) => e.status === 'validating');
+    expect(validatingEvent).toBeDefined();
+    expect(validatingEvent?.progressPercent).toBe(75);
+  }, 35000);
 });

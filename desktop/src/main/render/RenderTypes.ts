@@ -38,6 +38,7 @@ export interface RenderSceneOptions {
   clipMotionKey?: string;
   renderVersion?: number;
   watchdogTimeoutMs?: number;
+  onProgress?: (progressPercent: number) => void;
 }
 
 export interface RenderProjectOptions {

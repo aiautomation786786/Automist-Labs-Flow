@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { WordTiming, SupportedAspectRatio } from './RenderTypes';
 import type { SubtitleConfig } from '../../shared/types';
+import { toEven } from './RenderDimensions';
 
 export interface SubtitleCue {
   text: string;
@@ -22,11 +23,13 @@ export interface SubtitleCue {
 export interface GenerateSubtitleOptions {
   narrationText: string;
   durationSeconds: number;
-  subtitleStyle?: string;
+  subtitleStyle?: string | SubtitleConfig;
   subtitleConfig?: SubtitleConfig;
   aspectRatio: SupportedAspectRatio;
   wordTimings?: WordTiming[];
   outputPath?: string;
+  targetWidthPx?: number;
+  targetHeightPx?: number;
 }
 
 export class SubtitleGenerator {
@@ -178,7 +181,17 @@ export class SubtitleGenerator {
   /**
    * Generates the V4+ Styles section for the selected style or configuration.
    */
-  static getStyleDefinition(styleOrConfig?: string | SubtitleConfig): string {
+  /**
+   * Generates the V4+ Styles section for the selected style or configuration.
+   * If targetWidthPx and targetHeightPx are provided, font size, margins, and outline
+   * scale proportionally based on the reference 1080p short-side resolution:
+   *   effectiveFontSize = Math.round(baseFontSize * shortSide / 1080)
+   */
+  static getStyleDefinition(
+    styleOrConfig?: string | SubtitleConfig,
+    targetWidthPx?: number,
+    targetHeightPx?: number
+  ): string {
     let config: SubtitleConfig | undefined;
     let presetName = 'bottom_glass';
 
@@ -201,9 +214,9 @@ export class SubtitleGenerator {
 
     const s = (presetName || 'bottom_glass').toLowerCase();
 
-    // Base defaults per preset
+    // Base defaults per preset (calibrated at 1080p standard reference)
     let font = 'Arial';
-    let fontSize = 32;
+    let baseFontSize = 32;
     let primaryColor = '&H00FFFFFF';
     let secondaryColor = '&H000000FF';
     let outlineColor = '&H00000000';
@@ -218,7 +231,7 @@ export class SubtitleGenerator {
       case 'solid_bar':
       case 'bottom_bar':
         font = 'Arial';
-        fontSize = 32;
+        baseFontSize = 32;
         primaryColor = '&H00FFFFFF';
         secondaryColor = '&H000000FF';
         outlineColor = '&H00000000';
@@ -232,7 +245,7 @@ export class SubtitleGenerator {
 
       case 'neon_punch':
         font = 'Arial';
-        fontSize = 34;
+        baseFontSize = 34;
         primaryColor = '&H00FFFF00';
         secondaryColor = '&H000000FF';
         outlineColor = '&H00101010';
@@ -246,7 +259,7 @@ export class SubtitleGenerator {
 
       case 'cinema_yellow':
         font = 'Arial';
-        fontSize = 34;
+        baseFontSize = 34;
         primaryColor = '&H0000E5FF';
         secondaryColor = '&H000000FF';
         outlineColor = '&H00000000';
@@ -261,7 +274,7 @@ export class SubtitleGenerator {
       case 'bottom_glass':
       default:
         font = 'Arial';
-        fontSize = 32;
+        baseFontSize = 32;
         primaryColor = '&H00FFFFFF';
         secondaryColor = '&H000000FF';
         outlineColor = '&H00000000';
@@ -277,7 +290,7 @@ export class SubtitleGenerator {
     // Apply custom config overrides if provided
     if (config) {
       if (config.fontFamily) font = config.fontFamily;
-      if (typeof config.fontSize === 'number' && config.fontSize > 0) fontSize = config.fontSize;
+      if (typeof config.fontSize === 'number' && config.fontSize > 0) baseFontSize = config.fontSize;
       if (config.textColor) primaryColor = SubtitleGenerator.hexToAssColor(config.textColor, '00');
       const boxCol = config.boxColor || config.backgroundColor;
       if (boxCol) backColor = SubtitleGenerator.hexToAssColor(boxCol, '80');
@@ -298,19 +311,60 @@ export class SubtitleGenerator {
       }
     }
 
-    return `Style: Default,${font},${fontSize},${primaryColor},${secondaryColor},${outlineColor},${backColor},1,0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},${alignment},24,24,${marginV},1`;
+    let effectiveFontSize = baseFontSize;
+    let effectiveMarginV = marginV;
+    let effectiveOutline = outline;
+    let effectiveShadow = shadow;
+    let effectiveMarginLR = 24;
+
+    // Apply resolution-aware font scaling if explicit target dimensions are supplied
+    if (targetWidthPx && targetHeightPx && targetWidthPx > 0 && targetHeightPx > 0) {
+      const shortSide = Math.min(targetWidthPx, targetHeightPx);
+      effectiveFontSize = Math.max(8, Math.round((baseFontSize * shortSide) / 1080));
+      const scaleFactor = shortSide / 1080;
+      effectiveMarginV = Math.max(10, Math.round(marginV * scaleFactor));
+      effectiveOutline = Math.max(1, Math.round(outline * scaleFactor));
+      if (shadow > 0) {
+        effectiveShadow = Math.max(1, Math.round(shadow * scaleFactor));
+      }
+      effectiveMarginLR = Math.max(10, Math.round(24 * scaleFactor));
+    }
+
+    return `Style: Default,${font},${effectiveFontSize},${primaryColor},${secondaryColor},${outlineColor},${backColor},1,0,0,0,100,100,0,0,${borderStyle},${effectiveOutline},${effectiveShadow},${alignment},${effectiveMarginLR},${effectiveMarginLR},${effectiveMarginV},1`;
   }
 
   /**
    * Generates the complete ASS file content.
    */
   static generateAss(options: GenerateSubtitleOptions): string {
+    // Validate target dimensions if provided
+    if (options.targetWidthPx !== undefined || options.targetHeightPx !== undefined) {
+      if (
+        typeof options.targetWidthPx !== 'number' ||
+        typeof options.targetHeightPx !== 'number' ||
+        isNaN(options.targetWidthPx) ||
+        isNaN(options.targetHeightPx) ||
+        options.targetWidthPx <= 0 ||
+        options.targetHeightPx <= 0 ||
+        !isFinite(options.targetWidthPx) ||
+        !isFinite(options.targetHeightPx)
+      ) {
+        throw new Error(
+          `Invalid subtitle target dimensions: width=${options.targetWidthPx}, height=${options.targetHeightPx}. Dimensions must be positive finite numbers.`
+        );
+      }
+    }
+
     const isPortrait = options.aspectRatio === '9:16';
-    const playResX = isPortrait ? 720 : 1280;
-    const playResY = isPortrait ? 1280 : 720;
+    const playResX = options.targetWidthPx !== undefined ? toEven(options.targetWidthPx) : (isPortrait ? 720 : 1280);
+    const playResY = options.targetHeightPx !== undefined ? toEven(options.targetHeightPx) : (isPortrait ? 1280 : 720);
 
     const styleInput = options.subtitleConfig || options.subtitleStyle || 'bottom_glass';
-    const styleLine = this.getStyleDefinition(styleInput);
+    const styleLine = this.getStyleDefinition(
+      styleInput,
+      options.targetWidthPx !== undefined ? playResX : undefined,
+      options.targetHeightPx !== undefined ? playResY : undefined
+    );
     const config = typeof styleInput === 'object' ? styleInput : undefined;
 
     let textToProcess = options.narrationText || '';

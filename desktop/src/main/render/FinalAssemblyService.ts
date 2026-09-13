@@ -23,6 +23,8 @@ import { FinalAudioMixer } from './FinalAudioMixer';
 import { SceneRenderer } from './SceneRenderer';
 import { AudioDurationMeasurer } from '../tts/AudioDurationMeasurer';
 import { AppLogger } from '../utils/AppLogger';
+import { toEven } from './RenderDimensions';
+import { FfmpegProgressParser, mapFfmpegErrorMessage } from './FfmpegProgressParser';
 
 const execFileAsync = promisify(execFile);
 const logger = new AppLogger({ mirrorToStderr: false });
@@ -432,12 +434,15 @@ export class FinalAssemblyService {
     let assembledVideoPad = finalVideoPad;
     if (options.outputResolution === '4k' || options.outputResolution === '1080p') {
       const isPortrait = options.aspectRatio === '9:16';
-      const targetW = options.outputResolution === '4k'
+      const rawTargetW = options.outputResolution === '4k'
         ? (isPortrait ? 2160 : 3840)
         : (isPortrait ? 1080 : 1920);
-      const targetH = options.outputResolution === '4k'
+      const rawTargetH = options.outputResolution === '4k'
         ? (isPortrait ? 3840 : 2160)
         : (isPortrait ? 1920 : 1080);
+
+      const targetW = toEven(rawTargetW);
+      const targetH = toEven(rawTargetH);
 
       const scaleFilter = `scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease,pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
       filterComplexParts.push(`${assembledVideoPad}${scaleFilter}[v_scaled]`);
@@ -456,6 +461,8 @@ export class FinalAssemblyService {
 
     const ffmpegArgs = [
       '-y',
+      '-nostdin',
+      '-progress', 'pipe:1',
       ...inputArgs,
       '-filter_complex',
       fullFilterComplex,
@@ -489,20 +496,64 @@ export class FinalAssemblyService {
       hasBgm: Boolean(options.musicEnabled && options.musicPath),
     });
 
-    // Execute FFmpeg child process with cancellation
+    // Execute FFmpeg child process with cancellation, watchdog, and progress parsing
+    const watchdogTimeoutMs = options.watchdogTimeoutMs ?? 600_000;
     await new Promise<void>((resolve, reject) => {
       let isDone = false;
+      let watchdogTimer: NodeJS.Timeout | null = null;
       const child = spawn(ffmpegBin, ffmpegArgs, {
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
-      let stderrOutput = '';
-      child.stderr.on('data', (d) => {
-        stderrOutput += d.toString();
+      const progressParser = new FfmpegProgressParser((data) => {
+        if (data.progress === 'end') {
+          onProgress?.({
+            projectId,
+            status: 'muxing',
+            progressPercent: 74,
+            stageMessage: 'Encoding complete, finalizing container...',
+          });
+          return;
+        }
+
+        if (typeof data.outTimeSec === 'number' && expectedAssemblyDuration > 0) {
+          const rawRatio = Math.min(1.0, Math.max(0.0, data.outTimeSec / expectedAssemblyDuration));
+          const muxPercent = Math.min(74, 40 + Math.round(rawRatio * 34));
+          onProgress?.({
+            projectId,
+            status: 'muxing',
+            progressPercent: muxPercent,
+            stageMessage: `Rendering final broadcast MP4 (${Math.round(rawRatio * 100)}% - ${data.outTimeSec.toFixed(1)}s / ${expectedAssemblyDuration.toFixed(1)}s)`,
+          });
+        } else if (typeof data.outTimeSec === 'number') {
+          onProgress?.({
+            projectId,
+            status: 'muxing',
+            progressPercent: 40,
+            stageMessage: `Rendering final broadcast MP4 (${data.outTimeSec.toFixed(1)}s encoded)...`,
+          });
+        }
       });
 
+      if (child.stdout) {
+        child.stdout.on('data', (chunk) => {
+          progressParser.feed(chunk);
+        });
+      }
+
+      let stderrOutput = '';
+      if (child.stderr) {
+        child.stderr.on('data', (d) => {
+          stderrOutput += d.toString();
+        });
+      }
+
       const cleanup = () => {
+        if (watchdogTimer) {
+          clearTimeout(watchdogTimer);
+          watchdogTimer = null;
+        }
         if (!isDone) {
           isDone = true;
           if (fs.existsSync(tempOutput)) {
@@ -510,6 +561,15 @@ export class FinalAssemblyService {
           }
         }
       };
+
+      watchdogTimer = setTimeout(() => {
+        logger.error('assembly', `Final assembly watchdog triggered after ${watchdogTimeoutMs}ms for project ${projectId}. Terminating process.`);
+        cleanup();
+        try {
+          child.kill('SIGKILL');
+        } catch {}
+        reject(new Error(`Final assembly timed out after ${watchdogTimeoutMs}ms (watchdog triggered).`));
+      }, watchdogTimeoutMs);
 
       if (signal) {
         if (signal.aborted) {
@@ -532,14 +592,21 @@ export class FinalAssemblyService {
 
       child.on('close', (code) => {
         if (isDone) return;
+        if (watchdogTimer) {
+          clearTimeout(watchdogTimer);
+          watchdogTimer = null;
+        }
         isDone = true;
 
         if (code === 0) {
+          progressParser.flush();
           resolve();
         } else {
           cleanup();
           const tailErr = stderrOutput.slice(-500);
-          reject(new Error(`FFmpeg final assembly exited with code ${code}: ${tailErr}`));
+          logger.error('assembly', `Final assembly FFmpeg process exited with code ${code}`, { stderr: tailErr });
+          const userMessage = mapFfmpegErrorMessage(code, tailErr, 'Final assembly rendering failed');
+          reject(new Error(userMessage));
         }
       });
     });
@@ -686,8 +753,8 @@ export class FinalAssemblyService {
       );
     }
 
-    const width = probe.width || 1080;
-    const height = probe.height || 1920;
+    const width = toEven(probe.width || 1080);
+    const height = toEven(probe.height || 1920);
     const fps = probe.fps || 30;
     const overlayDuration = Math.min(durationSeconds, probe.durationSeconds);
 
@@ -708,6 +775,8 @@ export class FinalAssemblyService {
     const hasAudio = Boolean(probe.audioCodec && probe.audioCodec !== 'none');
     const ffmpegArgs = [
       '-y',
+      '-nostdin',
+      '-progress', 'pipe:1',
       '-i', sourceVideoPath,
       '-loop', '1',
       '-t', overlayDuration.toFixed(3),
@@ -731,12 +800,24 @@ export class FinalAssemblyService {
       hasAudio,
     });
 
+    const watchdogTimeoutMs = (params as any).watchdogTimeoutMs ?? 300_000;
     await new Promise<void>((resolve, reject) => {
       let isDone = false;
+      let watchdogTimer: NodeJS.Timeout | null = null;
       const child = spawn(ffmpegBin, ffmpegArgs, {
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+
+      const progressParser = new FfmpegProgressParser((_data) => {
+        // Progress parsing available if needed
+      });
+
+      if (child.stdout) {
+        child.stdout.on('data', (chunk) => {
+          progressParser.feed(chunk);
+        });
+      }
 
       let stderrOutput = '';
       child.stderr.on('data', (d) => {
@@ -744,6 +825,10 @@ export class FinalAssemblyService {
       });
 
       const cleanup = () => {
+        if (watchdogTimer) {
+          clearTimeout(watchdogTimer);
+          watchdogTimer = null;
+        }
         if (!isDone) {
           isDone = true;
           if (fs.existsSync(tempOutput)) {
@@ -751,6 +836,15 @@ export class FinalAssemblyService {
           }
         }
       };
+
+      watchdogTimer = setTimeout(() => {
+        logger.error('assembly', `Shorts overlay watchdog triggered after ${watchdogTimeoutMs}ms. Terminating process.`);
+        cleanup();
+        try {
+          child.kill('SIGKILL');
+        } catch {}
+        reject(new Error(`Shorts overlay timed out after ${watchdogTimeoutMs}ms (watchdog triggered).`));
+      }, watchdogTimeoutMs);
 
       if (signal) {
         signal.addEventListener('abort', () => {
@@ -767,14 +861,21 @@ export class FinalAssemblyService {
 
       child.on('close', (code) => {
         if (isDone) return;
+        if (watchdogTimer) {
+          clearTimeout(watchdogTimer);
+          watchdogTimer = null;
+        }
         isDone = true;
 
         if (code === 0) {
+          progressParser.flush();
           resolve();
         } else {
           cleanup();
           const tailErr = stderrOutput.slice(-500);
-          reject(new Error(`FFmpeg Shorts overlay exited with code ${code}: ${tailErr}`));
+          logger.error('assembly', `Shorts overlay FFmpeg process exited with code ${code}`, { stderr: tailErr });
+          const userMessage = mapFfmpegErrorMessage(code, tailErr, 'Shorts thumbnail overlay failed');
+          reject(new Error(userMessage));
         }
       });
     });

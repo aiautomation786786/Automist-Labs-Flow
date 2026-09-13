@@ -20,6 +20,8 @@ import { MotionPlanner, CLIP_RENDER_VERSION } from './MotionPlanner';
 import { SubtitleGenerator } from './SubtitleGenerator';
 import { AudioDurationMeasurer } from '../tts/AudioDurationMeasurer';
 import { AppLogger } from '../utils/AppLogger';
+import { toEven } from './RenderDimensions';
+import { FfmpegProgressParser, mapFfmpegErrorMessage } from './FfmpegProgressParser';
 
 const execFileAsync = promisify(execFile);
 const logger = new AppLogger({ mirrorToStderr: false });
@@ -228,11 +230,14 @@ export class SceneRenderer {
         const assDir = path.dirname(outputAssPath);
         if (!fs.existsSync(assDir)) fs.mkdirSync(assDir, { recursive: true });
 
+        const { width: motionW, height: motionH } = MotionFilterBuilder.getDimensions(aspectRatio);
         writtenAssPath = await SubtitleGenerator.writeAssFile({
           narrationText,
           durationSeconds,
           subtitleStyle,
           aspectRatio,
+          targetWidthPx: toEven(motionW),
+          targetHeightPx: toEven(motionH),
           wordTimings,
           outputPath: outputAssPath,
         });
@@ -259,6 +264,8 @@ export class SceneRenderer {
 
     const ffmpegArgs = [
       '-y',
+      '-nostdin',
+      '-progress', 'pipe:1',
       '-loop', '1',
       '-i', imagePath,
       '-i', audioPath,
@@ -280,7 +287,7 @@ export class SceneRenderer {
       fallbackApplied,
     });
 
-    // 4. Spawn FFmpeg process with cancellation and watchdog support
+    // 4. Spawn FFmpeg process with cancellation, progress parsing, and watchdog support
     const watchdogTimeoutMs = options.watchdogTimeoutMs ?? 480_000;
     await new Promise<void>((resolve, reject) => {
       let isDone = false;
@@ -289,6 +296,24 @@ export class SceneRenderer {
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+
+      const progressParser = new FfmpegProgressParser((data) => {
+        if (data.progress === 'end') {
+          options.onProgress?.(95);
+          return;
+        }
+        if (typeof data.outTimeSec === 'number' && durationSeconds > 0) {
+          const ratio = Math.min(1.0, Math.max(0.0, data.outTimeSec / durationSeconds));
+          const percent = Math.min(95, Math.round(ratio * 95));
+          options.onProgress?.(percent);
+        }
+      });
+
+      if (child.stdout) {
+        child.stdout.on('data', (chunk) => {
+          progressParser.feed(chunk);
+        });
+      }
 
       let stderrOutput = '';
       if (child && child.stderr) {
@@ -343,11 +368,14 @@ export class SceneRenderer {
         isDone = true;
 
         if (code === 0) {
+          progressParser.flush();
           resolve();
         } else {
           cleanup();
           const tailErr = stderrOutput.slice(-400);
-          reject(new Error(`FFmpeg exited with code ${code} rendering scene ${sceneNumber}: ${tailErr}`));
+          logger.error('render', `Scene ${sceneNumber} FFmpeg render exited with code ${code}`, { stderr: tailErr });
+          const userMessage = mapFfmpegErrorMessage(code, tailErr, `Scene ${sceneNumber} render failed`);
+          reject(new Error(userMessage));
         }
       });
     });

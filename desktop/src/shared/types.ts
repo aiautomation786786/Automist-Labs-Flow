@@ -966,6 +966,7 @@ export interface FinalAssemblyOptions {
     shortsThumbnailOverlay?: boolean;
     thumbnailOverlayPath?: string;
     thumbnailOverlayDurationSeconds?: number;
+    watchdogTimeoutMs?: number;
 }
 export interface FinalRenderProgressEvent {
     projectId: string;

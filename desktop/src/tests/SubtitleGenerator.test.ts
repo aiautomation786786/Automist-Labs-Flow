@@ -263,4 +263,111 @@ describe('SubtitleGenerator', () => {
     expect(narrationContent).toContain('The captain shouted');
     expect(narrationContent).not.toContain('"All hands on deck!"');
   });
+
+  it('13. Sets exact canvas dimensions and maintains base font size at 1080p (9:16)', async () => {
+    const outPath = path.join(tempDir, 'test_1080p.ass');
+    await SubtitleGenerator.generateAssFile({
+      narrationText: 'Resolution test at 1080p portrait',
+      durationSeconds: 2.0,
+      subtitleStyle: 'bottom_glass',
+      aspectRatio: '9:16',
+      targetWidthPx: 1080,
+      targetHeightPx: 1920,
+      outputPath: outPath,
+    });
+
+    const content = fs.readFileSync(outPath, 'utf8');
+    expect(content).toContain('PlayResX: 1080');
+    expect(content).toContain('PlayResY: 1920');
+    // baseFontSize for bottom_glass is 32; at 1080p short side is 1080 -> 32 * 1080 / 1080 = 32
+    expect(content).toContain('Style: Default,Arial,32,');
+  });
+
+  it('14. Scales font size and canvas proportionally for 1440p / 2K video', async () => {
+    const outPath = path.join(tempDir, 'test_1440p.ass');
+    await SubtitleGenerator.generateAssFile({
+      narrationText: 'Resolution test at 1440p 2K',
+      durationSeconds: 2.0,
+      subtitleStyle: 'bottom_glass',
+      aspectRatio: '9:16',
+      targetWidthPx: 1440,
+      targetHeightPx: 2560,
+      outputPath: outPath,
+    });
+
+    const content = fs.readFileSync(outPath, 'utf8');
+    expect(content).toContain('PlayResX: 1440');
+    expect(content).toContain('PlayResY: 2560');
+    // shortSide = 1440 -> Math.round(32 * 1440 / 1080) = 43
+    expect(content).toContain('Style: Default,Arial,43,');
+  });
+
+  it('15. Scales font size and canvas proportionally for 2160p / 4K video', async () => {
+    const outPath = path.join(tempDir, 'test_2160p.ass');
+    await SubtitleGenerator.generateAssFile({
+      narrationText: 'Resolution test at 2160p 4K',
+      durationSeconds: 2.0,
+      subtitleStyle: 'bottom_glass',
+      aspectRatio: '9:16',
+      targetWidthPx: 2160,
+      targetHeightPx: 3840,
+      outputPath: outPath,
+    });
+
+    const content = fs.readFileSync(outPath, 'utf8');
+    expect(content).toContain('PlayResX: 2160');
+    expect(content).toContain('PlayResY: 3840');
+    // shortSide = 2160 -> Math.round(32 * 2160 / 1080) = 64
+    expect(content).toContain('Style: Default,Arial,64,');
+  });
+
+  it('16. Clamps odd target dimensions to nearest even integer', async () => {
+    const outPath = path.join(tempDir, 'test_odd_clamp.ass');
+    await SubtitleGenerator.generateAssFile({
+      narrationText: 'Odd dimension clamping test',
+      durationSeconds: 2.0,
+      subtitleStyle: 'bottom_glass',
+      aspectRatio: '9:16',
+      targetWidthPx: 1079,
+      targetHeightPx: 1919,
+      outputPath: outPath,
+    });
+
+    const content = fs.readFileSync(outPath, 'utf8');
+    expect(content).toContain('PlayResX: 1080');
+    expect(content).toContain('PlayResY: 1920');
+  });
+
+  it('17. Throws descriptive error if target dimensions are non-positive or NaN', async () => {
+    const outPath = path.join(tempDir, 'test_invalid.ass');
+    await expect(
+      SubtitleGenerator.generateAssFile({
+        narrationText: 'Invalid dimension test',
+        durationSeconds: 2.0,
+        aspectRatio: '16:9',
+        targetWidthPx: -100,
+        targetHeightPx: 720,
+        outputPath: outPath,
+      })
+    ).rejects.toThrow('Invalid subtitle target dimensions');
+  });
+
+  it('18. Scales landscape 16:9 subtitles at 1440p correctly with neon_punch style', async () => {
+    const outPath = path.join(tempDir, 'test_16_9_1440p.ass');
+    await SubtitleGenerator.generateAssFile({
+      narrationText: 'Landscape 1440p neon style test',
+      durationSeconds: 2.0,
+      subtitleStyle: 'neon_punch',
+      aspectRatio: '16:9',
+      targetWidthPx: 2560,
+      targetHeightPx: 1440,
+      outputPath: outPath,
+    });
+
+    const content = fs.readFileSync(outPath, 'utf8');
+    expect(content).toContain('PlayResX: 2560');
+    expect(content).toContain('PlayResY: 1440');
+    // neon_punch baseFontSize is 34; shortSide = 1440 -> Math.round(34 * 1440 / 1080) = 45
+    expect(content).toContain('Style: Default,Arial,45,');
+  });
 });

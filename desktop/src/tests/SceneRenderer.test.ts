@@ -188,4 +188,46 @@ describe('SceneRenderer', () => {
 
     await expect(renderPromise).rejects.toThrow();
   });
+
+  it('7. Emits progress updates via onProgress during FFmpeg execution', async () => {
+    const outputPath = path.join(tempDir, 'scene-progress.mp4');
+    const progressUpdates: number[] = [];
+
+    const result = await SceneRenderer.renderScene({
+      sceneNumber: 1,
+      imagePath: testImagePath,
+      audioPath: testAudioPath,
+      outputPath,
+      motionStyle: 'breathe',
+      durationSeconds: 1.5,
+      aspectRatio: '16:9',
+      onProgress: (pct) => {
+        progressUpdates.push(pct);
+      },
+    });
+
+    expect(result.status).toBe('completed');
+    expect(progressUpdates.length).toBeGreaterThan(0);
+    for (const pct of progressUpdates) {
+      expect(pct).toBeGreaterThanOrEqual(0);
+      expect(pct).toBeLessThanOrEqual(95);
+    }
+  });
+
+  it('8. Triggers watchdog and terminates process when watchdogTimeoutMs expires', async () => {
+    const outputPath = path.join(tempDir, 'scene-watchdog.mp4');
+
+    await expect(
+      SceneRenderer.renderScene({
+        sceneNumber: 1,
+        imagePath: testImagePath,
+        audioPath: testAudioPath,
+        outputPath,
+        motionStyle: 'breathe',
+        durationSeconds: 2.0,
+        aspectRatio: '16:9',
+        watchdogTimeoutMs: 5,
+      })
+    ).rejects.toThrow(/watchdog triggered/);
+  });
 });
