@@ -32,7 +32,7 @@ export class ProfileWorker {
   readonly profileId: string;
   readonly session: ProfileSession;
   readonly automation: FlowAutomationSession;
-  readonly maxConcurrentJobs: number;
+  private _maxConcurrentJobs: number;
   private readonly log: AppLogger;
 
   // Multi-slot job tracking: jobId → GenerationJobEntity
@@ -44,10 +44,18 @@ export class ProfileWorker {
     this.session = profileSession;
     this.profileId = profileSession.profileId;
     this.automation = profileSession.getAutomationSession();
-    this.maxConcurrentJobs = Math.max(1, maxConcurrentJobs);
+    this._maxConcurrentJobs = Math.max(1, maxConcurrentJobs);
     this.log = new AppLogger({ profileId: this.profileId, mirrorToStderr: false });
 
-    this.log.info('worker', `ProfileWorker initialized for profile ${this.profileId} (maxConcurrentJobs=${this.maxConcurrentJobs})`);
+    this.log.info('worker', `ProfileWorker initialized for profile ${this.profileId} (maxConcurrentJobs=${this._maxConcurrentJobs})`);
+  }
+
+  get maxConcurrentJobs(): number {
+    return this._maxConcurrentJobs;
+  }
+
+  setMaxConcurrentJobs(val: number): void {
+    this._maxConcurrentJobs = Math.max(1, Math.floor(val));
   }
 
   // ---------------------------------------------------------------------------

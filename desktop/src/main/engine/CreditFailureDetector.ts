@@ -29,18 +29,25 @@ export class CreditFailureDetector {
     'out of credits',
     'insufficient credits',
     'no credits remaining',
-    'credit balance',
+    'credit balance: 0',
+    'credit balance is 0',
     '0 credits',
+    'zero credits',
     'recharge credits',
     'buy credits',
     'need more credits',
+    'you do not have enough credits',
+    'not enough credits',
   ];
 
   private static readonly QUOTA_EXHAUSTED_PATTERNS = [
     'quota_exceeded',
     'quota exceeded',
     'daily generation limit',
+    'daily video generation limit',
+    'video generation limit',
     'daily limit reached',
+    'generation limit reached',
     'rate limit exceeded',
     'too many requests. please try again later',
     'resource_exhausted',
@@ -141,10 +148,11 @@ export class CreditFailureDetector {
 
   /**
    * Evidence-based network response classifier.
-   * Explicitly requires message payload matching, not status code alone.
+   * Explicitly requires HTTP status >= 400 AND message payload matching, not status code alone.
+   * Successful responses (200 OK) containing metadata must never be classified as failure.
    */
   static detectFromNetwork(status: number, responseBody: string): CreditDetectionResult | null {
-    if (!responseBody || typeof responseBody !== 'string') return null;
+    if (status < 400 || !responseBody || typeof responseBody !== 'string') return null;
     const lowerBody = responseBody.toLowerCase();
 
     for (const phrase of this.CREDIT_EXHAUSTED_PATTERNS) {
@@ -187,7 +195,17 @@ export class CreditFailureDetector {
     if (!errorMessage) return 'unknown';
     const lower = errorMessage.toLowerCase();
 
-    // Check credit patterns
+    // Check generic timeout (NEVER classify as credit or quota)
+    if (lower.includes('timed out') || lower.includes('timeout')) {
+      return 'timeout';
+    }
+
+    // Check detection failed or remote generation completed with local detection failure
+    if (lower.includes('detection_failed') || lower.includes('generation_completed_remote')) {
+      return 'detection_failed';
+    }
+
+    // Check credit patterns (must be explicit exhaustion)
     for (const phrase of this.CREDIT_EXHAUSTED_PATTERNS) {
       if (lower.includes(phrase)) return 'credit_exhausted';
     }
@@ -200,11 +218,6 @@ export class CreditFailureDetector {
     // Check auth patterns
     for (const phrase of this.AUTH_REQUIRED_PATTERNS) {
       if (lower.includes(phrase)) return 'auth_required';
-    }
-
-    // Check generic timeout (NEVER classify as credit)
-    if (lower.includes('timed out') || lower.includes('timeout')) {
-      return 'timeout';
     }
 
     // Check browser disconnection / page crash

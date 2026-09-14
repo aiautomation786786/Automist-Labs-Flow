@@ -21,6 +21,7 @@ import { JobRepository } from '../storage/JobRepository';
 import { AssetManager } from '../storage/AssetManager';
 import { GeminiDriver } from '../engine/GeminiDriver';
 import { GeminiAuthDetector } from '../engine/GeminiAuthDetector';
+import { CreditFailureDetector } from '../engine/CreditFailureDetector';
 import { VideoDuration } from '../utils/VideoDuration';
 import { FfmpegResolver } from '../utils/FfmpegResolver';
 import { generationEventBus } from '../events/GenerationEventBus';
@@ -370,24 +371,24 @@ export class GeminiVideoExecutionService {
       log.error('gemini_video_exec', `Gemini video job ${jobId} failed`, err as Error);
 
       const rawError = (err as Error).message;
-      let classification: import('../../shared/types').FailureClassification = 'unknown';
-      if (rawError.includes('SAFETY_BLOCK') || rawError.toLowerCase().includes('safety')) {
-        classification = 'safety_block';
-      } else if (rawError.includes('QUOTA_EXHAUSTED') || rawError.toLowerCase().includes('limit')) {
-        classification = 'quota_exhausted';
-      } else if (rawError.toLowerCase().includes('auth') || rawError.toLowerCase().includes('login')) {
-        classification = 'auth_required';
-      } else if (rawError.toLowerCase().includes('timeout')) {
-        classification = 'timeout';
-      }
+      const classification = CreditFailureDetector.classifyErrorMessage(rawError);
 
       currentAttempt.endedAt = new Date().toISOString();
-      currentAttempt.outcome = 'failed';
+      currentAttempt.outcome = classification === 'timeout' ? 'timeout' : 'failed';
       currentAttempt.errorClassification = classification;
       currentAttempt.errorMessage = rawError;
 
+      if (rawError.includes('GENERATION_COMPLETED_REMOTE')) {
+        currentAttempt.submissionState = 'generation_completed_remote';
+      } else if (classification === 'timeout') {
+        currentAttempt.submissionState = 'submission_unknown';
+      } else {
+        currentAttempt.submissionState = 'failed';
+      }
+
       const failedJob = await JobRepository.updateJob(projectId, jobId, {
         status: 'failed',
+        submissionState: currentAttempt.submissionState,
         errorMessage: rawError,
         attempts: updatedAttempts,
       }).catch(() => null);

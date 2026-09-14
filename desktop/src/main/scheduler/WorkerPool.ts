@@ -125,9 +125,12 @@ export class WorkerPool {
             this.workers.set(snap.profileId, worker);
             logger.info('worker_pool', `Created ProfileWorker for active session: ${snap.profileId} (cap=${targetCap})`);
           }
-        } else if (existing.state === 'error') {
-          existing.resetError();
-          logger.info('worker_pool', `Restored healthy ready state for ProfileWorker: ${snap.profileId}`);
+        } else {
+          existing.setMaxConcurrentJobs(targetCap);
+          if (existing.state === 'error') {
+            existing.resetError();
+            logger.info('worker_pool', `Restored healthy ready state for ProfileWorker: ${snap.profileId}`);
+          }
         }
       }
     }

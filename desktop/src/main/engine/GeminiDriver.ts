@@ -343,7 +343,59 @@ export class GeminiDriver {
       await page.waitForTimeout(pollInterval);
     }
 
-    throw new Error(`Video generation timed out after ${timeoutMs / 1000} seconds without producing an output.`);
+    // --- RECOVERY-FIRST SCAN ---
+    logger.info('gemini_driver', `Monitoring loop ended. Starting Stage 2 Recovery Scan for Gemini video...`);
+
+    // Step A: Inspect whether the generation actually finished on Gemini
+    const isStillGenerating = await GeminiUIDiscovery.isGenerating(page).catch(() => false);
+
+    // Step B: Deep search for video elements, download links, and resource entries
+    const recoveredUrls = await page.evaluate(() => {
+      const urls: string[] = [];
+      // 1. All <video> elements on page
+      document.querySelectorAll('video').forEach((v) => {
+        const s = v.currentSrc || v.src || v.getAttribute('src') || v.querySelector('source')?.getAttribute('src');
+        if (s && (s.startsWith('http') || s.startsWith('blob:'))) urls.push(s);
+      });
+      // 2. Download links / action buttons with video URLs
+      document.querySelectorAll('a[download], a[aria-label*="download" i], [data-test-id*="download" i]').forEach((el) => {
+        const href = (el as HTMLAnchorElement).href || el.getAttribute('href');
+        if (href && (href.startsWith('http') || href.startsWith('blob:'))) urls.push(href);
+      });
+      // 3. Resource timing entries
+      if (window.performance && typeof window.performance.getEntriesByType === 'function') {
+        const resources = window.performance.getEntriesByType('resource');
+        resources.forEach((r) => {
+          const name = r.name || '';
+          if (
+            (name.includes('.mp4') || (name.includes('googleusercontent.com') && name.includes('video')) || name.startsWith('blob:')) &&
+            !name.includes('avatar')
+          ) {
+            urls.push(name);
+          }
+        });
+      }
+      return Array.from(new Set(urls));
+    }).catch(() => []);
+
+    if (recoveredUrls.length > 0) {
+      const recoveredUrl = recoveredUrls[recoveredUrls.length - 1]!;
+      logger.info('gemini_driver', `[RECOVERY SUCCESS] Discovered completed video in Stage 2 recovery scan`, {
+        videoUrl: recoveredUrl.substring(0, 100),
+      });
+      return {
+        videoUrl: recoveredUrl,
+        durationSeconds: 10.0,
+      };
+    }
+
+    if (!isStillGenerating) {
+      // Remote generation definitely completed, but video media could not be located in DOM
+      logger.warn('gemini_driver', `Gemini generation completed remotely but media element was not found in DOM`);
+      throw new Error(`GENERATION_COMPLETED_REMOTE: Gemini generation completed on page, but video output URL could not be bound.`);
+    }
+
+    throw new Error(`Video generation timed out after ${timeoutMs / 1000} seconds without producing an output (generation still in progress on Gemini).`);
   }
 
   /**

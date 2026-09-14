@@ -286,13 +286,23 @@ export class GeminiUIDiscovery {
 
   /**
    * Scans for generated video elements inside the chat stream.
-   * Returns the newest video element handle if found.
+   * Returns the newest video element handle if found, prioritizing elements with populated sources.
    */
   static async findLatestVideoElement(page: Page): Promise<import('playwright').ElementHandle | null> {
     return await page.evaluateHandle(() => {
-      const videos = Array.from(document.querySelectorAll('message-content video, model-response video, generated-video-container video, video'));
+      const videos = Array.from(document.querySelectorAll('model-response video, message-content video, generated-video-container video, video'));
       if (videos.length === 0) return null;
-      // Return the last video element rendered in the document
+
+      // Prefer videos that have a valid src or currentSrc
+      for (let i = videos.length - 1; i >= 0; i--) {
+        const vid = videos[i] as HTMLVideoElement;
+        const src = vid.currentSrc || vid.src || vid.getAttribute('src') || vid.querySelector('source')?.getAttribute('src') || '';
+        if (src.trim().length > 0 && (src.startsWith('http') || src.startsWith('blob:'))) {
+          return vid;
+        }
+      }
+
+      // Fallback: return the last video element rendered in the document
       return videos[videos.length - 1];
     }).then((handle) => handle.asElement());
   }
@@ -303,7 +313,7 @@ export class GeminiUIDiscovery {
   static async detectSafetyRefusal(page: Page): Promise<string | null> {
     try {
       const text = await page.evaluate(() => {
-        const responses = Array.from(document.querySelectorAll('message-content, model-response'));
+        const responses = Array.from(document.querySelectorAll('model-response, message-content'));
         if (responses.length === 0) return '';
         const lastResponse = responses[responses.length - 1];
         return lastResponse?.textContent || '';
@@ -332,23 +342,27 @@ export class GeminiUIDiscovery {
   }
 
   /**
-   * Scans response turns for quota exhaustion messages.
+   * Scans ONLY the current/active response turn for quota exhaustion messages.
+   * Invariant: Old chat history or generic messages MUST NEVER trigger quota exhaustion.
    */
   static async detectQuotaExhaustion(page: Page): Promise<string | null> {
     try {
       const text = await page.evaluate(() => {
-        const bodyText = document.body.innerText || '';
-        return bodyText;
+        // Inspect strictly the latest response turn and any active alert banners
+        const currentElements = Array.from(
+          document.querySelectorAll('model-response:last-of-type, message-content:last-of-type, [role="alert"], mat-snack-bar-container, .error-banner')
+        );
+        return currentElements.map((el) => el.textContent || '').join(' ').trim();
       });
 
       if (!text) return null;
 
       const quotaPatterns = [
         /reached your (daily )?video generation limit/i,
-        /reached your limit/i,
-        /try again tomorrow/i,
-        /generation limit reached/i,
-        /too many requests/i,
+        /daily video generation limit reached/i,
+        /daily limit reached for video/i,
+        /video generation limit reached/i,
+        /try again tomorrow for video/i,
       ];
 
       for (const pattern of quotaPatterns) {
@@ -363,18 +377,19 @@ export class GeminiUIDiscovery {
   }
 
   /**
-   * Scans document for explicit generation failure messages.
+   * Scans ONLY the current/active response turn for explicit generation failure messages.
    */
   static async detectGenerationFailure(page: Page): Promise<string | null> {
     try {
       const text = await page.evaluate(() => {
-        return document.body ? document.body.innerText || '' : '';
+        const lastResponse = document.querySelector('model-response:last-of-type, message-content:last-of-type, [role="alert"]');
+        return lastResponse ? (lastResponse.textContent || '').trim() : '';
       });
 
-      if (!text || typeof text !== 'string') return null;
+      if (!text) return null;
 
       if (text.includes('You stopped this response')) return 'Generation was stopped';
-      if (text.includes('Something went wrong')) return 'Gemini error: Something went wrong';
+      if (text.includes('Something went wrong') && text.length < 300) return 'Gemini error: Something went wrong';
     } catch {
       // Ignored
     }

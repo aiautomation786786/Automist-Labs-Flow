@@ -285,7 +285,7 @@ export class VideoExecutionService {
           const contentType = res.headers()['content-type'] || '';
           const status = res.status();
 
-          if (status >= 400 || url.includes('/fx/api/') || url.includes('trpc')) {
+          if (status >= 400) {
             try {
               const body = await res.text().catch(() => '');
               const netFail = CreditFailureDetector.detectFromNetwork(status, body);
@@ -442,22 +442,43 @@ export class VideoExecutionService {
 
         // Probe candidate URL to confirm video encoding is complete (Content-Type: video/...)
         if (candidateUrl) {
+          const isDirectPattern =
+            candidateUrl.includes('=mm,22,15') ||
+            candidateUrl.includes('flow-content.google/video') ||
+            candidateUrl.endsWith('.mp4');
+
           try {
             const probe = await page.request.get(candidateUrl, {
               headers: { Range: 'bytes=0-100' },
               timeout: 5000,
             });
-            const cType = probe.headers()['content-type'] || '';
-            if (cType.includes('video') || cType.includes('mp4')) {
+            const cType = (probe.headers()['content-type'] || '').toLowerCase();
+            const status = probe.status();
+            const isVideoContentType =
+              cType.includes('video') ||
+              cType.includes('mp4') ||
+              cType.includes('octet-stream') ||
+              cType.includes('binary') ||
+              cType.includes('protobuf') ||
+              status === 206 ||
+              status === 200;
+
+            if (isVideoContentType || isDirectPattern) {
               detectedVideoUrl = candidateUrl;
               detectedUuid = MediaDetector.parseMediaUuids([candidateUrl]).uuids[0];
-              log.info('video_exec', `Verified ready video stream: ${candidateUrl} (${cType})`);
+              log.info('video_exec', `Verified ready video stream: ${candidateUrl} (${cType || 'status: ' + status})`);
               break;
             } else {
               log.debug('video_exec', `Candidate URL probed but not yet video stream (content-type: ${cType}); continuing poll...`);
             }
           } catch (probeErr) {
-            log.debug('video_exec', `Candidate probe error: ${(probeErr as Error).message}; continuing poll...`);
+            log.debug('video_exec', `Candidate probe notice: ${(probeErr as Error).message}; checking direct pattern...`);
+            if (isDirectPattern) {
+              detectedVideoUrl = candidateUrl;
+              detectedUuid = MediaDetector.parseMediaUuids([candidateUrl]).uuids[0];
+              log.info('video_exec', `Accepted direct pattern video stream without probe: ${candidateUrl}`);
+              break;
+            }
           }
         }
 
@@ -480,22 +501,69 @@ export class VideoExecutionService {
         throw new Error(`FlowFailure [${earlyFailure.classification}]: ${earlyFailure.evidence}`);
       }
 
+      // --- STAGE 2 RECOVERY SCAN ---
       if (!detectedVideoUrl) {
-        const hasUnresolvedProgress = await page.evaluate(() => {
-          return document.querySelector('.progress-bar, flow-video-tile .generating, mat-spinner') !== null;
-        }).catch(() => false);
+        log.info('video_exec', `Primary monitoring loop completed without detection. Entering Stage 2 Recovery Scan for Job ${jobId}...`);
 
-        currentAttempt.endedAt = new Date().toISOString();
-        currentAttempt.submissionState = hasUnresolvedProgress ? 'generating' : 'submission_unknown';
-        currentAttempt.outcome = 'timeout';
-        currentAttempt.errorClassification = 'timeout';
-        currentAttempt.errorMessage = `Video generation timed out after ${pollTimeoutMs / 1000}s.`;
         await JobRepository.updateJob(projectId, jobId, {
-          submissionState: currentAttempt.submissionState,
-          attempts: updatedAttempts,
+          submissionState: 'recovery_scan_pending',
         });
 
-        throw new Error(`Video generation timed out after ${pollTimeoutMs / 1000}s. No new video media detected. (generationState: ${currentAttempt.submissionState})`);
+        // 1. Check network sniffer URL first
+        if (capturedNetworkVideoUrl && !beforeVideoSources.has(capturedNetworkVideoUrl)) {
+          log.info('video_exec', `[RECOVERY SUCCESS] Recovered video from captured network response: ${capturedNetworkVideoUrl}`);
+          detectedVideoUrl = capturedNetworkVideoUrl;
+          detectedUuid = MediaDetector.parseMediaUuids([capturedNetworkVideoUrl]).uuids[0];
+        }
+
+        // 2. Perform aggressive DOM recovery scan
+        if (!detectedVideoUrl) {
+          const recoveryResult = await MediaDetector.detectRecoveryVideo(page, beforeVideoSources);
+          if (recoveryResult.found && recoveryResult.videoUrl) {
+            detectedVideoUrl = recoveryResult.videoUrl;
+            detectedUuid = recoveryResult.uuid || MediaDetector.parseMediaUuids([detectedVideoUrl]).uuids[0];
+            log.info('video_exec', `[RECOVERY SUCCESS] Recovered completed Flow video artifact: ${detectedVideoUrl}`);
+          }
+        }
+
+        // 3. If video still not found, check if generation actually completed on the remote canvas
+        if (!detectedVideoUrl) {
+          const isStillGenerating = await page.evaluate(() => {
+            return document.querySelector('.progress-bar, flow-video-tile .generating, mat-spinner, [aria-label*="generating" i]') !== null;
+          }).catch(() => false);
+
+          const hasTiles = await page.evaluate(() => {
+            return document.querySelectorAll('flow-video-tile, [class*="video-tile"]').length > 0;
+          }).catch(() => false);
+
+          if (!isStillGenerating && hasTiles) {
+            // Remote generation definitely completed on Flow canvas, but media URL was not bound
+            log.warn('video_exec', `[RECOVERY] Remote generation completed on Flow canvas, but media URL was not bound.`);
+            currentAttempt.endedAt = new Date().toISOString();
+            currentAttempt.submissionState = 'generation_completed_remote';
+            currentAttempt.outcome = 'failed';
+            currentAttempt.errorClassification = 'detection_failed';
+            currentAttempt.errorMessage = `Video generation completed on Google Flow, but media URL detection timed out after ${pollTimeoutMs / 1000}s.`;
+            await JobRepository.updateJob(projectId, jobId, {
+              submissionState: 'generation_completed_remote',
+              attempts: updatedAttempts,
+            });
+
+            throw new Error(`GENERATION_COMPLETED_REMOTE: Video generation completed on Google Flow, but media output detection timed out after ${pollTimeoutMs / 1000}s.`);
+          }
+
+          currentAttempt.endedAt = new Date().toISOString();
+          currentAttempt.submissionState = isStillGenerating ? 'generating' : 'submission_unknown';
+          currentAttempt.outcome = 'timeout';
+          currentAttempt.errorClassification = 'timeout';
+          currentAttempt.errorMessage = `Video generation timed out after ${pollTimeoutMs / 1000}s.`;
+          await JobRepository.updateJob(projectId, jobId, {
+            submissionState: currentAttempt.submissionState,
+            attempts: updatedAttempts,
+          });
+
+          throw new Error(`Video generation timed out after ${pollTimeoutMs / 1000}s. No new video media detected. (generationState: ${currentAttempt.submissionState})`);
+        }
       }
 
       log.info('video_exec', 'New video detected from Flow', { detectedVideoUrl, detectedUuid });

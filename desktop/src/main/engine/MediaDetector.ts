@@ -23,6 +23,15 @@ const logger = new AppLogger({ mirrorToStderr: false });
 export const TRPC_IMAGE_REDIRECT_REGEX = /media\.getMediaUrlRedirect\?name=([a-zA-Z0-9_-]+)/;
 export const FLOW_CONTENT_MEDIA_REGEX = /flow-content\.google\/(?:image|video)\/([a-zA-Z0-9_-]+)/;
 export const FLOW_ASB_MEDIA_REGEX = /\/asb\/([a-zA-Z0-9_-]+)/;
+export const GEMINI_MEDIA_REGEX = /(?:googleusercontent\.com|googlevideo\.com)\/(?:video\/)?([a-zA-Z0-9_-]+)/;
+
+export interface RecoveryScanResult {
+  found: boolean;
+  videoUrl?: string;
+  uuid?: string;
+  isStillGenerating: boolean;
+  candidateCount: number;
+}
 
 export class MediaDetector {
   /**
@@ -49,6 +58,12 @@ export class MediaDetector {
       const asbMatch = url.match(FLOW_ASB_MEDIA_REGEX);
       if (asbMatch?.[1]) {
         uuids.push(asbMatch[1]);
+        matchedUrls.push(url);
+        continue;
+      }
+      const geminiMatch = url.match(GEMINI_MEDIA_REGEX);
+      if (geminiMatch?.[1]) {
+        uuids.push(geminiMatch[1]);
         matchedUrls.push(url);
       }
     }
@@ -206,5 +221,94 @@ export class MediaDetector {
     }
 
     return null;
+  }
+
+  /**
+   * Performs an aggressive, multi-strategy recovery scan across the Google Flow interface.
+   * Examines DOM video elements, tiles, stream sources, and download buttons to recover
+   * completed video media even after the primary polling window has timed out.
+   */
+  static async detectRecoveryVideo(
+    page: Page,
+    beforeUrls: Set<string> = new Set(),
+  ): Promise<RecoveryScanResult> {
+    try {
+      const scan = await page.evaluate((beforeList) => {
+        const bSet = new Set(beforeList);
+        const candidates: string[] = [];
+
+        // Check if any progress bar / spinner is still animating
+        const isStillGenerating = document.querySelector(
+          '.progress-bar, flow-video-tile .generating, mat-spinner, [aria-label*="generating" i]'
+        ) !== null;
+
+        // Strategy 1: Check all Flow video tiles in reverse DOM order (newest first)
+        const tiles = Array.from(document.querySelectorAll('flow-video-tile, [class*="video-tile"]'));
+        for (let i = tiles.length - 1; i >= 0; i--) {
+          const tile = tiles[i]!;
+          const vid = tile.querySelector('video');
+          const vidSrc = vid?.src || (vid as HTMLMediaElement)?.currentSrc || vid?.getAttribute('src');
+          if (vidSrc && !bSet.has(vidSrc) && (vidSrc.startsWith('http') || vidSrc.startsWith('blob:'))) {
+            candidates.push(vidSrc);
+          }
+
+          const img = tile.querySelector('img.thumbnail, img[src*="/asb/"], img[src*="flow-content.google"]') as HTMLImageElement | null;
+          if (img && img.src) {
+            if (img.src.includes('/asb/')) {
+              const streamUrl = img.src.split('=')[0] + '=mm,22,15';
+              if (!bSet.has(streamUrl)) candidates.push(streamUrl);
+            } else if (img.src.includes('flow-content.google/video')) {
+              if (!bSet.has(img.src)) candidates.push(img.src);
+            }
+          }
+
+          // Check download anchors inside tile
+          const dl = tile.querySelector('a[href*=".mp4"], a[download], a[aria-label*="download" i]') as HTMLAnchorElement | null;
+          if (dl && dl.href && !bSet.has(dl.href)) {
+            candidates.push(dl.href);
+          }
+        }
+
+        // Strategy 2: All <video> elements on page
+        const allVideos = Array.from(document.querySelectorAll('video'));
+        for (let i = allVideos.length - 1; i >= 0; i--) {
+          const v = allVideos[i]!;
+          const src = v.currentSrc || v.src || v.getAttribute('src');
+          if (src && !bSet.has(src) && (src.startsWith('http') || src.startsWith('blob:'))) {
+            candidates.push(src);
+          }
+        }
+
+        return {
+          candidates: Array.from(new Set(candidates)),
+          isStillGenerating,
+        };
+      }, Array.from(beforeUrls));
+
+      if (scan.candidates.length > 0) {
+        const chosenUrl = scan.candidates[0]!;
+        const parsed = this.parseMediaUuids([chosenUrl]);
+        return {
+          found: true,
+          videoUrl: chosenUrl,
+          uuid: parsed.uuids[0],
+          isStillGenerating: scan.isStillGenerating,
+          candidateCount: scan.candidates.length,
+        };
+      }
+
+      return {
+        found: false,
+        isStillGenerating: scan.isStillGenerating,
+        candidateCount: 0,
+      };
+    } catch (err) {
+      logger.warn('media_detector', `Recovery scan error: ${(err as Error).message}`);
+      return {
+        found: false,
+        isStillGenerating: false,
+        candidateCount: 0,
+      };
+    }
   }
 }

@@ -493,11 +493,11 @@ export interface ProjectStats {
  * Structured classification of generation and runtime failures.
  * Distinguishes genuine credit/quota issues from generic timeouts, safety blocks, or network drops.
  */
-export type FailureClassification = 'credit_exhausted' | 'quota_exhausted' | 'auth_required' | 'safety_block' | 'flow_generation_error' | 'timeout' | 'browser_error' | 'unknown';
+export type FailureClassification = 'credit_exhausted' | 'quota_exhausted' | 'auth_required' | 'safety_block' | 'flow_generation_error' | 'timeout' | 'detection_failed' | 'browser_error' | 'unknown';
 /**
- * Explicit lifecycle states of prompt submission to Google Flow.
+ * Explicit lifecycle states of prompt submission to Google Flow and Gemini.
  */
-export type SubmissionState = 'none' | 'not_submitted' | 'queued' | 'assigned' | 'preparing' | 'ready_to_submit' | 'submitting' | 'submitted' | 'generating' | 'media_detected' | 'completed' | 'failed' | 'submission_unknown';
+export type SubmissionState = 'none' | 'not_submitted' | 'queued' | 'assigned' | 'preparing' | 'ready_to_submit' | 'submitting' | 'submitted' | 'generating' | 'media_detected' | 'recovery_scan_pending' | 'generation_completed_remote' | 'detection_failed' | 'completed' | 'failed' | 'submission_unknown';
 /**
  * Record of an individual execution attempt for a job on a specific profile.
  */

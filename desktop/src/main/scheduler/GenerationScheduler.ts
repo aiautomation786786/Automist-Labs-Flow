@@ -51,7 +51,6 @@ const MANUAL_ACTION_KEYWORDS = [
   'nano banana 2',
   'model verification failed',
   'aspect ratio verification failed',
-  'quota',
   'safety_block',
   'safety guidelines',
   'content policy',
@@ -512,6 +511,27 @@ export class GenerationScheduler {
 
     logger.warn('scheduler', `Job ${job.jobId} failed with classification: ${classification} (submissionState: ${submissionState})`);
 
+    // RULE 1.1: If generation completed remotely on provider, NEVER resubmit to prevent duplicate paid generation
+    if (submissionState === 'generation_completed_remote' || classification === 'detection_failed') {
+      logger.warn('scheduler', `Job ${job.jobId} completed generation remotely on provider canvas, but media binding timed out. Holding for user verification without duplicate billing.`);
+      await JobRepository.updateJob(job.projectId, job.jobId, {
+        status: 'manual_action_required',
+        submissionState: 'generation_completed_remote',
+        errorMessage: `Remote generation completed on provider canvas, but media URL detection timed out: ${errorMessage}. Check your provider tab to download directly without re-spending credits.`,
+      });
+      await ProjectRepository.updateSlot(job.projectId, job.slotIndex, {
+        status: 'failed',
+        error: {
+          code: 'GENERATION_COMPLETED_REMOTE',
+          message: `Generation completed on provider canvas, but automatic media detection timed out. Do not resubmit; media is available on your provider tab.`,
+          timestamp: new Date().toISOString(),
+          retryCount: job.retryCount,
+          profileId: worker?.profileId,
+        },
+      });
+      return;
+    }
+
     // RULE 1 & 6: Never failover or resubmit if submission state is uncertain/unknown
     if (submissionState === 'submission_unknown') {
       logger.warn('scheduler', `Job ${job.jobId} submission state is unknown. Stopping automatic retry to prevent duplicate paid generation.`);
@@ -532,8 +552,9 @@ export class GenerationScheduler {
       return;
     }
 
-    // RULE 1 & 4: Credit or Quota Exhaustion Failover
-    if (classification === 'credit_exhausted' || classification === 'quota_exhausted') {
+    // RULE 1 & 4: Credit or Quota Exhaustion Failover (Requires explicit evidence; generic timeouts NEVER quarantine accounts)
+    const isGenericTimeout = errorMessage.toLowerCase().includes('timed out') || errorMessage.toLowerCase().includes('timeout');
+    if (!isGenericTimeout && (classification === 'credit_exhausted' || classification === 'quota_exhausted')) {
       if (worker) {
         this.workerPool.quarantineProfile(worker.profileId, classification, 3600000, errorMessage);
       }
