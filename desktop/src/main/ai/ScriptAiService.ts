@@ -25,12 +25,14 @@ import type {
   RefineSceneResult,
   AnalyzeAlignParams,
   AnalyzeAlignResult,
+  PublishingAiSuggestion,
 } from '../../shared/types';
 import { ScriptValidator } from '../../shared/ScriptValidator';
 import { ScriptParser } from '../../shared/ScriptParser';
 import { SettingsManager } from '../storage/SettingsManager';
 import { SkillRepository } from '../storage/SkillRepository';
 import { ChannelRepository } from '../storage/ChannelRepository';
+import { ProjectRepository } from '../storage/ProjectRepository';
 import { PromptBuilder } from './PromptBuilder';
 import { GeminiOpenAiProvider } from './GeminiOpenAiProvider';
 import { MockScriptAiProvider } from './MockScriptAiProvider';
@@ -459,4 +461,98 @@ export class ScriptAiService {
     options.onProgress?.(event);
     generationEventBus.emit('script-ai:progress' as any, event);
   }
+
+  /**
+   * Generates SEO-optimized YouTube publishing metadata (title, description, tags, thumbnail hook)
+   * using the active AI provider. Keeps suggestedThumbnailHook separate from the core
+   * YouTubePublishingMetadata.
+   */
+  static async generatePublishingMetadata(projectId: string): Promise<PublishingAiSuggestion> {
+    const project = await ProjectRepository.get(projectId);
+    if (!project) {
+      throw new Error(`Project not found: ${projectId}`);
+    }
+
+    // Gather project context
+    let contextText = `Project Name: ${project.name}\n`;
+    if (project.transcript?.fullText) {
+      contextText += `Transcript / Speech:\n${project.transcript.fullText}\n`;
+    }
+
+    // Check if story scenes exist
+    try {
+      const storyPath = path.join(AssetManager.getProjectDir(projectId), 'story.json');
+      if (fs.existsSync(storyPath)) {
+        const story = JSON.parse(fs.readFileSync(storyPath, 'utf-8'));
+        if (Array.isArray(story.scenes)) {
+          contextText += `Scenes Narration:\n${story.scenes.map((s: any, idx: number) => `Scene ${idx + 1}: ${s.narrationText || ''}`).join('\n')}\n`;
+        }
+      }
+    } catch {}
+
+    // Check channel rulebook
+    if (project.channelId) {
+      try {
+        const channel = await ChannelRepository.get(project.channelId);
+        if (channel?.rulebook?.tone) {
+          contextText += `Tone: ${channel.rulebook.tone}\n`;
+        }
+      } catch {}
+    }
+
+    const systemPrompt = `You are a world-class YouTube content strategist and SEO specialist.
+Generate high-converting, policy-compliant metadata for this video.
+Requirements:
+1. Title: Compelling, curiosity-inducing or value-packed, strictly under 95 characters. No misleading clickbait.
+2. Description: 2-3 engaging paragraphs explaining the video value, relevant hashtags, and key takeaways.
+3. Tags: 8 to 15 highly relevant search keywords/phrases.
+4. Suggested Thumbnail Hook: A punchy 2-5 word text hook suitable for rendering onto the thumbnail image.
+
+STRICT JSON OUTPUT FORMAT ONLY:
+\`\`\`json
+{
+  "title": "...",
+  "description": "...",
+  "tags": ["tag1", "tag2"],
+  "suggestedThumbnailHook": "..."
 }
+\`\`\``;
+
+    const userPrompt = `Video Context:\n${contextText}\nGenerate the YouTube publishing metadata JSON.`;
+
+    const provider = this.resolveProvider();
+    try {
+      const completion = await provider.generateChatCompletion(systemPrompt, userPrompt);
+      const parsed = this.extractJson(completion.text);
+      if (parsed && typeof parsed.title === 'string' && parsed.title.trim()) {
+        const tags = Array.isArray(parsed.tags)
+          ? parsed.tags.map((t) => String(t).trim()).filter(Boolean)
+          : [project.name];
+
+        return {
+          metadata: {
+            title: parsed.title.trim(),
+            description: typeof parsed.description === 'string' ? parsed.description.trim() : '',
+            tags,
+            privacyStatus: 'private',
+          },
+          suggestedThumbnailHook: typeof parsed.suggestedThumbnailHook === 'string' ? parsed.suggestedThumbnailHook.trim() : undefined,
+        };
+      }
+    } catch (err: any) {
+      logger.warn('script_ai', 'AI metadata generation completion failed, using intelligent fallback', { error: err.message });
+    }
+
+    // Deterministic fallback
+    return {
+      metadata: {
+        title: project.name || 'Untitled Video',
+        description: `Watch ${project.name || 'this video'} created with Infinity Flow.\n\n#infinityflow #video #shorts`,
+        tags: [project.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), 'infinity-flow', 'ai-video'],
+        privacyStatus: 'private',
+      },
+      suggestedThumbnailHook: project.name.split(' ').slice(0, 4).join(' ').toUpperCase(),
+    };
+  }
+}
+

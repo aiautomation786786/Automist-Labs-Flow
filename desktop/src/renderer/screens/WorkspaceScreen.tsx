@@ -13,12 +13,15 @@ import type {
   SystemMetrics,
   TranscriptEntity,
   TranscriptProgressEvent,
+  PublishingAccountEntity,
+  PublishingProgressEvent,
+  YouTubePublishingMetadata,
 } from '../../shared/types';
 import { PromptSlotCard } from '../components/PromptSlotCard';
 import { FullPromptModal } from '../components/FullPromptModal';
 import { MediaPreviewModal } from '../components/MediaPreviewModal';
 import { FinalVideoModal } from '../components/FinalVideoModal';
-import { PlayIcon, RefreshIcon, FolderIcon, TvIcon, CheckCircleIcon } from '../components/Icons';
+import { PlayIcon, RefreshIcon, FolderIcon, TvIcon, CheckCircleIcon, YoutubeIcon, SparklesIcon, ClockIcon } from '../components/Icons';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { formatAssetUrl } from '../utils/assetUrl';
 
@@ -100,6 +103,27 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
   const [rawMode, setRawMode] = useState(false);
   const [isBurningSubtitles, setIsBurningSubtitles] = useState(false);
   const [burnError, setBurnError] = useState<string | null>(null);
+
+  // Phase 3 YouTube Publishing State
+  const [publishingAccounts, setPublishingAccounts] = useState<PublishingAccountEntity[]>([]);
+  const [selectedPublishingAccountId, setSelectedPublishingAccountId] = useState<string>('');
+  const [isPublishDrawerOpen, setIsPublishDrawerOpen] = useState<boolean>(false);
+  const [pubTitle, setPubTitle] = useState<string>('');
+  const [pubDescription, setPubDescription] = useState<string>('');
+  const [pubTags, setPubTags] = useState<string>('');
+  const [pubPrivacy, setPubPrivacy] = useState<'private' | 'unlisted' | 'public'>('private');
+  const [pubScheduleEnabled, setPubScheduleEnabled] = useState<boolean>(false);
+  const [pubScheduledAt, setPubScheduledAt] = useState<string>('');
+  const [suggestedThumbnailHook, setSuggestedThumbnailHook] = useState<string | null>(null);
+  const [isPublishing, setIsPublishing] = useState<boolean>(false);
+  const [publishingProgress, setPublishingProgress] = useState<PublishingProgressEvent | null>(null);
+  const [publishingError, setPublishingError] = useState<string | null>(null);
+  const [publishedResult, setPublishedResult] = useState<{
+    videoId: string;
+    url: string;
+    scheduledPublishAt?: string;
+  } | null>(null);
+  const [isGeneratingPublishingMetadata, setIsGeneratingPublishingMetadata] = useState<boolean>(false);
 
   useEffect(() => {
     let active = true;
@@ -191,6 +215,46 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
           window.flowApi.getProjectTranscript(projectId).then((t) => {
             if (mountedRef.current && t) {
               setTranscriptData(t);
+            }
+          }).catch(() => {});
+        }
+
+        // Load Phase 3 Publishing State if exists
+        if (window.flowApi?.getProjectPublishingState) {
+          window.flowApi.getProjectPublishingState(projectId).then((pubState) => {
+            if (mountedRef.current && pubState) {
+              if (pubState.status === 'published' && pubState.platformVideoId) {
+                setPublishedResult({
+                  videoId: pubState.platformVideoId,
+                  url: pubState.publishedUrl || `https://youtu.be/${pubState.platformVideoId}`,
+                  scheduledPublishAt: pubState.metadata?.scheduledPublishAt,
+                });
+              } else if (pubState.status === 'failed' && pubState.lastError) {
+                setPublishingError(pubState.lastError);
+              }
+              if (pubState.metadata) {
+                if (pubState.metadata.title) setPubTitle(pubState.metadata.title);
+                if (pubState.metadata.description) setPubDescription(pubState.metadata.description);
+                if (pubState.metadata.tags) setPubTags(pubState.metadata.tags.join(', '));
+                if (pubState.metadata.privacyStatus) setPubPrivacy(pubState.metadata.privacyStatus);
+                if (pubState.metadata.scheduledPublishAt) {
+                  setPubScheduleEnabled(true);
+                  setPubScheduledAt(pubState.metadata.scheduledPublishAt.slice(0, 16));
+                }
+              }
+            }
+          }).catch(() => {});
+        }
+
+        // Set default title & description if still empty
+        setPubTitle((prev) => prev || data.name || '');
+        setPubDescription((prev) => prev || data.campaignTag || '');
+
+        // Load Publishing Accounts
+        if (window.flowApi?.listPublishingAccounts) {
+          window.flowApi.listPublishingAccounts().then((accs) => {
+            if (mountedRef.current && accs) {
+              setPublishingAccounts(accs);
             }
           }).catch(() => {});
         }
@@ -361,6 +425,45 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
     });
     return () => unsub();
   }, [projectId]);
+
+  // Listen to live publishing progress events
+  useEffect(() => {
+    if (!window.flowApi?.onPublishingProgress) return;
+    const unsub = window.flowApi.onPublishingProgress((event: PublishingProgressEvent) => {
+      if (event.projectId !== projectId) return;
+      setPublishingProgress(event);
+      if (event.status === 'published') {
+        setIsPublishing(false);
+        if (event.videoId) {
+          setPublishedResult({
+            videoId: event.videoId,
+            url: event.videoUrl || `https://youtu.be/${event.videoId}`,
+          });
+        }
+      } else if (event.status === 'failed') {
+        setIsPublishing(false);
+        if (event.error) {
+          setPublishingError(event.error);
+        }
+      }
+    });
+    return () => unsub();
+  }, [projectId]);
+
+  // Sync selected account when accounts or project channel change
+  useEffect(() => {
+    if (publishingAccounts.length === 0) return;
+    if (selectedPublishingAccountId && publishingAccounts.some((a) => a.id === selectedPublishingAccountId)) return;
+
+    if (project?.channelId && channels.length > 0) {
+      const channel = channels.find((c) => c.id === project.channelId);
+      if (channel?.linkedPublishingAccountId && publishingAccounts.some((a) => a.id === channel.linkedPublishingAccountId)) {
+        setSelectedPublishingAccountId(channel.linkedPublishingAccountId);
+        return;
+      }
+    }
+    setSelectedPublishingAccountId(publishingAccounts[0].id);
+  }, [publishingAccounts, project, channels, selectedPublishingAccountId]);
 
   // Separate image vs video slots, strictly ordered by slotIndex
   const { imageSlots, videoSlots } = useMemo(() => {
@@ -739,6 +842,487 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
         setIsBurningSubtitles(false);
       }
     }
+  };
+
+  const handlePublishToYouTube = async () => {
+    if (!window.flowApi?.publishProjectToYouTube || !project) return;
+    if (!selectedPublishingAccountId) {
+      setPublishingError('Please select a connected YouTube account.');
+      return;
+    }
+    if (!pubTitle.trim()) {
+      setPublishingError('Title is required for YouTube publishing.');
+      return;
+    }
+
+    setIsPublishing(true);
+    setPublishingError(null);
+    setPublishedResult(null);
+    setPublishingProgress({
+      projectId: project.projectId,
+      publishingAccountId: selectedPublishingAccountId,
+      status: 'uploading',
+      percent: 5,
+      stage: 'uploading',
+      stageMessage: 'Preparing video and initiating YouTube upload...',
+    });
+
+    try {
+      const tagsArray = pubTags
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+
+      const metadata: YouTubePublishingMetadata = {
+        title: pubTitle.trim(),
+        description: pubDescription.trim(),
+        tags: tagsArray,
+        privacyStatus: pubPrivacy,
+        scheduledPublishAt: pubScheduleEnabled && pubScheduledAt ? new Date(pubScheduledAt).toISOString() : undefined,
+      };
+
+      const res = await window.flowApi.publishProjectToYouTube({
+        projectId: project.projectId,
+        publishingAccountId: selectedPublishingAccountId,
+        metadata,
+      });
+      if (mountedRef.current && res.platformVideoId) {
+        setPublishedResult({
+          videoId: res.platformVideoId,
+          url: res.publishedUrl || `https://youtu.be/${res.platformVideoId}`,
+          scheduledPublishAt: metadata.scheduledPublishAt,
+        });
+        setIsPublishing(false);
+      }
+      await loadProject();
+    } catch (err: any) {
+      if (mountedRef.current) {
+        setPublishingError(err.message || 'YouTube publishing failed');
+        setIsPublishing(false);
+      }
+    }
+  };
+
+  const handleCancelPublish = async () => {
+    if (!window.flowApi?.cancelPublishing || !project) return;
+    try {
+      await window.flowApi.cancelPublishing(project.projectId);
+      if (mountedRef.current) {
+        setIsPublishing(false);
+        setPublishingProgress(null);
+      }
+    } catch (err: any) {
+      console.error('Failed to cancel publishing', err);
+    }
+  };
+
+  const handleGenerateMetadataAi = async () => {
+    if (!window.flowApi?.generatePublishingMetadata || !project) return;
+    setIsGeneratingPublishingMetadata(true);
+    try {
+      const res = await window.flowApi.generatePublishingMetadata(project.projectId);
+      if (mountedRef.current) {
+        if (res.metadata) {
+          if (res.metadata.title) setPubTitle(res.metadata.title);
+          if (res.metadata.description) setPubDescription(res.metadata.description);
+          if (res.metadata.tags) setPubTags(res.metadata.tags.join(', '));
+          if (res.metadata.privacyStatus) setPubPrivacy(res.metadata.privacyStatus);
+        }
+        if (res.suggestedThumbnailHook) {
+          setSuggestedThumbnailHook(res.suggestedThumbnailHook);
+        }
+      }
+    } catch (err: any) {
+      if (mountedRef.current) {
+        setPublishingError(err.message || 'Failed to generate publishing metadata with AI');
+      }
+    } finally {
+      if (mountedRef.current) {
+        setIsGeneratingPublishingMetadata(false);
+      }
+    }
+  };
+
+  const renderYouTubePublishDrawer = () => {
+    if (!isPublishDrawerOpen) return null;
+
+    return (
+      <div
+        data-testid="youtube-publishing-drawer"
+        style={{
+          backgroundColor: 'var(--bg-surface)',
+          border: '1px solid rgba(239, 68, 68, 0.3)',
+          borderRadius: 'var(--radius-md)',
+          padding: '16px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          marginTop: '12px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <YoutubeIcon size={18} style={{ color: '#ef4444' }} />
+            <span style={{ fontSize: '13.5px', fontWeight: 600 }}>YouTube Publishing</span>
+            {publishedResult && (
+              <span className="badge badge-completed" style={{ fontSize: '10.5px' }}>
+                Published
+              </span>
+            )}
+            {isPublishing && (
+              <span className="badge badge-running" style={{ fontSize: '10.5px' }}>
+                Uploading
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            className="btn-secondary btn-sm"
+            onClick={() => setIsPublishDrawerOpen(false)}
+            style={{ fontSize: '11px', padding: '2px 8px' }}
+          >
+            Close
+          </button>
+        </div>
+
+        {/* Account selector */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <label style={{ fontSize: '11.5px', fontWeight: 500, color: 'var(--text-secondary)' }}>
+            Destination YouTube Account
+          </label>
+          {publishingAccounts.length === 0 ? (
+            <div
+              style={{
+                fontSize: '11.5px',
+                color: 'var(--warning)',
+                backgroundColor: 'rgba(234, 179, 8, 0.1)',
+                padding: '8px 10px',
+                borderRadius: '4px',
+                border: '1px solid rgba(234, 179, 8, 0.25)',
+              }}
+            >
+              No connected YouTube accounts found. Please connect an account in <strong>Channels &gt; YouTube Accounts</strong> first.
+            </div>
+          ) : (
+            <select
+              value={selectedPublishingAccountId}
+              onChange={(e) => setSelectedPublishingAccountId(e.target.value)}
+              disabled={isPublishing}
+              style={{
+                fontSize: '12px',
+                padding: '6px 10px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-primary)',
+              }}
+            >
+              {publishingAccounts.map((acc) => (
+                <option key={acc.id} value={acc.id}>
+                  {acc.displayName || acc.id} ({acc.externalChannelTitle || 'Channel'})
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        {/* Metadata Controls Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '4px' }}>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+            Video Metadata
+          </span>
+          <button
+            type="button"
+            className="btn-secondary btn-sm"
+            onClick={handleGenerateMetadataAi}
+            disabled={isGeneratingPublishingMetadata || isPublishing}
+            style={{ fontSize: '11.5px', padding: '3px 10px', display: 'flex', alignItems: 'center', gap: '5px' }}
+            title="Generate SEO title, description, tags, and thumbnail hook suggestion with Gemini AI"
+          >
+            <SparklesIcon size={13} style={{ color: '#a855f7' }} />
+            {isGeneratingPublishingMetadata ? 'Generating with AI...' : 'Suggest with AI'}
+          </button>
+        </div>
+
+        {/* Suggested Thumbnail Hook (strictly separate from API payload) */}
+        {suggestedThumbnailHook && (
+          <div
+            style={{
+              backgroundColor: 'rgba(168, 85, 247, 0.08)',
+              border: '1px solid rgba(168, 85, 247, 0.25)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '8px 12px',
+              fontSize: '11.5px',
+              color: '#d8b4fe',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '2px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
+              <SparklesIcon size={12} />
+              <span>AI Thumbnail Hook Idea (Creative suggestion &mdash; not sent to YouTube):</span>
+            </div>
+            <div style={{ fontStyle: 'italic', color: 'var(--text-primary)' }}>
+              &ldquo;{suggestedThumbnailHook}&rdquo;
+            </div>
+          </div>
+        )}
+
+        {/* Title */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Title *</label>
+            <span style={{ fontSize: '10.5px', color: pubTitle.length > 100 ? 'var(--danger)' : 'var(--text-muted)' }}>
+              {pubTitle.length}/100
+            </span>
+          </div>
+          <input
+            type="text"
+            value={pubTitle}
+            onChange={(e) => setPubTitle(e.target.value)}
+            maxLength={100}
+            disabled={isPublishing}
+            placeholder="Catchy YouTube Title"
+            style={{
+              fontSize: '12.5px',
+              padding: '6px 10px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'var(--bg-card)',
+              border: '1px solid var(--border-color)',
+              color: 'var(--text-primary)',
+            }}
+          />
+        </div>
+
+        {/* Description */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Description</label>
+          <textarea
+            value={pubDescription}
+            onChange={(e) => setPubDescription(e.target.value)}
+            rows={3}
+            disabled={isPublishing}
+            placeholder="Video description, tags, credits..."
+            style={{
+              fontSize: '12px',
+              padding: '6px 10px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'var(--bg-card)',
+              border: '1px solid var(--border-color)',
+              color: 'var(--text-primary)',
+              resize: 'vertical',
+              fontFamily: 'inherit',
+            }}
+          />
+        </div>
+
+        {/* Tags */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Tags (comma-separated)</label>
+          <input
+            type="text"
+            value={pubTags}
+            onChange={(e) => setPubTags(e.target.value)}
+            disabled={isPublishing}
+            placeholder="ai video, automation, shorts"
+            style={{
+              fontSize: '12px',
+              padding: '6px 10px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'var(--bg-card)',
+              border: '1px solid var(--border-color)',
+              color: 'var(--text-primary)',
+            }}
+          />
+        </div>
+
+        {/* Privacy & Scheduling */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', alignItems: 'start' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Privacy Status</label>
+            <select
+              value={pubPrivacy}
+              onChange={(e) => setPubPrivacy(e.target.value as any)}
+              disabled={isPublishing || pubScheduleEnabled}
+              style={{
+                fontSize: '12px',
+                padding: '6px 10px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-primary)',
+              }}
+            >
+              <option value="private">Private (Default)</option>
+              <option value="unlisted">Unlisted</option>
+              <option value="public">Public</option>
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={pubScheduleEnabled}
+                onChange={(e) => setPubScheduleEnabled(e.target.checked)}
+                disabled={isPublishing}
+              />
+              <ClockIcon size={13} />
+              <span>Schedule on YouTube</span>
+            </label>
+            {pubScheduleEnabled && (
+              <input
+                type="datetime-local"
+                value={pubScheduledAt}
+                onChange={(e) => setPubScheduledAt(e.target.value)}
+                disabled={isPublishing}
+                style={{
+                  fontSize: '11.5px',
+                  padding: '5px 8px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-card)',
+                  border: '1px solid var(--border-color)',
+                  color: 'var(--text-primary)',
+                }}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Progress Bar */}
+        {isPublishing && publishingProgress && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '4px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px' }}>
+              <span>{publishingProgress.stageMessage || 'Uploading to YouTube...'}</span>
+              <span style={{ fontWeight: 600 }}>{publishingProgress.percent}%</span>
+            </div>
+            <div style={{ height: '6px', backgroundColor: 'var(--bg-subtle)', borderRadius: '3px', overflow: 'hidden' }}>
+              <div
+                style={{
+                  width: `${publishingProgress.percent}%`,
+                  height: '100%',
+                  backgroundColor: '#ef4444',
+                  transition: 'width 0.3s ease',
+                }}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--text-muted)' }}>
+              {publishingProgress.bytesUploaded !== undefined && publishingProgress.totalBytes ? (
+                <span>
+                  {(publishingProgress.bytesUploaded / (1024 * 1024)).toFixed(1)} MB / {(publishingProgress.totalBytes / (1024 * 1024)).toFixed(1)} MB
+                </span>
+              ) : (
+                <span />
+              )}
+              <button
+                type="button"
+                onClick={handleCancelPublish}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--danger)',
+                  cursor: 'pointer',
+                  padding: 0,
+                  fontSize: '11px',
+                  textDecoration: 'underline',
+                }}
+              >
+                Cancel Upload
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Error Banner */}
+        {publishingError && (
+          <div
+            style={{
+              padding: '8px 12px',
+              backgroundColor: 'rgba(239, 68, 68, 0.1)',
+              border: '1px solid var(--danger)',
+              borderRadius: '4px',
+              color: 'var(--danger)',
+              fontSize: '11.5px',
+            }}
+          >
+            <strong>Publishing Error:</strong> {publishingError}
+          </div>
+        )}
+
+        {/* Success Banner */}
+        {publishedResult && (
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px',
+              padding: '10px 12px',
+              backgroundColor: 'rgba(34, 197, 94, 0.1)',
+              border: '1px solid rgba(34, 197, 94, 0.3)',
+              borderRadius: '4px',
+              fontSize: '12px',
+              color: '#4ade80',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
+              <CheckCircleIcon size={14} />
+              <span>Published to YouTube!</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span>Video ID: <code>{publishedResult.videoId}</code></span>
+              &bull;
+              <button
+                type="button"
+                onClick={() => window.open(publishedResult.url, '_blank')}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#60a5fa',
+                  textDecoration: 'underline',
+                  cursor: 'pointer',
+                  padding: 0,
+                  fontSize: '12px',
+                }}
+              >
+                Watch on YouTube &rarr;
+              </button>
+              {publishedResult.scheduledPublishAt && (
+                <span> &bull; Scheduled: {new Date(publishedResult.scheduledPublishAt).toLocaleString()}</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Publish Action Button */}
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '4px' }}>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={handlePublishToYouTube}
+            disabled={isPublishing || !selectedPublishingAccountId || !pubTitle.trim() || publishingAccounts.length === 0}
+            style={{
+              padding: '8px 18px',
+              fontWeight: 600,
+              fontSize: '12.5px',
+              backgroundColor: '#ef4444',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              opacity: isPublishing || !selectedPublishingAccountId || !pubTitle.trim() || publishingAccounts.length === 0 ? 0.5 : 1,
+              cursor: isPublishing || !selectedPublishingAccountId || !pubTitle.trim() || publishingAccounts.length === 0 ? 'not-allowed' : 'pointer',
+            }}
+          >
+            <YoutubeIcon size={14} />
+            {isPublishing
+              ? 'Uploading...'
+              : pubScheduleEnabled
+              ? 'Schedule for Release'
+              : 'Upload & Publish Now'}
+          </button>
+        </div>
+      </div>
+    );
   };
 
   if (loading) {
@@ -1190,19 +1774,41 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
                   </div>
                 )}
 
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={handleBurnSubtitles}
-                  disabled={isBurningSubtitles || (!transcriptData && !rawMode)}
-                  style={{ alignSelf: 'flex-start', padding: '8px 18px', fontWeight: 600, fontSize: '13px' }}
-                >
-                  {isBurningSubtitles
-                    ? 'Processing Video...'
-                    : rawMode
-                    ? 'Remux & Assemble Video'
-                    : 'Burn Subtitles & Assemble Video'}
-                </button>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={handleBurnSubtitles}
+                    disabled={isBurningSubtitles || (!transcriptData && !rawMode)}
+                    style={{ alignSelf: 'flex-start', padding: '8px 18px', fontWeight: 600, fontSize: '13px' }}
+                  >
+                    {isBurningSubtitles
+                      ? 'Processing Video...'
+                      : rawMode
+                      ? 'Remux & Assemble Video'
+                      : 'Burn Subtitles & Assemble Video'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setIsPublishDrawerOpen((prev) => !prev)}
+                    style={{
+                      padding: '8px 14px',
+                      fontSize: '13px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      color: '#ef4444',
+                      borderColor: 'rgba(239, 68, 68, 0.4)',
+                    }}
+                    title="Publish imported video to YouTube"
+                  >
+                    <YoutubeIcon size={14} />
+                    {publishedResult ? 'YouTube (Published)' : isPublishDrawerOpen ? 'Close YouTube' : 'Publish to YouTube'}
+                  </button>
+                </div>
+
+                {!hasAssembledVideo && renderYouTubePublishDrawer()}
               </div>
             </div>
           </div>
@@ -1855,6 +2461,22 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
                         <TvIcon size={13} />
                         {isDelivering ? 'Delivering...' : project.channelName ? `Deliver to ${project.channelName}` : 'Deliver to Channel'}
                       </button>
+                      <button
+                        className="btn-primary btn-sm"
+                        onClick={() => setIsPublishDrawerOpen((prev) => !prev)}
+                        style={{
+                          fontSize: '12px',
+                          padding: '4px 12px',
+                          backgroundColor: '#dc2626',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                        }}
+                        title="Publish final video to YouTube"
+                      >
+                        <YoutubeIcon size={13} />
+                        {publishedResult ? 'YouTube (Published)' : isPublishDrawerOpen ? 'Close YouTube' : 'Publish to YouTube'}
+                      </button>
                     </div>
 
                     {deliveryResult && (
@@ -1907,6 +2529,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({
                         Delivery error: {deliveryError}
                       </div>
                     )}
+
+                    {renderYouTubePublishDrawer()}
                   </div>
                 </div>
               ) : (

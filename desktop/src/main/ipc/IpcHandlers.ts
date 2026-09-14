@@ -50,6 +50,7 @@ import { MediaProbeService } from '../import/MediaProbeService';
 import { MediaImportService } from '../import/MediaImportService';
 import { AudioTranscriptionService } from '../transcription/AudioTranscriptionService';
 import { ImportedMediaRenderer } from '../render/ImportedMediaRenderer';
+import { PublishingAccountService } from '../publishing/PublishingAccountService';
 import type {
   VideoFactoryConfig,
   VideoFactoryStage,
@@ -65,6 +66,7 @@ import type {
   AnalyzeAlignParams,
   ImportMediaParams,
   BurnImportedSubtitlesParams,
+  YouTubePublishingMetadata,
 } from '../../shared/types';
 
 const logger = new AppLogger({ mirrorToStderr: false });
@@ -1108,6 +1110,68 @@ export class IpcHandlers {
     ipcMain.handle('media:burnSubtitles', async (_event, params: unknown) => {
       if (!params || typeof params !== 'object') throw new Error('Invalid burnSubtitles params');
       return await ImportedMediaRenderer.renderImportedVideo(params as BurnImportedSubtitlesParams);
+    });
+
+    // -------------------------------------------------------------------------
+    // Publishing Accounts & YouTube Publishing API (Phase 3)
+    // -------------------------------------------------------------------------
+    ipcMain.handle('publishing:listAccounts', async () => {
+      return await PublishingAccountService.listAccounts();
+    });
+
+    ipcMain.handle('publishing:getAccount', async (_event, id: unknown) => {
+      if (typeof id !== 'string') throw new Error('Invalid account id');
+      return await PublishingAccountService.getAccount(id);
+    });
+
+    ipcMain.handle('publishing:connectYouTube', async (_event, params: unknown) => {
+      const p = params as { clientId: string; clientSecret: string };
+      if (!p || typeof p.clientId !== 'string' || typeof p.clientSecret !== 'string') {
+        throw new Error('Invalid connectYouTube params');
+      }
+      return await PublishingAccountService.connectYouTubeAccount(p);
+    });
+
+    ipcMain.handle('publishing:disconnectAccount', async (_event, id: unknown) => {
+      if (typeof id !== 'string') throw new Error('Invalid account id');
+      return await PublishingAccountService.disconnectAccount(id);
+    });
+
+    ipcMain.handle('publishing:linkChannel', async (_event, params: unknown) => {
+      const p = params as { channelId: string; publishingAccountId?: string };
+      if (!p || typeof p.channelId !== 'string') throw new Error('Invalid linkChannel params');
+      return await PublishingAccountService.linkChannel(p.channelId, p.publishingAccountId);
+    });
+
+    ipcMain.handle('publishing:publishProject', async (_event, params: unknown) => {
+      const p = params as {
+        projectId: string;
+        publishingAccountId?: string;
+        metadata: YouTubePublishingMetadata;
+        forceRetry?: boolean;
+      };
+      if (!p || typeof p.projectId !== 'string' || !p.metadata) {
+        throw new Error('Invalid publishProject params');
+      }
+      return await PublishingAccountService.publishProject(p, (progressEvent) => {
+        getWebContents?.()?.send('flow:publishing:progress', progressEvent);
+      });
+    });
+
+    ipcMain.handle('publishing:cancelPublish', async (_event, projectId: unknown) => {
+      if (typeof projectId !== 'string') throw new Error('Invalid projectId for cancelPublish');
+      await PublishingAccountService.cancelPublishing(projectId);
+      return { success: true };
+    });
+
+    ipcMain.handle('publishing:getProjectPublishingState', async (_event, projectId: unknown) => {
+      if (typeof projectId !== 'string') throw new Error('Invalid projectId for getProjectPublishingState');
+      return await PublishingAccountService.getProjectPublishingState(projectId);
+    });
+
+    ipcMain.handle('publishing:generateMetadata', async (_event, projectId: unknown) => {
+      if (typeof projectId !== 'string') throw new Error('Invalid projectId for generateMetadata');
+      return await ScriptAiService.generatePublishingMetadata(projectId);
     });
 
     if (typeof (sessionManager as any)?.on === 'function') {

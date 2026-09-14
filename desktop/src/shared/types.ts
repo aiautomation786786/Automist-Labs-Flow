@@ -595,6 +595,7 @@ export interface ProjectEntity {
     origin?: ProjectOriginType;
     sourceMedia?: ProjectSourceMedia;
     transcript?: TranscriptEntity;
+    publishing?: ProjectPublishingState;
     settings: ProjectSettings;
     slots: PromptSlotEntity[];
     stats: ProjectStats;
@@ -1106,6 +1107,7 @@ export interface ChannelEntity {
     defaultMotionStyle?: MotionStyle;
     defaultSubtitleStyle?: string;
     defaultTransitionStyle?: TransitionStyle;
+    linkedPublishingAccountId?: string;
     enabled: boolean;
     createdAt: string;
     updatedAt: string;
@@ -1124,6 +1126,7 @@ export interface CreateChannelParams {
     defaultMotionStyle?: MotionStyle;
     defaultSubtitleStyle?: string;
     defaultTransitionStyle?: TransitionStyle;
+    linkedPublishingAccountId?: string;
     enabled?: boolean;
 }
 export type DeliveryStatus = 'delivered' | 'failed';
@@ -1388,6 +1391,112 @@ export interface SchedulerCapacityMetrics {
     availableCapacity: number;
     pendingJobs: number;
 }
+
+export type PublishingPlatform = 'youtube';
+export type PublishingAccountStatus = 'connected' | 'revoked' | 'expired' | 'error';
+
+export interface PublishingAccountEntity {
+    id: string;
+    platform: PublishingPlatform;
+    displayName: string;
+    externalChannelId: string;
+    externalChannelTitle: string;
+    avatarUrl?: string;
+    connectedAt: string;
+    updatedAt: string;
+    status: PublishingAccountStatus;
+    totalPublishedCount: number;
+    lastPublishedAt?: string;
+    lastQuotaError?: string;
+    linkedChannelIds: string[];
+    hasClientSecret: boolean;
+}
+
+export interface PublishingAccountSecrets {
+    clientId: string;
+    clientSecretEnc?: string;
+    refreshTokenEnc?: string;
+    accessTokenEnc?: string;
+    tokenExpiryMs?: number;
+}
+
+/**
+ * Strict YouTube Publishing Metadata.
+ * Contains ONLY actual fields required or accepted by YouTube video publish/insert API.
+ */
+export interface YouTubePublishingMetadata {
+    title: string;
+    description: string;
+    tags: string[];
+    privacyStatus: 'private' | 'unlisted' | 'public';
+    scheduledPublishAt?: string; // ISO 8601 string for YouTube native scheduling
+    categoryId?: string;
+    thumbnailPath?: string;
+}
+
+/**
+ * Separate AI suggestion payload.
+ * UI/AI suggestions such as suggestedThumbnailHook are kept strictly outside YouTubePublishingMetadata
+ * so they are never accidentally sent in the YouTube API publishing payload.
+ */
+export interface PublishingAiSuggestion {
+    metadata: YouTubePublishingMetadata;
+    suggestedThumbnailHook?: string;
+}
+
+export type PublishingStatus =
+    | 'draft'
+    | 'ready_to_publish'
+    | 'pending'
+    | 'uploading'
+    | 'unknown'
+    | 'published'
+    | 'failed'
+    | 'cancelled';
+
+export interface ProjectPublishingState {
+    status: PublishingStatus;
+    platform?: PublishingPlatform;
+    publishingAccountId?: string;
+    platformVideoId?: string;
+    publishedUrl?: string;
+    publishedAt?: string;
+    scheduledPublishAt?: string; // YouTube-native publishAt
+    lastError?: string;
+    metadata?: YouTubePublishingMetadata;
+}
+
+export interface PublishingHistoryRecord {
+    id: string;
+    projectId: string;
+    publishingAccountId: string;
+    platform: PublishingPlatform;
+    platformVideoId?: string;
+    publishedUrl?: string;
+    status: PublishingStatus;
+    resumableSessionUri?: string;
+    uploadedBytes?: number;
+    totalBytes?: number;
+    metadataSnapshot: YouTubePublishingMetadata;
+    error?: string;
+    createdAt: string;
+    completedAt?: string;
+}
+
+export interface PublishingProgressEvent {
+    projectId: string;
+    publishingAccountId?: string;
+    percent: number;
+    stage: 'preparing' | 'uploading' | 'verifying' | 'completed' | 'failed';
+    stageMessage: string;
+    bytesUploaded?: number;
+    totalBytes?: number;
+    status: PublishingStatus;
+    error?: string;
+    videoId?: string;
+    videoUrl?: string;
+}
+
 export interface FlowApi {
     listProjects: () => Promise<ProjectEntity[]>;
     getProject: (projectId: string) => Promise<ProjectEntity | null>;
@@ -1621,6 +1730,21 @@ export interface FlowApi {
     getProjectTranscript?: (projectId: string) => Promise<TranscriptEntity | null>;
     burnImportedSubtitles?: (params: BurnImportedSubtitlesParams) => Promise<FinalRenderManifest>;
     onTranscriptProgress?: (callback: (event: TranscriptProgressEvent) => void) => () => void;
+    listPublishingAccounts?: () => Promise<PublishingAccountEntity[]>;
+    getPublishingAccount?: (id: string) => Promise<PublishingAccountEntity | null>;
+    connectYouTubeAccount?: (params: { clientId: string; clientSecret: string }) => Promise<PublishingAccountEntity>;
+    disconnectPublishingAccount?: (id: string) => Promise<{ success: boolean }>;
+    linkChannelToPublishingAccount?: (channelId: string, publishingAccountId?: string) => Promise<ChannelEntity>;
+    publishProjectToYouTube?: (params: {
+        projectId: string;
+        publishingAccountId?: string;
+        metadata: YouTubePublishingMetadata;
+        forceRetry?: boolean;
+    }) => Promise<ProjectPublishingState>;
+    cancelPublishing?: (projectId: string) => Promise<void>;
+    getProjectPublishingState?: (projectId: string) => Promise<ProjectPublishingState | null>;
+    generatePublishingMetadata?: (projectId: string) => Promise<PublishingAiSuggestion>;
+    onPublishingProgress?: (callback: (event: PublishingProgressEvent) => void) => () => void;
 }
 export interface DiscoveredLocalProfile {
     profileDirectory: string;

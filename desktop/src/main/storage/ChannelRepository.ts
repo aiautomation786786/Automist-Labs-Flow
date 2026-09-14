@@ -99,6 +99,7 @@ export class ChannelRepository {
         defaultMotionStyle: params.defaultMotionStyle,
         defaultSubtitleStyle: params.defaultSubtitleStyle,
         defaultTransitionStyle: params.defaultTransitionStyle,
+        linkedPublishingAccountId: params.linkedPublishingAccountId?.trim() || undefined,
         enabled: params.enabled ?? true,
         createdAt: now,
         updatedAt: now,
@@ -220,6 +221,7 @@ export class ChannelRepository {
         shortsOutputDir: patch.shortsOutputDir !== undefined ? patch.shortsOutputDir.trim() : existing.shortsOutputDir,
         longsOutputDir: patch.longsOutputDir !== undefined ? patch.longsOutputDir.trim() : existing.longsOutputDir,
         rulebook: patch.rulebook !== undefined ? patch.rulebook : existing.rulebook,
+        linkedPublishingAccountId: 'linkedPublishingAccountId' in patch ? (patch.linkedPublishingAccountId?.trim() || undefined) : existing.linkedPublishingAccountId,
         updatedAt: new Date().toISOString(),
       };
 
@@ -227,6 +229,22 @@ export class ChannelRepository {
       logger.info('channel_repo', 'Updated channel', { channelId });
       return updated;
     });
+  }
+
+  /**
+   * Unlinks a publishing account from all content channels.
+   * Called when a publishing account is deleted or disconnected.
+   */
+  static async unlinkPublishingAccount(publishingAccountId: string): Promise<number> {
+    const allChannels = await this.getAll();
+    let unlinkedCount = 0;
+    for (const ch of allChannels) {
+      if (ch.linkedPublishingAccountId === publishingAccountId) {
+        await this.update(ch.id, { linkedPublishingAccountId: undefined });
+        unlinkedCount++;
+      }
+    }
+    return unlinkedCount;
   }
 
   /**

@@ -67,6 +67,11 @@ import type {
   BurnImportedSubtitlesParams,
   TranscriptProgressEvent,
   TranscriptEntity,
+  PublishingAccountEntity,
+  YouTubePublishingMetadata,
+  ProjectPublishingState,
+  PublishingProgressEvent,
+  PublishingAiSuggestion,
 } from '../shared/types';
 
 const flowApi: FlowApi = {
@@ -342,6 +347,44 @@ const flowApi: FlowApi = {
     const handler = (_e: unknown, data: TranscriptProgressEvent) => callback(data);
     ipcRenderer.on('flow:transcript:progress', handler);
     return () => ipcRenderer.removeListener('flow:transcript:progress', handler);
+  },
+
+  listPublishingAccounts: (): Promise<PublishingAccountEntity[]> =>
+    ipcRenderer.invoke('publishing:listAccounts'),
+
+  getPublishingAccount: (id: string): Promise<PublishingAccountEntity | null> =>
+    ipcRenderer.invoke('publishing:getAccount', id),
+
+  connectYouTubeAccount: (params: { clientId: string; clientSecret: string }): Promise<PublishingAccountEntity> =>
+    ipcRenderer.invoke('publishing:connectYouTube', params),
+
+  disconnectPublishingAccount: (id: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('publishing:disconnectAccount', id),
+
+  linkChannelToPublishingAccount: (channelId: string, publishingAccountId?: string): Promise<ChannelEntity> =>
+    ipcRenderer.invoke('publishing:linkChannel', { channelId, publishingAccountId }),
+
+  publishProjectToYouTube: (params: {
+    projectId: string;
+    publishingAccountId?: string;
+    metadata: YouTubePublishingMetadata;
+    forceRetry?: boolean;
+  }): Promise<ProjectPublishingState> =>
+    ipcRenderer.invoke('publishing:publishProject', params),
+
+  cancelPublishing: (projectId: string): Promise<void> =>
+    ipcRenderer.invoke('publishing:cancelPublish', projectId),
+
+  getProjectPublishingState: (projectId: string): Promise<ProjectPublishingState | null> =>
+    ipcRenderer.invoke('publishing:getProjectPublishingState', projectId),
+
+  generatePublishingMetadata: (projectId: string): Promise<PublishingAiSuggestion> =>
+    ipcRenderer.invoke('publishing:generateMetadata', projectId),
+
+  onPublishingProgress: (callback: (event: PublishingProgressEvent) => void) => {
+    const handler = (_e: unknown, data: PublishingProgressEvent) => callback(data);
+    ipcRenderer.on('flow:publishing:progress', handler);
+    return () => ipcRenderer.removeListener('flow:publishing:progress', handler);
   },
 };
 

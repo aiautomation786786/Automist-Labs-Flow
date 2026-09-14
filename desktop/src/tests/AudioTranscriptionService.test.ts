@@ -186,16 +186,15 @@ describe('AudioTranscriptionService', () => {
             cancelTriggered = true;
             reject(new Error('Transcription aborted by signal'));
           });
+          // Trigger cancellation once transcription stage is actively executing
+          setTimeout(() => {
+            AudioTranscriptionService.cancelTranscription(project.projectId);
+          }, 20);
         });
       },
     });
 
     const transcribePromise = AudioTranscriptionService.transcribeProject(project.projectId);
-
-    // Trigger cancellation after 100ms
-    setTimeout(() => {
-      AudioTranscriptionService.cancelTranscription(project.projectId);
-    }, 100);
 
     await expect(transcribePromise).rejects.toThrow();
     expect(cancelTriggered).toBe(true);

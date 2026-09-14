@@ -4,6 +4,7 @@ import type {
   SupportedAspectRatio,
   MotionStyle,
   TransitionStyle,
+  PublishingAccountEntity,
 } from '../../shared/types';
 import { FolderIcon, AlertCircleIcon } from './Icons';
 
@@ -28,6 +29,15 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({
   const [outputDir, setOutputDir] = useState('');
   const [shortsOutputDir, setShortsOutputDir] = useState('');
   const [longsOutputDir, setLongsOutputDir] = useState('');
+  const [linkedPublishingAccountId, setLinkedPublishingAccountId] = useState('');
+  const [publishingAccounts, setPublishingAccounts] = useState<PublishingAccountEntity[]>([]);
+
+  // YouTube OAuth connect modal
+  const [showConnectModal, setShowConnectModal] = useState(false);
+  const [connectClientId, setConnectClientId] = useState('');
+  const [connectClientSecret, setConnectClientSecret] = useState('');
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   // Rulebook
   const [narrationStyle, setNarrationStyle] = useState('');
@@ -71,6 +81,7 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({
       setDefaultMotionStyle(initialChannel.defaultMotionStyle || 'breathe');
       setDefaultSubtitleStyle(initialChannel.defaultSubtitleStyle || 'bottom_glass');
       setDefaultTransitionStyle(initialChannel.defaultTransitionStyle || 'hard_cut');
+      setLinkedPublishingAccountId(initialChannel.linkedPublishingAccountId || '');
     } else {
       setName('');
       setDescription('');
@@ -90,9 +101,16 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({
       setDefaultMotionStyle('breathe');
       setDefaultSubtitleStyle('bottom_glass');
       setDefaultTransitionStyle('hard_cut');
+      setLinkedPublishingAccountId('');
     }
     setError(null);
     setActiveTab('general');
+
+    if (isOpen && window.flowApi?.listPublishingAccounts) {
+      window.flowApi.listPublishingAccounts().then((accs) => {
+        if (accs) setPublishingAccounts(accs);
+      }).catch(() => {});
+    }
   }, [initialChannel, isOpen]);
 
   if (!isOpen) return null;
@@ -105,6 +123,32 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({
       }
     } catch (err) {
       console.error('Failed to select directory', err);
+    }
+  };
+
+  const handleConnectYouTube = async () => {
+    if (!connectClientId.trim() || !connectClientSecret.trim()) {
+      setConnectError('Both Client ID and Client Secret are required');
+      return;
+    }
+    setIsConnecting(true);
+    setConnectError(null);
+    try {
+      if (window.flowApi?.connectYouTubeAccount) {
+        const acc = await window.flowApi.connectYouTubeAccount({
+          clientId: connectClientId.trim(),
+          clientSecret: connectClientSecret.trim(),
+        });
+        setPublishingAccounts((prev) => [...prev.filter((a) => a.id !== acc.id), acc]);
+        setLinkedPublishingAccountId(acc.id);
+        setShowConnectModal(false);
+        setConnectClientId('');
+        setConnectClientSecret('');
+      }
+    } catch (err: any) {
+      setConnectError(err.message || 'Failed to connect YouTube account');
+    } finally {
+      setIsConnecting(false);
     }
   };
 
@@ -129,6 +173,7 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({
     };
 
     try {
+      let saved: ChannelEntity | null = null;
       if (initialChannel) {
         const updated = await window.flowApi?.updateChannel?.(initialChannel.id, {
           name: name.trim(),
@@ -143,8 +188,12 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({
           defaultMotionStyle,
           defaultSubtitleStyle,
           defaultTransitionStyle,
+          linkedPublishingAccountId: linkedPublishingAccountId || undefined,
         });
-        if (updated) onSaved(updated);
+        if (updated) {
+          saved = updated;
+          onSaved(updated);
+        }
       } else {
         const created = await window.flowApi?.createChannel?.({
           name: name.trim(),
@@ -159,9 +208,21 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({
           defaultMotionStyle,
           defaultSubtitleStyle,
           defaultTransitionStyle,
+          linkedPublishingAccountId: linkedPublishingAccountId || undefined,
         });
-        if (created) onSaved(created);
+        if (created) {
+          saved = created;
+          onSaved(created);
+        }
       }
+
+      if (saved && window.flowApi?.linkChannelToPublishingAccount) {
+        await window.flowApi.linkChannelToPublishingAccount(
+          saved.id,
+          linkedPublishingAccountId || undefined
+        );
+      }
+
       onClose();
     } catch (err: any) {
       setError(err.message || 'Failed to save channel');
@@ -665,6 +726,53 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({
                     If left blank, videos are saved to Infinity Flow's default app channel storage.
                   </span>
                 </div>
+
+                {/* Linked YouTube Publishing Account */}
+                <div style={{ marginTop: '8px', paddingTop: '16px', borderTop: '1px solid var(--border-color, #333)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600 }}>
+                      Linked YouTube Publishing Account (Optional)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowConnectModal(true)}
+                      style={{
+                        fontSize: '11px',
+                        padding: '4px 10px',
+                        borderRadius: '4px',
+                        border: '1px solid rgba(59, 130, 246, 0.4)',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        color: '#60a5fa',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      + Connect YouTube Account
+                    </button>
+                  </div>
+                  <span style={{ fontSize: '11px', color: '#888', marginBottom: '8px', display: 'block' }}>
+                    When linked, videos assigned to this channel can publish directly to this YouTube channel.
+                  </span>
+                  <select
+                    value={linkedPublishingAccountId}
+                    onChange={(e) => setLinkedPublishingAccountId(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color, #444)',
+                      backgroundColor: 'rgba(0,0,0,0.3)',
+                      color: '#fff',
+                      fontSize: '13px',
+                    }}
+                  >
+                    <option value="">-- No Linked YouTube Account --</option>
+                    {publishingAccounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        YouTube: {acc.externalChannelTitle} ({acc.status === 'connected' ? 'Connected' : acc.status})
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             )}
 
@@ -874,6 +982,107 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({
           </div>
         </form>
       </div>
+
+      {/* Sub-modal: Connect YouTube Account */}
+      {showConnectModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            zIndex: 1100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+          onClick={() => !isConnecting && setShowConnectModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#1e293b',
+              border: '1px solid #334155',
+              borderRadius: '10px',
+              width: '100%',
+              maxWidth: '480px',
+              padding: '20px',
+              color: '#f8fafc',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+              <span style={{ fontSize: '16px', fontWeight: 700 }}>Connect YouTube Account</span>
+              <button
+                type="button"
+                onClick={() => !isConnecting && setShowConnectModal(false)}
+                style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '18px', cursor: 'pointer' }}
+              >
+                &times;
+              </button>
+            </div>
+
+            <p style={{ fontSize: '12px', color: '#94a3b8', lineHeight: 1.5, marginBottom: '16px' }}>
+              Provide your Google OAuth 2.0 Client credentials (configured for <em>Desktop app</em> in Google Cloud Console).
+              Credentials are encrypted at rest using Windows DPAPI.
+            </p>
+
+            {connectError && (
+              <div style={{ padding: '8px 12px', borderRadius: '6px', backgroundColor: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171', fontSize: '12px', marginBottom: '14px' }}>
+                {connectError}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>
+                  Client ID <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={connectClientId}
+                  onChange={(e) => setConnectClientId(e.target.value)}
+                  placeholder="e.g. 1234567890-xxx.apps.googleusercontent.com"
+                  disabled={isConnecting}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #475569', backgroundColor: 'rgba(0,0,0,0.3)', color: '#fff', fontSize: '12px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>
+                  Client Secret <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <input
+                  type="password"
+                  value={connectClientSecret}
+                  onChange={(e) => setConnectClientSecret(e.target.value)}
+                  placeholder="e.g. GOCSPX-xxxxxxxxxxxxxxxx"
+                  disabled={isConnecting}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #475569', backgroundColor: 'rgba(0,0,0,0.3)', color: '#fff', fontSize: '12px' }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={() => setShowConnectModal(false)}
+                disabled={isConnecting}
+                style={{ padding: '6px 14px', borderRadius: '6px', border: '1px solid #475569', background: 'transparent', color: '#cbd5e1', fontSize: '12px', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConnectYouTube}
+                disabled={isConnecting}
+                style={{ padding: '6px 16px', borderRadius: '6px', border: 'none', backgroundColor: '#dc2626', color: '#fff', fontWeight: 600, fontSize: '12px', cursor: isConnecting ? 'wait' : 'pointer' }}
+              >
+                {isConnecting ? 'Waiting for Browser Consent...' : 'Authorize in Browser'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -89,6 +89,26 @@ export class MockScriptAiProvider implements IScriptAiProvider {
       };
     }
 
+    // Check if this is a YouTube publishing metadata request
+    if (systemPrompt.includes('YouTube content strategist') || userPrompt.includes('publishing metadata')) {
+      const mockPublishingMetadata = {
+        title: 'The Secret History of the Pyramids Revealed',
+        description: 'Discover the extraordinary untold stories behind the Great Pyramids.\n\n#pyramids #history #documentary',
+        tags: ['pyramids', 'ancient-egypt', 'history', 'documentary', 'archaeology'],
+        suggestedThumbnailHook: 'WHAT THEY HID',
+      };
+
+      return {
+        text: JSON.stringify(mockPublishingMetadata, null, 2),
+        model: 'mock-ai-v1',
+        rounds: 1,
+        charsReceived: 250,
+        keyRotations: 0,
+        durationMs: Date.now() - startTime,
+        isMock: true,
+      };
+    }
+
     // Full Story Generation
     // Extract topic and scene count
     const topicMatch = userPrompt.match(/TOPIC \/ PREMISE: "([^"]+)"/i);
