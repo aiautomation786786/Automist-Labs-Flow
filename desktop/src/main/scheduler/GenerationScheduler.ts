@@ -82,6 +82,13 @@ export class GenerationScheduler {
   // ---------------------------------------------------------------------------
 
   /**
+   * Returns list of currently active project IDs.
+   */
+  getActiveProjectIds(): string[] {
+    return Array.from(this.activeProjectIds);
+  }
+
+  /**
    * Enqueues all draft or retryable slots in a project for generation.
    */
   async enqueueProject(projectId: string): Promise<GenerationJobEntity[]> {

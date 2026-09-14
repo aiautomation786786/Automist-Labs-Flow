@@ -1321,7 +1321,7 @@ if ($targetPids.Count -gt 0) {
 
     try {
       this.browser = await chromium.connectOverCDP(cdpEndpoint, {
-        timeout: 8000,
+        timeout: 25000,
       });
     } catch (err) {
       const fallbackStatus = (this.chromeProcess && this.isProcessAlive()) ? 'browser_open' : 'error';

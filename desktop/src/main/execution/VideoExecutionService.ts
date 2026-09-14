@@ -101,6 +101,11 @@ export class VideoExecutionService {
         currentAttempt.submissionState = 'generating';
         await JobRepository.updateJob(projectId, jobId, { status: 'waiting_for_result', submissionState: 'generating', attempts: updatedAttempts });
 
+        const mockDelaySec = options.mockDurationSeconds;
+        if (mockDelaySec) {
+          await new Promise((r) => setTimeout(r, mockDelaySec * 1000));
+        }
+
         fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
         fs.mkdirSync(path.dirname(thumbnailPath), { recursive: true });
         fs.writeFileSync(destinationPath, Buffer.from('TEST_VIDEO_MP4_SIMULATED_PAYLOAD'));
@@ -298,6 +303,7 @@ export class VideoExecutionService {
 
           const isFlowVideo =
             url.includes('flow-content.google/video') ||
+            url.includes('videoplayback') ||
             (url.includes('/video/') && url.includes('.mp4')) ||
             url.includes('media.video.redirect') ||
             (url.includes('/asb/') && contentType.includes('video'));
@@ -331,7 +337,7 @@ export class VideoExecutionService {
 
       // Inspect whether the page is already running an active generation
       const pageAlreadyGenerating = await page.evaluate(() => {
-        return document.querySelector('.progress-bar, flow-video-tile .generating, mat-spinner') !== null;
+        return document.querySelector('flow-video-tile .generating, flow-video-tile [style*="--progress-percent"]:not([style*="0%"]), flow-video-tile .progress-bar:not([style*="0%"]), mat-spinner:not(.mat-mdc-progress-spinner-hidden)') !== null;
       }).catch(() => false);
 
       if (pageAlreadyGenerating) {
@@ -410,26 +416,42 @@ export class VideoExecutionService {
         if (!candidateUrl) {
           const postGenMedia = await MediaDetector.detectMedia(page);
           for (const src of postGenMedia.videoSources) {
-            if (!beforeVideoSources.has(src) && src.trim().length > 0 && (src.includes('=mm,22,15') || src.includes('.mp4') || src.includes('flow-content.google/video'))) {
-              candidateUrl = src;
-              break;
+            const normalized = src.includes('/asb/') && !src.includes('=mm,22,15')
+              ? src.split('=')[0] + '=mm,22,15'
+              : src;
+            if (!beforeVideoSources.has(normalized) && !beforeVideoSources.has(src) && normalized.trim().length > 0) {
+              if (normalized.includes('=mm,22,15') || normalized.includes('.mp4') || normalized.includes('flow-content.google/video') || normalized.includes('/asb/')) {
+                candidateUrl = normalized;
+                break;
+              }
             }
           }
         }
 
         if (!candidateUrl) {
-          // Inspect tiles: check for <video> or /asb/ stream
+          // Inspect tiles: check for <video>, /asb/ stream, or tile HTML
           const tileVideoCandidate = await page.evaluate((beforeUrls) => {
+            const bSet = new Set(beforeUrls);
             const tiles = Array.from(document.querySelectorAll('flow-video-tile, [class*="video-tile"]'));
-            for (const t of tiles) {
+            for (let i = tiles.length - 1; i >= 0; i--) {
+              const t = tiles[i]!;
               const vid = t.querySelector('video');
               const vidSrc = vid?.src || (vid as HTMLMediaElement)?.currentSrc;
-              if (vidSrc && !beforeUrls.includes(vidSrc)) return vidSrc;
+              if (vidSrc && !bSet.has(vidSrc)) return vidSrc;
 
-              const img = t.querySelector('img.thumbnail, img[src*="/asb/"]') as HTMLImageElement | null;
-              if (img && img.src && img.src.includes('/asb/')) {
-                const streamUrl = img.src.split('=')[0] + '=mm,22,15';
-                if (!beforeUrls.includes(streamUrl)) return streamUrl;
+              const imgs = Array.from(t.querySelectorAll('img'));
+              for (const img of imgs) {
+                const s = img.src || img.getAttribute('src') || '';
+                if (s.includes('/asb/')) {
+                  const streamUrl = s.split('=')[0] + '=mm,22,15';
+                  if (!bSet.has(streamUrl)) return streamUrl;
+                }
+              }
+
+              const asbMatch = t.outerHTML.match(/https?:\/\/[^"'\s]+\/asb\/[a-zA-Z0-9_-]+/);
+              if (asbMatch) {
+                const streamUrl = asbMatch[0].split('=')[0] + '=mm,22,15';
+                if (!bSet.has(streamUrl)) return streamUrl;
               }
             }
             return null;
@@ -509,50 +531,113 @@ export class VideoExecutionService {
           submissionState: 'recovery_scan_pending',
         });
 
-        // 1. Check network sniffer URL first
-        if (capturedNetworkVideoUrl && !beforeVideoSources.has(capturedNetworkVideoUrl)) {
-          log.info('video_exec', `[RECOVERY SUCCESS] Recovered video from captured network response: ${capturedNetworkVideoUrl}`);
-          detectedVideoUrl = capturedNetworkVideoUrl;
-          detectedUuid = MediaDetector.parseMediaUuids([capturedNetworkVideoUrl]).uuids[0];
-        }
+        const recoveryStartTime = Date.now();
+        const maxRecoveryMs = 90000; // up to 90s active recovery window
+        let recoveryAttempt = 0;
 
-        // 2. Perform aggressive DOM recovery scan
-        if (!detectedVideoUrl) {
+        while (!detectedVideoUrl && Date.now() - recoveryStartTime < maxRecoveryMs) {
+          recoveryAttempt++;
+          log.info('video_exec', `[RECOVERY SCAN] Attempt #${recoveryAttempt} (${Math.round((Date.now() - recoveryStartTime) / 1000)}s elapsed)...`);
+
+          // 1. Check network sniffer URL first
+          if (capturedNetworkVideoUrl && !beforeVideoSources.has(capturedNetworkVideoUrl)) {
+            log.info('video_exec', `[RECOVERY SUCCESS] Recovered video from captured network response: ${capturedNetworkVideoUrl}`);
+            detectedVideoUrl = capturedNetworkVideoUrl;
+            detectedUuid = MediaDetector.parseMediaUuids([capturedNetworkVideoUrl]).uuids[0];
+            break;
+          }
+
+          // 2. Perform aggressive DOM recovery scan
           const recoveryResult = await MediaDetector.detectRecoveryVideo(page, beforeVideoSources);
           if (recoveryResult.found && recoveryResult.videoUrl) {
             detectedVideoUrl = recoveryResult.videoUrl;
             detectedUuid = recoveryResult.uuid || MediaDetector.parseMediaUuids([detectedVideoUrl]).uuids[0];
             log.info('video_exec', `[RECOVERY SUCCESS] Recovered completed Flow video artifact: ${detectedVideoUrl}`);
+            break;
           }
+
+          // 3. Fallback: Check if latest tile on canvas is ready
+          const recoveryResultLatest = await MediaDetector.detectRecoveryVideo(page, new Set());
+          if (recoveryResultLatest.found && recoveryResultLatest.videoUrl && !recoveryResultLatest.isStillGenerating) {
+            detectedVideoUrl = recoveryResultLatest.videoUrl;
+            detectedUuid = recoveryResultLatest.uuid || MediaDetector.parseMediaUuids([detectedVideoUrl]).uuids[0];
+            log.info('video_exec', `[RECOVERY SUCCESS] Recovered video from latest tile on canvas: ${detectedVideoUrl}`);
+            break;
+          }
+
+          // 4. Check all tiles in reverse DOM order
+          let latestTileMedia = await page.evaluate(() => {
+            const tiles = Array.from(document.querySelectorAll('flow-video-tile, [class*="video-tile"]'));
+            for (let i = tiles.length - 1; i >= 0; i--) {
+              const t = tiles[i]!;
+              const allImgs = Array.from(t.querySelectorAll('img'));
+              for (const img of allImgs) {
+                const s = img.src || img.getAttribute('src') || '';
+                if (s.includes('/asb/')) return s.split('=')[0] + '=mm,22,15';
+                if (s.includes('flow-content.google/video')) return s;
+              }
+              const asbMatch = t.outerHTML.match(/https?:\/\/[^"'\s]+\/asb\/[a-zA-Z0-9_-]+/);
+              if (asbMatch) return asbMatch[0].split('=')[0] + '=mm,22,15';
+
+              const vid = t.querySelector('video');
+              const vidSrc = vid?.src || (vid as HTMLMediaElement)?.currentSrc;
+              if (vidSrc && vidSrc.length > 0) return vidSrc;
+            }
+            const bodyMatch = document.body.innerHTML.match(/https?:\/\/[^"'\s]+\/asb\/[a-zA-Z0-9_-]+/);
+            if (bodyMatch) return bodyMatch[0].split('=')[0] + '=mm,22,15';
+            return null;
+          }).catch(() => null);
+
+          // 5. Fallback: Click tile to trigger stream response if needed
+          if (!latestTileMedia) {
+            try {
+              const tileLocator = page.locator('flow-video-tile, [class*="video-tile"]').first();
+              if (await tileLocator.isVisible().catch(() => false)) {
+                await tileLocator.click().catch(() => {});
+                await page.waitForTimeout(2000);
+                if (capturedNetworkVideoUrl) {
+                  latestTileMedia = capturedNetworkVideoUrl;
+                }
+              }
+            } catch {}
+          }
+
+          if (latestTileMedia) {
+            log.info('video_exec', `[RECOVERY SUCCESS] Recovered video from canvas tile/DOM: ${latestTileMedia}`);
+            detectedVideoUrl = latestTileMedia;
+            detectedUuid = MediaDetector.parseMediaUuids([latestTileMedia]).uuids[0];
+            break;
+          }
+
+          await page.waitForTimeout(3000);
         }
 
-        // 3. If video still not found, check if generation actually completed on the remote canvas
+        // If after the full recovery scan loop media was still not found:
         if (!detectedVideoUrl) {
           const isStillGenerating = await page.evaluate(() => {
-            return document.querySelector('.progress-bar, flow-video-tile .generating, mat-spinner, [aria-label*="generating" i]') !== null;
+            return document.querySelector('flow-video-tile .generating, flow-video-tile [style*="--progress-percent"]:not([style*="0%"]), flow-video-tile .progress-bar:not([style*="0%"]), mat-spinner:not(.mat-mdc-progress-spinner-hidden), [aria-label*="generating" i]') !== null;
           }).catch(() => false);
 
           const hasTiles = await page.evaluate(() => {
             return document.querySelectorAll('flow-video-tile, [class*="video-tile"]').length > 0;
           }).catch(() => false);
 
+          currentAttempt.endedAt = new Date().toISOString();
+
           if (!isStillGenerating && hasTiles) {
-            // Remote generation definitely completed on Flow canvas, but media URL was not bound
-            log.warn('video_exec', `[RECOVERY] Remote generation completed on Flow canvas, but media URL was not bound.`);
-            currentAttempt.endedAt = new Date().toISOString();
+            log.warn('video_exec', `[RECOVERY] Remote generation completed on Flow canvas, but media URL was not bound after extended recovery.`);
             currentAttempt.submissionState = 'generation_completed_remote';
             currentAttempt.outcome = 'failed';
             currentAttempt.errorClassification = 'detection_failed';
-            currentAttempt.errorMessage = `Video generation completed on Google Flow, but media URL detection timed out after ${pollTimeoutMs / 1000}s.`;
+            currentAttempt.errorMessage = `Video generation completed on Google Flow, but media URL detection timed out after ${pollTimeoutMs / 1000}s + recovery.`;
             await JobRepository.updateJob(projectId, jobId, {
               submissionState: 'generation_completed_remote',
               attempts: updatedAttempts,
             });
 
-            throw new Error(`GENERATION_COMPLETED_REMOTE: Video generation completed on Google Flow, but media output detection timed out after ${pollTimeoutMs / 1000}s.`);
+            throw new Error(`GENERATION_COMPLETED_REMOTE: Video generation completed on Google Flow, but media output detection timed out after recovery scan.`);
           }
 
-          currentAttempt.endedAt = new Date().toISOString();
           currentAttempt.submissionState = isStillGenerating ? 'generating' : 'submission_unknown';
           currentAttempt.outcome = 'timeout';
           currentAttempt.errorClassification = 'timeout';
@@ -575,7 +660,7 @@ export class VideoExecutionService {
       // Non-navigating safe download
       fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
       log.info('video_exec', `Downloading video from ${detectedVideoUrl} -> ${destinationPath}`);
-      await SafeDownloader.download(page, detectedVideoUrl, destinationPath);
+      await SafeDownloader.download(page, detectedVideoUrl, destinationPath, { timeoutMs: 90000 });
 
       // Output verification
       const fileCheck = AssetManager.verifyOutputFile(destinationPath, projectId);

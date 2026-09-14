@@ -247,6 +247,10 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
     let session = this.sessions.get(profileId);
 
     if (session && session.status !== 'stopped' && session.status !== 'error') {
+      if (session.status === 'chrome_launched' || session.status === 'connecting') {
+        appLogger.info('session_manager', 'Profile is currently starting or connecting, ignoring duplicate start call', { profileId, status: session.status });
+        return;
+      }
       if (session.status === 'browser_open' || (session.isProcessAlive() && !session.getPage())) {
         appLogger.info('session_manager', 'Connecting to existing running session', { profileId });
         await session.connectToRunningBrowser();

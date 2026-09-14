@@ -37,7 +37,7 @@ export class SafeDownloader {
     options: { timeoutMs?: number } = {},
   ): Promise<MediaDownloadResult> {
     const startTime = Date.now();
-    const timeoutMs = options.timeoutMs ?? 30000;
+    const timeoutMs = options.timeoutMs ?? 60000;
 
     // Verify page state before download: record current URL
     const originalUrl = page.url();
@@ -60,17 +60,29 @@ export class SafeDownloader {
 
     try {
       // Execute the request via the page's APIRequestContext (shares cookies, doesn't navigate)
-      const response = await page.request.get(url, {
-        timeout: timeoutMs,
-        headers: {
-          // Accept typical media types
-          Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-        },
-      });
+      let response: import('playwright').APIResponse | null = null;
+      let lastErr: Error | null = null;
 
-      if (!response.ok()) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          response = await page.request.get(url, {
+            timeout: timeoutMs,
+            headers: {
+              // Accept video and image media types
+              Accept: 'video/mp4,video/*,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+            },
+          });
+          if (response.ok()) break;
+        } catch (fetchErr) {
+          lastErr = fetchErr as Error;
+          if (attempt < 2) await page.waitForTimeout(1500);
+        }
+      }
+
+      if (!response || !response.ok()) {
+        if (lastErr) throw lastErr;
         throw new Error(
-          `Download failed with HTTP ${response.status()}: ${response.statusText()} for URL: ${url}`
+          `Download failed with HTTP ${response?.status()}: ${response?.statusText()} for URL: ${url}`
         );
       }
 

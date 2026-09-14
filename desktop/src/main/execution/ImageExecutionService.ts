@@ -13,6 +13,8 @@
  *  7. Exact Slot Mapping: Updates the exact slotIndex in ProjectRepository. Never reorders slots.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import type { GenerationJobEntity, SupportedAspectRatio } from '../../shared/types';
 import { ProfileWorker } from '../scheduler/ProfileWorker';
 import { ProjectRepository } from '../storage/ProjectRepository';
@@ -27,6 +29,8 @@ import { ProgressEstimator } from './ProgressEstimator';
 import { FfmpegResolver } from '../utils/FfmpegResolver';
 
 export interface ExecutionOptions {
+  mockMode?: boolean;
+  mockDurationSeconds?: number;
   triggerGenerationClick?: boolean; // Default true; false for dry-run/mock tests
   pollTimeoutMs?: number;           // Timeout waiting for generation
   mockDeltaUuids?: string[];        // For controlled testing of delta matching & ambiguity
@@ -43,6 +47,7 @@ export class ImageExecutionService {
     options: ExecutionOptions = {},
   ): Promise<void> {
     const { projectId, slotIndex, promptId, jobId } = job;
+    const isMock = options.mockMode ?? false;
     const triggerClick = options.triggerGenerationClick ?? true;
     const pollTimeoutMs = options.pollTimeoutMs ?? 120000;
     const jobStartTime = new Date().toISOString();
@@ -50,12 +55,53 @@ export class ImageExecutionService {
     let generationClickTime = jobStartTime;
 
     const log = new AppLogger({ profileId: worker.profileId, mirrorToStderr: false });
-    log.info('image_exec', `Starting image execution for Job ${jobId} (Slot ${slotIndex})`);
+    log.info('image_exec', `Starting image execution for Job ${jobId} (Slot ${slotIndex}) [mock=${isMock}]`);
     let estimator: ProgressEstimator | null = null;
     let jobPage: import('playwright').Page | null = null;
     let automation = worker.automation;
 
     try {
+      if (isMock) {
+        await this.updateJobStatus(projectId, jobId, 'starting', 'Preparing mock image generation');
+        await this.updateJobStatus(projectId, jobId, 'configuring', 'Configuring mock settings');
+        await this.updateJobStatus(projectId, jobId, 'generating', 'Simulating generation');
+        const mockDuration = options.mockDurationSeconds;
+        if (mockDuration) {
+          await new Promise((r) => setTimeout(r, mockDuration * 1000));
+        }
+        const destinationPath = AssetManager.getImageDestinationPath(projectId, slotIndex, promptId, jobId);
+        const thumbnailPath = AssetManager.getThumbnailDestinationPath(projectId, slotIndex, promptId, jobId);
+        fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+        fs.mkdirSync(path.dirname(thumbnailPath), { recursive: true });
+        fs.writeFileSync(destinationPath, Buffer.from('SIMULATED_FLOW_IMAGE_PNG_DATA'));
+        fs.writeFileSync(thumbnailPath, Buffer.from('SIMULATED_FLOW_THUMBNAIL_DATA'));
+        await this.updateJobStatus(projectId, jobId, 'downloading', 'Downloading mock image');
+        const completedJob = await JobRepository.updateJob(projectId, jobId, {
+          status: 'completed',
+          submissionState: 'completed',
+          outputPath: destinationPath,
+          thumbnailPath,
+        });
+        await ProjectRepository.updateSlot(projectId, slotIndex, {
+          status: 'completed',
+          result: {
+            assetId: `flow_image_${promptId}_${jobId}`,
+            mediaPath: destinationPath,
+            thumbnailPath,
+            provider: 'flow',
+            providerModel: 'Nano Banana 2',
+            modelUsed: 'Nano Banana 2',
+            ratioUsed: '16:9',
+            completedAt: new Date().toISOString(),
+            fileSizeBytes: 1024,
+            mimeType: 'image/png',
+          },
+        });
+        generationEventBus.emitTyped('job:completed', completedJob);
+        log.info('image_exec', `Mock completed image job ${jobId} -> Slot ${slotIndex}`);
+        return;
+      }
+
       // Step 1: Transition job status to starting
       await this.updateJobStatus(projectId, jobId, 'starting', 'Preparing browser for generation');
 

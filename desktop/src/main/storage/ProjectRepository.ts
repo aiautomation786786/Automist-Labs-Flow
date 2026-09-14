@@ -88,21 +88,21 @@ export class ProjectRepository {
     }));
 
     const settings: ProjectSettings = {
-      provider: params.provider || 'flow',
-      imageRatio: params.imageRatio ?? '16:9',
-      videoRatio: params.videoRatio ?? '16:9',
-      geminiAspectRatio: params.geminiAspectRatio ?? (params.videoRatio === '9:16' ? '9:16' : '16:9'),
-      processingOrder: params.processingOrder ?? 'images_first',
-      autoRetry: params.autoRetry ?? true,
-      maxRetries: params.maxRetries ?? 2,
-      imageDownloadQuality: params.imageDownloadQuality ?? 'original',
-      videoDownloadQuality: params.videoDownloadQuality ?? 'original',
-      generationMode: params.generationMode ?? 'custom',
-      imageModel: params.imageModel ?? 'Nano Banana 2',
-      videoModel: params.videoModel,
-      videoResolution: params.videoResolution,
-      videoDuration: params.videoDuration,
-      selectedProfileIds: params.selectedProfileIds,
+      provider: params.provider || (params as any).settings?.provider || 'flow',
+      imageRatio: params.imageRatio ?? (params as any).settings?.imageRatio ?? '16:9',
+      videoRatio: params.videoRatio ?? (params as any).settings?.videoRatio ?? '16:9',
+      geminiAspectRatio: params.geminiAspectRatio ?? (params as any).settings?.geminiAspectRatio ?? (params.videoRatio === '9:16' ? '9:16' : '16:9'),
+      processingOrder: params.processingOrder ?? (params as any).settings?.processingOrder ?? 'images_first',
+      autoRetry: params.autoRetry ?? (params as any).settings?.autoRetry ?? true,
+      maxRetries: params.maxRetries ?? (params as any).settings?.maxRetries ?? 2,
+      imageDownloadQuality: params.imageDownloadQuality ?? (params as any).settings?.imageDownloadQuality ?? 'original',
+      videoDownloadQuality: params.videoDownloadQuality ?? (params as any).settings?.videoDownloadQuality ?? 'original',
+      generationMode: params.generationMode ?? (params as any).settings?.generationMode ?? 'custom',
+      imageModel: params.imageModel ?? (params as any).settings?.imageModel ?? 'Nano Banana 2',
+      videoModel: params.videoModel ?? (params as any).settings?.videoModel,
+      videoResolution: params.videoResolution ?? (params as any).settings?.videoResolution,
+      videoDuration: params.videoDuration ?? (params as any).settings?.videoDuration,
+      selectedProfileIds: params.selectedProfileIds ?? (params as any).settings?.selectedProfileIds,
     };
 
     const project: ProjectEntity = {

@@ -115,19 +115,35 @@ export class MediaDetector {
         // 3. Scan Google Flow dedicated flow-video-tile custom elements
         const videoTiles = Array.from(document.querySelectorAll('flow-video-tile, [class*="video-tile"]'));
         videoTiles.forEach((tile) => {
+          // If the tile is still actively generating, DO NOT treat it as ready video media!
+          const isActivelyGenerating =
+            tile.querySelector('.generating') !== null ||
+            tile.querySelector('[style*="--progress-percent"]:not([style*="0%"])') !== null ||
+            tile.querySelector('.progress-bar:not([style*="0%"])') !== null ||
+            tile.querySelector('mat-spinner:not(.mat-mdc-progress-spinner-hidden)') !== null;
+          if (isActivelyGenerating) return;
+
           const tileVid = tile.querySelector('video');
           if (tileVid) {
             const s = tileVid.src || (tileVid as HTMLMediaElement).currentSrc || tileVid.getAttribute('src') || '';
             if (s && !videoSources.includes(s)) videoSources.push(s);
           }
-          const tileImg = tile.querySelector('img');
-          if (tileImg && tileImg.src) {
-            if (tileImg.src.includes('/asb/')) {
-              const vidUrl = tileImg.src.split('=')[0] + '=mm,22,15';
+          const allTileImgs = Array.from(tile.querySelectorAll('img'));
+          allTileImgs.forEach((tileImg) => {
+            const src = tileImg.src || tileImg.getAttribute('src') || '';
+            if (src.includes('/asb/')) {
+              const vidUrl = src.split('=')[0] + '=mm,22,15';
               if (!videoSources.includes(vidUrl)) videoSources.push(vidUrl);
-            } else if (tileImg.src.includes('flow-content.google/image/') || tileImg.src.includes('flow-content.google/video/')) {
-              if (!videoSources.includes(tileImg.src)) videoSources.push(tileImg.src);
+            } else if (src.includes('flow-content.google/video/')) {
+              if (!videoSources.includes(src)) videoSources.push(src);
             }
+          });
+
+          // Also scan outerHTML regex for /asb/ media reference
+          const asbMatch = tile.outerHTML.match(/https?:\/\/[^"'\s]+\/asb\/[a-zA-Z0-9_-]+/);
+          if (asbMatch) {
+            const vidUrl = asbMatch[0].split('=')[0] + '=mm,22,15';
+            if (!videoSources.includes(vidUrl)) videoSources.push(vidUrl);
           }
         });
 
@@ -239,7 +255,7 @@ export class MediaDetector {
 
         // Check if any progress bar / spinner is still animating
         const isStillGenerating = document.querySelector(
-          '.progress-bar, flow-video-tile .generating, mat-spinner, [aria-label*="generating" i]'
+          'flow-video-tile .generating, flow-video-tile [style*="--progress-percent"]:not([style*="0%"]), flow-video-tile .progress-bar:not([style*="0%"]), mat-spinner:not(.mat-mdc-progress-spinner-hidden), [aria-label*="generating" i]'
         ) !== null;
 
         // Strategy 1: Check all Flow video tiles in reverse DOM order (newest first)
@@ -252,14 +268,22 @@ export class MediaDetector {
             candidates.push(vidSrc);
           }
 
-          const img = tile.querySelector('img.thumbnail, img[src*="/asb/"], img[src*="flow-content.google"]') as HTMLImageElement | null;
-          if (img && img.src) {
-            if (img.src.includes('/asb/')) {
-              const streamUrl = img.src.split('=')[0] + '=mm,22,15';
+          const allTileImgs = Array.from(tile.querySelectorAll('img'));
+          for (const img of allTileImgs) {
+            const s = img.src || img.getAttribute('src') || '';
+            if (s.includes('/asb/')) {
+              const streamUrl = s.split('=')[0] + '=mm,22,15';
               if (!bSet.has(streamUrl)) candidates.push(streamUrl);
-            } else if (img.src.includes('flow-content.google/video')) {
-              if (!bSet.has(img.src)) candidates.push(img.src);
+            } else if (s.includes('flow-content.google/video')) {
+              if (!bSet.has(s)) candidates.push(s);
             }
+          }
+
+          // Also check outerHTML regex for /asb/ stream in the tile
+          const asbMatch = tile.outerHTML.match(/https?:\/\/[^"'\s]+\/asb\/[a-zA-Z0-9_-]+/);
+          if (asbMatch) {
+            const streamUrl = asbMatch[0].split('=')[0] + '=mm,22,15';
+            if (!bSet.has(streamUrl)) candidates.push(streamUrl);
           }
 
           // Check download anchors inside tile
