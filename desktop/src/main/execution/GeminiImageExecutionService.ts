@@ -162,18 +162,11 @@ export class GeminiImageExecutionService {
 
       // --- LIVE EXECUTION MODE ---
       jobPage = null;
-      if (typeof worker.session?.createJobPage === 'function') {
-        try {
-          jobPage = await worker.session.createJobPage('https://gemini.google.com/app');
-          log.info('gemini_image_exec', 'Dedicated job page instantiated for Gemini image generation');
-        } catch (tabErr) {
-          log.warn('gemini_image_exec', `Could not create dedicated tab, using default session page: ${(tabErr as Error).message}`);
-        }
+      if (!worker.session || typeof worker.session.createJobPage !== 'function') {
+        throw new Error(`Profile ${worker.profileId} does not support dedicated job pages.`);
       }
-
-      if (!jobPage) {
-        throw new Error('Failed to create an isolated job page for Gemini image generation.');
-      }
+      jobPage = await worker.session.createJobPage(jobId, 'https://gemini.google.com/app');
+      log.info('gemini_image_exec', `Dedicated job page instantiated for Gemini image generation (job ${jobId})`);
 
       const page = jobPage;
 
@@ -386,11 +379,11 @@ export class GeminiImageExecutionService {
       throw err;
     } finally {
       estimator?.stop();
-      if (jobPage && typeof worker.session?.closeJobPage === 'function') {
+      if (typeof worker.session?.closeJobPage === 'function') {
         try {
-          await worker.session.closeJobPage(jobPage);
+          await worker.session.closeJobPage(jobId);
         } catch {}
-      } else if (jobPage) {
+      } else if (jobPage && !jobPage.isClosed()) {
         try {
           await jobPage.close();
           log.info('gemini_image_exec', 'Closed dedicated Gemini image job tab');

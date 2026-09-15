@@ -181,13 +181,9 @@ export class VideoExecutionService {
       jobPage = null;
       let automation = worker.automation;
       if (typeof worker.session?.createJobPage === 'function') {
-        try {
-          jobPage = await worker.session.createJobPage();
-          automation = new FlowAutomationSession(worker.session, jobPage);
-          log.info('video_exec', 'Dedicated job page instantiated for video job tab lifecycle');
-        } catch (tabErr) {
-          log.warn('video_exec', `Could not create dedicated tab, using default session page: ${(tabErr as Error).message}`);
-        }
+        jobPage = await worker.session.createJobPage(jobId);
+        automation = new FlowAutomationSession(worker.session, jobPage);
+        log.info('video_exec', `Dedicated job page instantiated for video job ${jobId}`);
       }
       const page = automation.getPage();
 
@@ -780,14 +776,16 @@ export class VideoExecutionService {
 
       throw err;
     } finally {
-      if (jobPage && typeof worker.session?.closeJobPage === 'function') {
+      if (typeof worker.session?.closeJobPage === 'function') {
         try {
-          await worker.session.closeJobPage(jobPage);
+          await worker.session.closeJobPage(jobId);
         } catch (closeErr) {
           log.debug('video_exec', `Error closing video job page: ${(closeErr as Error).message}`);
         }
+      } else if (jobPage && !jobPage.isClosed()) {
+        await jobPage.close().catch(() => {});
       }
-      // Release only THIS job's slot (worker may still hold other concurrent jobs)
+      // Release only THIS job's slot AFTER tab closure
       worker.release(jobId);
       generationEventBus.emitTyped('worker:available', worker.profileId);
     }

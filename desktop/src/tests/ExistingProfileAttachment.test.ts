@@ -187,7 +187,7 @@ describe('Phase 5.4: Existing Chrome Profile Attachment & Safe State Detection',
   });
 
   describe('ProfileSession Existing Browser Safety & Isolation', () => {
-    it('throws error and does not launch duplicate browser when open_not_attachable', async () => {
+    it('launches isolated dedicated instance with seeded session when open_not_attachable', async () => {
       const config: ProfileConfig = {
         profileId: 'prof_existing_test',
         displayName: 'AI Automation',
@@ -202,21 +202,26 @@ describe('Phase 5.4: Existing Chrome Profile Attachment & Safe State Detection',
       };
 
       const session = new ProfileSession(config);
-      session.on('error', () => {}); // Attach listener to prevent unhandled EventEmitter error
 
       vi.spyOn(LocalChromeProfileDiscoverer, 'detectProfileState').mockResolvedValue({
         state: 'open_not_attachable',
         profileDirectory: 'Default',
         userDataDir: tempDir,
         pids: [1234],
-        details: 'AI Automation profile is already open, but this Chrome session does not expose an automation connection. Please enable/launch this profile through the app\'s supported connection mode, or close only this profile and retry.',
+        details: 'AI Automation profile is running without automation endpoint',
       });
 
-      const launchSpy = vi.spyOn(session as any, 'launchChrome');
+      const seedSpy = vi.spyOn(LocalChromeProfileDiscoverer, 'seedDedicatedUserDataDir').mockReturnValue(true);
+      const launchSpy = vi.spyOn(session as any, 'launchChrome').mockResolvedValue(undefined);
+      const connectSpy = vi.spyOn(session as any, 'connectPlaywright').mockResolvedValue(undefined);
+      const authSpy = vi.spyOn(session as any, 'checkAuth').mockResolvedValue(undefined);
 
-      await expect(session.start(false)).rejects.toThrow(/does not expose an automation connection/);
-      expect(launchSpy).not.toHaveBeenCalled();
-      expect(session.status).toBe('error');
+      await session.start(false);
+
+      expect(seedSpy).toHaveBeenCalledWith(tempDir, 'Default', tempDir);
+      expect(launchSpy).toHaveBeenCalledWith(false, true);
+      expect(connectSpy).toHaveBeenCalled();
+      expect(authSpy).toHaveBeenCalled();
     });
 
     it('attaches over CDP and creates a dedicated new tab without killing user browser', async () => {

@@ -337,6 +337,17 @@ export class LocalChromeProfileDiscoverer {
     }
 
     try {
+      // Lightweight fast-path: check if any chrome.exe process exists without launching PowerShell
+      try {
+        const tasklist = execSync('tasklist /fi "imagename eq chrome.exe" /nh', {
+          stdio: ['ignore', 'pipe', 'ignore'],
+          timeout: 2000,
+        }).toString();
+        if (!tasklist.toLowerCase().includes('chrome.exe')) {
+          return { inUse: false, pids: [] };
+        }
+      } catch {}
+
       const psCommand = `Get-CimInstance Win32_Process -Filter "name = 'chrome.exe'" | Where-Object { $_.CommandLine -notlike "*--type=*" } | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress`;
       const encoded = Buffer.from(psCommand, 'utf16le').toString('base64');
       const raw = execSync(`powershell.exe -NoProfile -EncodedCommand ${encoded}`, {
@@ -651,6 +662,72 @@ export class LocalChromeProfileDiscoverer {
         resolve(false);
       });
     });
+  }
+
+  /**
+   * Seeds an isolated dedicated Chrome user-data directory from an existing local Chrome profile.
+   * Copies essential session credentials (Cookies, Preferences, Login Data, Web Data, Local State)
+   * into the dedicated target directory so the user's authenticated Google session is preserved
+   * without locking, modifying, or competing with the running personal Chrome instance.
+   */
+  static seedDedicatedUserDataDir(
+    sourceUserDataDir: string,
+    sourceProfileDir: string,
+    targetUserDataDir: string
+  ): boolean {
+    try {
+      const srcFullProfile = path.join(sourceUserDataDir, sourceProfileDir);
+      if (!fs.existsSync(srcFullProfile)) return false;
+
+      const targetDefault = path.join(targetUserDataDir, 'Default');
+      fs.mkdirSync(targetDefault, { recursive: true });
+
+      // 1. Copy root Local State if present
+      const srcLocalState = path.join(sourceUserDataDir, 'Local State');
+      const targetLocalState = path.join(targetUserDataDir, 'Local State');
+      if (fs.existsSync(srcLocalState) && !fs.existsSync(targetLocalState)) {
+        try {
+          fs.copyFileSync(srcLocalState, targetLocalState);
+        } catch {
+          // Ignore busy
+        }
+      }
+
+      // 2. Copy profile files
+      const items = ['Preferences', 'Secure Preferences', 'Login Data', 'Login Data For Account', 'Web Data'];
+      for (const item of items) {
+        const srcPath = path.join(srcFullProfile, item);
+        const targetPath = path.join(targetDefault, item);
+        if (fs.existsSync(srcPath) && !fs.existsSync(targetPath)) {
+          try {
+            fs.copyFileSync(srcPath, targetPath);
+          } catch {
+            // Ignore if busy/locked
+          }
+        }
+      }
+
+      // 3. Copy Network directory (Cookies)
+      const srcNetwork = path.join(srcFullProfile, 'Network');
+      const targetNetwork = path.join(targetDefault, 'Network');
+      if (fs.existsSync(srcNetwork) && !fs.existsSync(path.join(targetNetwork, 'Cookies'))) {
+        fs.mkdirSync(targetNetwork, { recursive: true });
+        const files = fs.readdirSync(srcNetwork);
+        for (const f of files) {
+          try {
+            fs.copyFileSync(path.join(srcNetwork, f), path.join(targetNetwork, f));
+          } catch {
+            // Ignore busy files
+          }
+        }
+      }
+
+      appLogger.info('chrome_discoverer', `Seeded dedicated profile data from ${sourceProfileDir} to ${targetUserDataDir}`);
+      return true;
+    } catch (err) {
+      appLogger.warn('chrome_discoverer', `Could not seed dedicated profile from ${sourceProfileDir}: ${(err as Error).message}`);
+      return false;
+    }
   }
 }
 

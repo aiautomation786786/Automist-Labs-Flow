@@ -17,7 +17,7 @@
 
 import { EventEmitter } from 'events';
 import * as fs from 'fs';
-import { spawn, execSync, exec, type ChildProcess } from 'child_process';
+import { spawn, execSync, type ChildProcess } from 'child_process';
 import * as http from 'http';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 
@@ -41,7 +41,7 @@ const CDP_PROBE_MAX_ATTEMPTS = 20;
 /** Milliseconds between CDP probe attempts. */
 const CDP_PROBE_INTERVAL_MS = 1000;
 /** How long to wait for a CDP probe response before moving to next attempt. */
-const CDP_PROBE_TIMEOUT_MS = 500;
+const CDP_PROBE_TIMEOUT_MS = 2000;
 
 /** Chrome startup flags. Chosen for:
  *  - Anti-detection: navigator.webdriver is hidden, automation banners suppressed.
@@ -65,6 +65,7 @@ const CHROME_FLAGS_BASE: string[] = [
   '--metrics-recording-only',
   '--safebrowsing-disable-auto-update',
   '--disable-component-update',       // Prevent Chrome from updating mid-session
+  '--disable-quic',                   // Prevent net::ERR_QUIC_PROTOCOL_ERROR
 ];
 
 // Google Flow URL (English by default; may be updated after locale detection)
@@ -101,13 +102,28 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
+  private mainPage: Page | null = null;
+  private activeJobPages: Map<string, { page: Page; jobId: string; createdAt: number }> = new Map();
   private automationSession: FlowAutomationSession | null = null;
   private isExistingBrowser = false;
+  private isRecoveringMainPage = false;
   private postLoginWatcherTimer: NodeJS.Timeout | null = null;
 
   // ---- Auth / locale (discovered at runtime) ------------------------------
   private detectedEmail: string | null = null;
   private flowUrl: string | null = null;
+  private isConnectingPromise: Promise<Page> | null = null;
+  private jobPageCreationMutex: Promise<void> = Promise.resolve();
+
+  private acquireJobPageCreationLock(): Promise<() => void> {
+    let releaseLock: () => void;
+    const nextLock = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const currentLock = this.jobPageCreationMutex;
+    this.jobPageCreationMutex = this.jobPageCreationMutex.then(() => nextLock);
+    return currentLock.then(() => releaseLock);
+  }
 
   // ---------------------------------------------------------------------------
   // Constructor
@@ -170,23 +186,13 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
           preferredCdpPort: this.config.cdpPort,
         });
 
-        if (detection.state === 'open_not_attachable') {
-          // Case B: Profile is open but NOT automation-connectable
-          // Do NOT kill or close it. Do NOT launch another browser against the same normal profile.
-          this.log.warn('session', 'Existing profile is running without automation endpoint', {
-            profile: detection.profileDisplayName || detection.profileDirectory,
-            pids: detection.pids,
-          });
-          throw new Error(detection.details);
-        }
-
         if (detection.state === 'open_and_attachable') {
-          // Case A: Profile is already open and automation-connectable
+          // Case A: Profile is already open and automation-connectable via CDP
           this.isExistingBrowser = true;
           if (detection.cdpPort) {
             this.config.cdpPort = detection.cdpPort;
           }
-          this.log.info('session', 'Attaching to running Chrome profile', {
+          this.log.info('session', 'Attaching to running Chrome profile with CDP', {
             profile: detection.profileDisplayName || detection.profileDirectory,
             cdpPort: this.config.cdpPort,
           });
@@ -195,7 +201,24 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
           return;
         }
 
-        // Case C: Profile is not open. Launch Chrome session targeting this local profile.
+        // Case B / C: Profile is running without CDP endpoint or not running.
+        // We preserve/reuse the authenticated Google session by seeding our isolated dedicated
+        // user-data directory and launching a dedicated automation instance on its assigned CDP port.
+        // The user's personal Chrome session is never killed, hijacked, or locked.
+        this.log.info('session', 'Launching dedicated automation Chrome with seeded profile session', {
+          profile: detection.profileDisplayName || detection.profileDirectory,
+          sourceState: detection.state,
+          cdpPort: this.config.cdpPort,
+        });
+
+        if (this.config.localUserDataDir && this.config.localProfileDirectory) {
+          LocalChromeProfileDiscoverer.seedDedicatedUserDataDir(
+            this.config.localUserDataDir,
+            this.config.localProfileDirectory,
+            this.config.userDataDir
+          );
+        }
+
         this.isExistingBrowser = false;
         await this.launchChrome(headless, background);
         await this.connectPlaywright();
@@ -376,16 +399,21 @@ if ($targetPids.Count -gt 0) {
     }
 
     const { chromePath, cdpPort } = this.config;
-    const userDataDir = (this.config.connectionMode === 'existing_chrome' && this.config.localUserDataDir)
-      ? this.config.localUserDataDir
-      : this.config.userDataDir;
-    const chromeProfileName = (this.config.connectionMode === 'existing_chrome' && this.config.localProfileDirectory)
-      ? this.config.localProfileDirectory
-      : (this.config.chromeProfileName || 'Default');
+    const userDataDir = this.config.userDataDir;
+    const chromeProfileName = this.config.chromeProfileName || 'Default';
 
     // Verify Chrome executable exists
     if (!fs.existsSync(chromePath)) {
       throw new Error(`Chrome not found at: ${chromePath}`);
+    }
+
+    // Seed session data if needed
+    if (this.config.connectionMode === 'existing_chrome' && this.config.localUserDataDir && this.config.localProfileDirectory) {
+      LocalChromeProfileDiscoverer.seedDedicatedUserDataDir(
+        this.config.localUserDataDir,
+        this.config.localProfileDirectory,
+        userDataDir
+      );
     }
 
     // Ensure the dedicated user-data directory exists (creates on first run)
@@ -463,41 +491,10 @@ if ($targetPids.Count -gt 0) {
         return;
       }
 
-      if (this._status === 'ready') {
-        this.log.info('chrome_exit', 'Chrome login window closed; profile already authenticated and ready', { code, signal, pid });
-        // Automatically restart in background/offscreen mode so session is ready for automation immediately
-        try {
-          await this.start({ headless: false, background: true });
-        } catch (err) {
-          this.log.warn('chrome_exit', `Background reconnect notice: ${(err as Error).message}`);
-        }
-        return;
-      }
-
-      // Check if user authenticated Google credentials on disk before closing Chrome
-      const localEmail = LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
-        this.config.userDataDir,
-        this.config.chromeProfileName || 'Default'
-      );
-
-      if (localEmail) {
-        this.log.info('chrome_exit', `Chrome closed with authenticated credentials on disk (${localEmail}). Verifying Flow in background...`);
-        this.detectedEmail = localEmail;
-        try {
-          // Launch background session to verify Flow authentication against labs.google
-          await this.start({ headless: false, background: true });
-        } catch (err) {
-          this.log.warn('chrome_exit', `Background verification notice: ${(err as Error).message}`);
-          this.setStatus('auth_required');
-          this.emit('status_change', this.getSnapshot());
-        }
-      } else {
-        // User closed Chrome without signing in
-        this.log.info('chrome_exit', 'Chrome login window closed without completed credentials', { code, signal, pid });
-        this.setStatus('auth_required');
-        this.errorMessage = null;
-        this.emit('status_change', this.getSnapshot());
-      }
+      this.log.info('chrome_exit', 'Dedicated Chrome process closed by user/system', { code, signal, pid });
+      this.setStatus('stopped');
+      this.errorMessage = null;
+      this.emit('status_change', this.getSnapshot());
     });
 
     this.startPostLoginWatcher();
@@ -612,6 +609,24 @@ if ($targetPids.Count -gt 0) {
    * @returns The active Flow Page.
    */
   async connectToRunningBrowser(timeoutMs = 15000): Promise<Page> {
+    // Fast path: if already connected with a valid page, return it immediately
+    if (this.browser && this.browser.isConnected() && this.page && !this.page.isClosed()) {
+      return this.page;
+    }
+
+    if (this.isConnectingPromise) {
+      return this.isConnectingPromise;
+    }
+
+    this.isConnectingPromise = this._connectToRunningBrowserInternal(timeoutMs);
+    try {
+      return await this.isConnectingPromise;
+    } finally {
+      this.isConnectingPromise = null;
+    }
+  }
+
+  private async _connectToRunningBrowserInternal(timeoutMs = 15000): Promise<Page> {
     const { cdpPort, flowUrlLocale } = this.config;
 
     // 1. Check if known process is explicitly dead
@@ -620,6 +635,7 @@ if ($targetPids.Count -gt 0) {
     }
 
     // 2. Poll CDP endpoint until ready or timeout (polling every 300ms)
+    this.setStatus('waiting_for_cdp');
     const startTime = Date.now();
     let portReady = false;
     while (Date.now() - startTime < timeoutMs) {
@@ -633,20 +649,19 @@ if ($targetPids.Count -gt 0) {
     }
 
     if (!portReady) {
-      throw new Error(
-        `Dedicated Chrome is running, but its automation endpoint (port ${cdpPort}) is not available yet.`
-      );
+      this.setStatus('connection_error');
+      this.errorMessage = `Dedicated Chrome is running, but its automation endpoint (port ${cdpPort}) is not available yet.`;
+      throw new Error(this.errorMessage);
     }
 
     // 3. Connect Playwright over CDP if not already connected
-    const previousStatus = this._status;
     const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
 
     // Verify existing browser connection if already held
     if (this.browser && this.browser.isConnected()) {
       try {
         const testContexts = this.browser.contexts();
-        if (testContexts.length > 0 && testContexts[0].pages().length > 0) {
+        if (testContexts.length > 0) {
           this.log.debug('reconnect', 'Reusing existing healthy Playwright connection');
         }
       } catch {
@@ -655,6 +670,7 @@ if ($targetPids.Count -gt 0) {
         this.browser = null;
         this.context = null;
         this.page = null;
+        this.mainPage = null;
       }
     }
 
@@ -663,15 +679,15 @@ if ($targetPids.Count -gt 0) {
       this.log.info('reconnect', 'Connecting Playwright to running browser over CDP', { endpoint: cdpEndpoint });
       try {
         this.browser = await chromium.connectOverCDP(cdpEndpoint, { timeout: 25000 });
+        this.attachBrowserListeners(this.browser);
       } catch (err) {
-        // Restore status instead of leaving stuck in 'connecting'
-        const fallbackStatus = (this.chromeProcess && this.isProcessAlive()) ? 'browser_open' : (previousStatus !== 'connecting' ? previousStatus : 'created');
-        this.setStatus(fallbackStatus);
-        throw new Error(
-          `Failed to connect Playwright to running Chrome on port ${cdpPort}: ${(err as Error).message}`
-        );
+        this.setStatus('connection_error');
+        this.errorMessage = `Failed to connect Playwright to running Chrome on port ${cdpPort}: ${(err as Error).message}`;
+        throw new Error(this.errorMessage);
       }
     }
+
+    this.setStatus('creating_page');
 
     const contexts = this.browser.contexts();
     this.context = contexts[0] ?? await this.browser.newContext();
@@ -742,7 +758,24 @@ if ($targetPids.Count -gt 0) {
       });
     }
 
+    this.mainPage = flowPage;
     this.page = flowPage;
+    this.attachMainPageListeners(flowPage);
+
+    // Prune extraneous restored tabs for dedicated profiles to enforce the single-tab idle invariant
+    if (this.config.connectionMode !== 'existing_chrome') {
+      for (const p of allPages) {
+        if (p !== flowPage && !this.isJobPage(p)) {
+          try {
+            await p.close();
+            this.log.info('tab_lifecycle', 'Closed extraneous restored tab to preserve single-tab idle invariant');
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    }
+
     this.setStatus('connected');
     if (this.config.connectionMode === 'existing_chrome') {
       this.isExistingBrowser = true;
@@ -786,13 +819,28 @@ if ($targetPids.Count -gt 0) {
       }
     }
 
-    // If page is on an unexpected URL (e.g. blank page), navigate to Flow
-    if (result.state === 'unknown' && !currentUrl.includes('labs.google') && !currentUrl.includes('flow.google.com') && !currentUrl.includes('accounts.google')) {
-      const targetUrl = this.config.flowUrlLocale
-        ? `https://labs.google${this.config.flowUrlLocale}`
-        : FLOW_BASE_URL;
-      this.log.info('auth_verify', 'Page not on Flow or Google login; navigating to Flow URL', { targetUrl });
-      result = await FlowAuthDetector.navigateAndCheck(page, targetUrl, this.profileId);
+    // If page is not on Flow domain, check if another open tab has Flow or navigate current tab to Flow
+    if (!currentUrl.includes('labs.google') && !currentUrl.includes('flow.google.com')) {
+      const flowTab = pages.find((p) => {
+        try {
+          const u = p.url();
+          return u.includes('labs.google') || u.includes('flow.google.com');
+        } catch {
+          return false;
+        }
+      });
+      if (flowTab) {
+        page = flowTab;
+        this.page = flowTab;
+        this.mainPage = flowTab;
+        result = await FlowAuthDetector.check(page, this.profileId);
+      } else {
+        const targetUrl = this.config.flowUrlLocale
+          ? `https://labs.google${this.config.flowUrlLocale}`
+          : FLOW_BASE_URL;
+        this.log.info('auth_verify', 'Navigating to Flow URL to verify authentication', { targetUrl });
+        result = await FlowAuthDetector.navigateAndCheck(page, targetUrl, this.profileId);
+      }
     }
 
     this.flowUrl = result.url;
@@ -916,91 +964,199 @@ if ($targetPids.Count -gt 0) {
       connectionMode: this.config.connectionMode ?? 'dedicated_flow_browser',
       connectionState,
       tabCount: this.context ? this.context.pages().length : 0,
-      flowTabUrl: this.page ? this.page.url() : null,
+      flowTabUrl: this.page && !this.page.isClosed() ? this.page.url() : null,
       localProfileDirectory: this.config.localProfileDirectory,
       chromePid: this.chromeProcess?.pid,
     };
   }
 
-  /** Returns the active Playwright Page, or null if not connected. */
+  /** Returns the active Playwright Page, or null if not connected or closed. */
   getPage(): Page | null {
-    return this.page;
+    const isAlive = (p: Page | null): boolean => {
+      if (!p) return false;
+      return typeof p.isClosed === 'function' ? !p.isClosed() : true;
+    };
+
+    if (this.page && isAlive(this.page)) {
+      return this.page;
+    }
+    if (this.mainPage && isAlive(this.mainPage)) {
+      this.page = this.mainPage;
+      return this.page;
+    }
+    if (this.context) {
+      const pages = typeof this.context.pages === 'function' ? this.context.pages() : [];
+      const available = pages.filter((p) => isAlive(p) && !this.isJobPage(p));
+      if (available.length > 0) {
+        this.mainPage = available[0];
+        this.page = available[0];
+        return this.page;
+      }
+      const anyAvailable = pages.filter((p) => isAlive(p));
+      if (anyAvailable.length > 0) {
+        this.page = anyAvailable[0];
+        return this.page;
+      }
+    }
+    return null;
+  }
+
+  /** Checks whether the given page belongs to an active generation job. */
+  private isJobPage(page: Page): boolean {
+    for (const entry of this.activeJobPages.values()) {
+      if (entry.page === page) return true;
+    }
+    return false;
   }
 
   /**
-   * Spawns a dedicated fresh Flow tab for an execution job.
-   * Keeps the persistent background browser alive.
-   *
-   * CRITICAL: Always navigates to the BASE Flow creation URL, never a stale
-   * project-specific URL. this.flowUrl is whatever page Chrome was on during
-   * authentication (e.g. flow.google.com/project/abc123) which does NOT have
-   * the model selector toolbar. We must always land on the generation interface.
+   * Spawns a dedicated fresh Flow or provider tab for an execution job.
+   * Tracks the tab in activeJobPages for automatic cleanup.
+   * Keeps the persistent background browser and main profile page alive.
    */
-  async createJobPage(flowUrl?: string): Promise<Page> {
-    if (!this.context) {
+  async createJobPage(jobIdOrUrl?: string, customUrl?: string): Promise<Page> {
+    let jobId: string;
+    let flowUrl: string | undefined;
+
+    if (jobIdOrUrl && (jobIdOrUrl.startsWith('http://') || jobIdOrUrl.startsWith('https://'))) {
+      flowUrl = jobIdOrUrl;
+      jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    } else {
+      jobId = jobIdOrUrl || `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      flowUrl = customUrl;
+    }
+
+    if (!this.context || !this.browser || !this.browser.isConnected()) {
       await this.connectToRunningBrowser();
     }
     if (!this.context) {
       throw new Error(`Profile ${this.profileId} has no active browser context.`);
     }
 
-    const jobPage = await this.context.newPage();
-    await jobPage.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
+    const releaseLock = await this.acquireJobPageCreationLock();
+    let jobPage: Page | null = null;
+    const trackingKey = `${jobId}_${Date.now()}`;
 
-    // Determine the correct base Flow URL — NEVER use this.flowUrl directly since
-    // it may point to a specific project page (flow.google.com/project/...) where
-    // the generation toolbar and model selector do not exist.
-    let url: string;
-    if (flowUrl) {
-      // Explicit caller override — use it only if it looks like a base Flow URL
-      if (!flowUrl.includes('/project/')) {
-        url = flowUrl;
+    try {
+      jobPage = await this.context.newPage();
+      this.activeJobPages.set(trackingKey, { page: jobPage, jobId, createdAt: Date.now() });
+
+      // Track ONLY child popups opened by this specific generation tab
+      const popupTracker = (popup: Page) => {
+        const childKey = `${jobId}_popup_${Date.now()}`;
+        this.activeJobPages.set(childKey, { page: popup, jobId, createdAt: Date.now() });
+        this.log.info('tab_lifecycle', `Popup tracked for job ${jobId}`, { popupKey: childKey });
+        popup.once('close', () => {
+          this.activeJobPages.delete(childKey);
+        });
+      };
+      jobPage.on('popup', popupTracker);
+
+      jobPage.once('close', () => {
+        this.activeJobPages.delete(trackingKey);
+      });
+
+      await jobPage.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
+
+      let url: string;
+      if (flowUrl) {
+        if (!flowUrl.includes('/project/')) {
+          url = flowUrl;
+        } else {
+          url = this.config.flowUrlLocale
+            ? `https://labs.google${this.config.flowUrlLocale}`
+            : FLOW_BASE_URL;
+        }
       } else {
-        // Caller passed a project URL — ignore it, use base URL
-        this.log.warn('tab_lifecycle', 'createJobPage: ignoring project-specific flowUrl, using base URL', { rejectedUrl: flowUrl });
         url = this.config.flowUrlLocale
           ? `https://labs.google${this.config.flowUrlLocale}`
           : FLOW_BASE_URL;
       }
-    } else {
-      // Always use locale-specific base URL, derived from config (set after locale detection at auth time)
-      url = this.config.flowUrlLocale
-        ? `https://labs.google${this.config.flowUrlLocale}`
-        : FLOW_BASE_URL;
-    }
 
-    this.log.info('tab_lifecycle', `Created dedicated job tab, navigating to base Flow URL`, { url });
+      this.log.info('tab_lifecycle', `[Job ${jobId}] Created dedicated job tab, navigating to: ${url}`);
 
-    try {
       await jobPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-      // Wait for the client-side SPA to mount buttons and prompt toolbar
       await jobPage.waitForSelector('button', { state: 'visible', timeout: 20000 }).catch(() => {});
-      await jobPage.waitForTimeout(1500);
-    } catch (navErr) {
-      this.log.warn('tab_lifecycle', `Navigation warning on job tab: ${(navErr as Error).message}`);
-    }
+      await jobPage.waitForTimeout(500);
 
-    return jobPage;
+      return jobPage;
+    } catch (navErr) {
+      this.log.warn('tab_lifecycle', `[Job ${jobId}] Navigation failure on job tab, closing tab immediately: ${(navErr as Error).message}`);
+      if (jobPage && !jobPage.isClosed()) {
+        await jobPage.close().catch(() => {});
+      }
+      this.activeJobPages.delete(trackingKey);
+      throw navErr;
+    } finally {
+      releaseLock();
+    }
   }
 
   /**
-   * Closes a dedicated job tab after asset persistence is complete (or on failure).
-   * Ensures at least one tab remains alive so the persistent background Chrome process stays open.
+   * Closes a dedicated job tab and any child popups after asset persistence is complete (or on failure).
+   * Ensures the persistent mainPage remains open so Chrome does not terminate.
    */
-  async closeJobPage(jobPage: Page): Promise<void> {
+  async closeJobPage(jobIdOrPage?: string | Page): Promise<void> {
     try {
-      if (jobPage && !jobPage.isClosed()) {
-        const pages = this.context?.pages() || [];
-        if (pages.length > 1) {
-          this.log.info('tab_lifecycle', 'Closing dedicated job tab after persistence', { url: jobPage.url() });
-          await jobPage.close();
-        } else {
-          this.log.info('tab_lifecycle', 'Job tab is the only active page; keeping as standby tab');
+      const pagesToClose: Page[] = [];
+
+      if (typeof jobIdOrPage === 'string') {
+        const targetJobId = jobIdOrPage;
+        for (const [key, entry] of Array.from(this.activeJobPages.entries())) {
+          if (entry.jobId === targetJobId) {
+            pagesToClose.push(entry.page);
+            this.activeJobPages.delete(key);
+          }
+        }
+      } else if (jobIdOrPage) {
+        const targetPage = jobIdOrPage;
+        pagesToClose.push(targetPage);
+        for (const [key, entry] of Array.from(this.activeJobPages.entries())) {
+          if (entry.page === targetPage) {
+            this.activeJobPages.delete(key);
+          }
+        }
+      }
+
+      for (const p of pagesToClose) {
+        if (p === this.mainPage) {
+          this.log.warn('tab_lifecycle', 'Attempted to close main profile page; preserving main page');
+          continue;
+        }
+        if (!p.isClosed()) {
+          this.log.info('tab_lifecycle', 'Closing dedicated disposable generation tab', { url: p.url().substring(0, 100) });
+          await p.close().catch(() => {});
         }
       }
     } catch (err) {
       this.log.debug('tab_lifecycle', `Error closing job page: ${(err as Error).message}`);
     }
+  }
+
+  /**
+   * Scans browser context and safely closes all tabs that are neither the main profile page
+   * nor actively tracked for an in-flight job.
+   */
+  async cleanupOrphanedJobPages(): Promise<number> {
+    if (!this.context) return 0;
+    let closed = 0;
+    try {
+      const allPages = this.context.pages();
+      const activePages = new Set(Array.from(this.activeJobPages.values()).map((e) => e.page));
+
+      for (const p of allPages) {
+        if (p === this.mainPage) continue;
+        if (activePages.has(p)) continue;
+        if (!p.isClosed()) {
+          this.log.info('tab_lifecycle', 'Closing orphaned untracked generation tab', { url: p.url().substring(0, 100) });
+          await p.close().catch(() => {});
+          closed++;
+        }
+      }
+    } catch (err) {
+      this.log.debug('tab_lifecycle', `Error during orphan cleanup: ${(err as Error).message}`);
+    }
+    return closed;
   }
 
   /** Returns the active BrowserContext, or null if not connected. */
@@ -1029,14 +1185,17 @@ if ($targetPids.Count -gt 0) {
     return this._status;
   }
 
-  /** True if the session is connected and authenticated. */
+  /** True if the session is connected, authenticated, and has an active usable page. */
   get isReady(): boolean {
-    return this._status === 'ready';
+    if (this._status !== 'ready') return false;
+    if (this.chromeProcess && !this.isProcessAlive()) return false;
+    if (this.browser && typeof this.browser.isConnected === 'function' && !this.browser.isConnected()) return false;
+    return true;
   }
 
   /** True if the session is able to accept automation jobs. */
   get canAcceptJob(): boolean {
-    return this._status === 'ready';
+    return this.isReady;
   }
 
   /** The OS process ID of the spawned Chrome instance, or undefined if not running. */
@@ -1063,12 +1222,11 @@ if ($targetPids.Count -gt 0) {
    *  1. CDP Browser.setWindowBounds → windowState: 'minimized'
    *  2. Windows PowerShell with EnumWindows calling ShowWindow(hwnd, SW_HIDE = 0).
    *     Encoded via Base64 UTF-16LE (-EncodedCommand) to eliminate quote-escaping failures.
-   *     Finds all Chrome processes by PID, Parent PID, or CDP port connection.
    */
   async hideWindowFromTaskbar(page?: Page): Promise<void> {
     const targetPage = page && !page.isClosed() ? page : (this.page && !this.page.isClosed() ? this.page : this.context?.pages()[0]);
 
-    // Step 1: Minimize via CDP (cross-platform, keeps CDP alive)
+    // Native CDP window minimization (instant, cross-platform, zero process overhead, preserves CDP connection)
     if (this.context && targetPage) {
       try {
         if (typeof (this.context as any).newCDPSession === 'function') {
@@ -1085,88 +1243,91 @@ if ($targetPids.Count -gt 0) {
         this.log.debug('session', `CDP minimize notice: ${(cdpErr as Error).message}`);
       }
     }
-
-    // Step 2: Win32 ShowWindow(hwnd, SW_HIDE=0) + WS_EX_TOOLWINDOW via PowerShell Base64 EncodedCommand
-    if (process.platform !== 'win32') return;
-
-    try {
-      const port = this.config.cdpPort;
-      const rootPid = this.chromeProcess?.pid || 0;
-
-      const psScript = `
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class Win32WindowHider {
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-  [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-}
-"@ -ErrorAction SilentlyContinue
-
-$targetPids = @(${rootPid});
-$port = ${port};
-
-$conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1;
-if ($conn) {
-  $targetPids += [int]$conn.OwningProcess
-}
-
-$snapshotPids = @($targetPids | Where-Object { $_ -gt 0 });
-foreach ($p in $snapshotPids) {
-  $children = Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ParentProcessId -eq $p }
-  foreach ($c in $children) {
-    $targetPids += [int]$c.ProcessId
   }
-}
 
-$byCmd = Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*--remote-debugging-port=$port*" }
-foreach ($b in $byCmd) {
-  $targetPids += [int]$b.ProcessId
-}
+  // ---------------------------------------------------------------------------
+  // Private: Browser and Page event management & auto-recovery
+  // ---------------------------------------------------------------------------
 
-$targetPids = $targetPids | Where-Object { $_ -gt 0 } | Select-Object -Unique
-
-if ($targetPids.Count -gt 0) {
-  [Win32WindowHider]::EnumWindows({
-    param($hwnd, $lparam)
-    $procId = 0
-    [Win32WindowHider]::GetWindowThreadProcessId($hwnd, [ref]$procId) | Out-Null
-    if ($targetPids -contains $procId) {
-      # GWL_EXSTYLE = -20; WS_EX_TOOLWINDOW = 0x80; WS_EX_APPWINDOW = 0x40000
-      $exStyle = [Win32WindowHider]::GetWindowLong($hwnd, -20)
-      $newExStyle = ($exStyle -bor 0x00000080) -band (-bnot 0x00040000)
-      [Win32WindowHider]::SetWindowLong($hwnd, -20, $newExStyle) | Out-Null
-      [Win32WindowHider]::ShowWindow($hwnd, 0) | Out-Null # SW_HIDE = 0
-      # SWP_NOACTIVATE = 0x0010; SWP_HIDEWINDOW = 0x0080; SWP_NOMOVE = 0x0002; SWP_NOSIZE = 0x0001
-      [Win32WindowHider]::SetWindowPos($hwnd, [IntPtr]::Zero, -32000, -32000, 0, 0, 0x0093) | Out-Null
-    }
-    return $true
-  }, [IntPtr]::Zero) | Out-Null
-}
-`.trim();
-
-      const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
-      await new Promise<void>((resolve) => {
-        exec(
-          `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand ${encoded}`,
-          { timeout: 8000, windowsHide: true },
-          (err) => {
-            if (!err) {
-              this.log.info('session', 'Chrome window hidden from taskbar via Win32 EnumWindows + SW_HIDE');
-            } else {
-              this.log.debug('session', `Win32 hide notice: ${err.message?.substring(0, 120)}`);
-            }
-            resolve();
-          }
-        );
+  private attachBrowserListeners(browser: Browser): void {
+    if (typeof (browser as any)?.on === 'function') {
+      (browser as any).on('disconnected', () => {
+        this.log.warn('session', 'Playwright browser connection disconnected');
+        this.cleanupPlaywrightObjects();
+        if (this._status !== 'stopping' && this._status !== 'stopped' && this._status !== 'created') {
+          this.setStatus(this.isProcessAlive() ? 'connection_error' : 'stopped');
+        }
       });
-    } catch (psErr) {
-      this.log.debug('session', `Win32 hide notice: ${(psErr as Error).message?.substring(0, 120)}`);
+    }
+  }
+
+  private attachMainPageListeners(page: Page): void {
+    if (typeof (page as any)?.once === 'function') {
+      (page as any).once('close', async () => {
+        this.log.warn('session', 'Main profile page was closed; attempting recovery');
+        if (this.page === page) this.page = null;
+        if (this.mainPage === page) this.mainPage = null;
+        if (this._status === 'ready' || this._status === 'busy' || this._status === 'connected') {
+          try {
+            await this.recoverMainPage();
+          } catch (err) {
+            this.log.error('session', 'Failed to recover main profile page', { error: (err as Error).message });
+            this.setStatus('connection_error');
+          }
+        }
+      });
+    }
+  }
+
+  private async recoverMainPage(): Promise<Page> {
+    if (this.isRecoveringMainPage) {
+      this.log.info('session', 'Main page recovery already in progress; waiting for completion');
+      const start = Date.now();
+      while (this.isRecoveringMainPage && Date.now() - start < 5000) {
+        await delay(200);
+      }
+      if (this.mainPage && !this.mainPage.isClosed()) return this.mainPage;
+    }
+
+    this.isRecoveringMainPage = true;
+    try {
+      if (this.mainPage && !this.mainPage.isClosed()) {
+        return this.mainPage;
+      }
+
+      if (!this.context || !this.browser || !this.browser.isConnected()) {
+        return await this.connectToRunningBrowser();
+      }
+
+      const nonJobPages = this.context.pages().filter((p) => !p.isClosed() && !this.isJobPage(p));
+      let recoveredPage: Page;
+      if (nonJobPages.length > 0) {
+        recoveredPage = nonJobPages[0];
+      } else {
+        recoveredPage = await this.context.newPage();
+        const targetUrl = this.config.flowUrlLocale
+          ? `https://labs.google${this.config.flowUrlLocale}`
+          : FLOW_BASE_URL;
+        await recoveredPage.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+      }
+
+      this.mainPage = recoveredPage;
+      this.page = recoveredPage;
+      this.attachMainPageListeners(recoveredPage);
+
+      // In dedicated profile sessions, enforce single-tab invariant: close any extraneous non-job tabs
+      if (!this.isExistingBrowser && this.config.connectionMode !== 'existing_chrome') {
+        const remaining = this.context.pages().filter((p) => !p.isClosed() && p !== this.mainPage && !this.isJobPage(p));
+        for (const extraPage of remaining) {
+          this.log.info('tab_lifecycle', 'Closing extraneous non-job tab to maintain single-tab invariant', { url: extraPage.url().substring(0, 100) });
+          await extraPage.close().catch(() => {});
+        }
+      }
+
+      this.log.info('session', 'Main profile page successfully recovered', { url: recoveredPage.url() });
+      return recoveredPage;
+    } finally {
+      this.isRecoveringMainPage = false;
     }
   }
 
@@ -1175,7 +1336,7 @@ if ($targetPids.Count -gt 0) {
   // ---------------------------------------------------------------------------
 
   private async launchChrome(headless: boolean, background = true): Promise<void> {
-    const { chromePath, cdpPort, userDataDir } = this.config;
+    const { chromePath, cdpPort } = this.config;
 
     // If an app-managed Flow profile is already running on this port, connect to it
     try {
@@ -1187,17 +1348,23 @@ if ($targetPids.Count -gt 0) {
       // Not yet active; proceed with launching fresh dedicated Chrome process
     }
 
-    const effectiveUserData = (this.config.connectionMode === 'existing_chrome' && this.config.localUserDataDir)
-      ? this.config.localUserDataDir
-      : userDataDir;
-    const effectiveProfileDir = (this.config.connectionMode === 'existing_chrome' && this.config.localProfileDirectory)
-      ? this.config.localProfileDirectory
-      : this.config.chromeProfileName;
+    const effectiveUserData = this.config.userDataDir;
+    const effectiveProfileDir = this.config.chromeProfileName || 'Default';
 
     // Verify paths
     if (!fs.existsSync(chromePath)) {
       throw new Error(`Chrome not found at: ${chromePath}`);
     }
+
+    // If existing_chrome, ensure the dedicated directory is seeded with the latest session data
+    if (this.config.connectionMode === 'existing_chrome' && this.config.localUserDataDir && this.config.localProfileDirectory) {
+      LocalChromeProfileDiscoverer.seedDedicatedUserDataDir(
+        this.config.localUserDataDir,
+        this.config.localProfileDirectory,
+        effectiveUserData
+      );
+    }
+
     if (!fs.existsSync(effectiveUserData)) {
       fs.mkdirSync(effectiveUserData, { recursive: true });
     }
@@ -1259,20 +1426,24 @@ if ($targetPids.Count -gt 0) {
       }
     });
 
-    // Set up crash detection
+    // Set up exit detection
     chromeProcess.once('exit', (code, signal) => {
-      if (this._status !== 'stopping' && this._status !== 'stopped') {
-        this.log.warn('chrome_crash', 'Chrome exited unexpectedly', { code, signal });
-        this.errorMessage = `Chrome exited unexpectedly (code=${code}, signal=${signal})`;
-        this.setStatus('error');
-        this.emit('crash', this.profileId);
-        // Clean up playwright references
-        this.cleanupPlaywrightObjects();
-      }
+      this.stopPostLoginWatcher();
+      this.cleanupPlaywrightObjects();
       this.chromeProcess = null;
+
+      if (this._status === 'stopping' || this._status === 'stopped' || this._status === 'created') {
+        return;
+      }
+
+      this.log.info('chrome_exit', 'Chrome process closed', { code, signal, pid: chromeProcess.pid });
+      this.setStatus('stopped');
+      this.errorMessage = null;
+      this.emit('status_change', this.getSnapshot());
     });
 
     // Poll the CDP port until Chrome is ready
+    this.setStatus('waiting_for_cdp');
     await this.waitForCdpPort(cdpPort);
   }
 
@@ -1302,10 +1473,9 @@ if ($targetPids.Count -gt 0) {
       }
     }
 
-    throw new Error(
-      `CDP port ${port} did not open after ${CDP_PROBE_MAX_ATTEMPTS} attempts. ` +
-      'Chrome may have failed to start or the port is blocked.'
-    );
+    this.setStatus('connection_error');
+    this.errorMessage = `CDP port ${port} did not open after ${CDP_PROBE_MAX_ATTEMPTS} attempts. Chrome may have failed to start or the port is blocked.`;
+    throw new Error(this.errorMessage);
   }
 
   // ---------------------------------------------------------------------------
@@ -1323,22 +1493,26 @@ if ($targetPids.Count -gt 0) {
       this.browser = await chromium.connectOverCDP(cdpEndpoint, {
         timeout: 25000,
       });
+      this.attachBrowserListeners(this.browser);
     } catch (err) {
-      const fallbackStatus = (this.chromeProcess && this.isProcessAlive()) ? 'browser_open' : 'error';
+      const fallbackStatus = (this.chromeProcess && this.isProcessAlive()) ? 'connection_error' : 'error';
       this.setStatus(fallbackStatus);
-      throw new Error(
-        `Playwright CDP connection failed on port ${cdpPort}: ${(err as Error).message}`
-      );
+      this.errorMessage = `Playwright CDP connection failed on port ${cdpPort}: ${(err as Error).message}`;
+      throw new Error(this.errorMessage);
     }
 
     // Use the first existing browser context, or create one
     const contexts = this.browser.contexts();
     this.context = contexts[0] ?? await this.browser.newContext();
 
+    this.setStatus('creating_page');
+
     if (this.isExistingBrowser || this.config.connectionMode === 'existing_chrome') {
       // CRITICAL REQUIREMENT 5: Always create a NEW tab in the existing browser.
       // NEVER navigate or close existing tabs!
       this.page = await this.context.newPage();
+      this.mainPage = this.page;
+      this.attachMainPageListeners(this.page);
       this.log.info('playwright', 'Opened dedicated new tab for Google Flow in existing Chrome session', {
         totalTabs: this.context.pages().length,
       });
@@ -1356,6 +1530,20 @@ if ($targetPids.Count -gt 0) {
         } catch { /* ignore */ }
       }
       this.page = flowPage ?? pages[0] ?? await this.context.newPage();
+      this.mainPage = this.page;
+      this.attachMainPageListeners(this.page);
+
+      // Prune extraneous restored tabs for dedicated profiles to enforce the single-tab idle invariant
+      for (const p of pages) {
+        if (p !== this.mainPage && !this.isJobPage(p)) {
+          try {
+            await p.close();
+            this.log.info('tab_lifecycle', 'Closed extraneous restored tab on startup to enforce 1-tab invariant');
+          } catch {
+            /* ignore */
+          }
+        }
+      }
     }
 
     this.setStatus('connected');
@@ -1385,8 +1573,8 @@ if ($targetPids.Count -gt 0) {
 
     if (result.state === 'loading') {
       const startPoll = Date.now();
-      while (Date.now() - startPoll < 5000) {
-        await delay(800);
+      while (Date.now() - startPoll < 15000) {
+        await delay(1000);
         result = await FlowAuthDetector.check(this.page, this.profileId);
         if (result.state !== 'loading') break;
       }
@@ -1409,21 +1597,33 @@ if ($targetPids.Count -gt 0) {
         break;
 
       case 'login_required':
+      case 'captcha':
         this.setStatus('auth_required');
         this.emit('status_change', this.getSnapshot());
-        this.log.info('auth', 'Login required — waiting for user to sign in');
-        break;
-
-      case 'captcha':
-        this.setStatus('auth_required'); // Treat as auth_required for UI purposes
-        this.log.warn('auth', 'CAPTCHA detected — user intervention required');
+        this.log.info('auth', 'Login or CAPTCHA required — waiting for user to sign in');
+        if (this.context && this.page) {
+          try {
+            if (typeof (this.context as any).newCDPSession === 'function') {
+              const cdp = await (this.context as any).newCDPSession(this.page);
+              const { windowId } = await cdp.send('Browser.getWindowForTarget');
+              await cdp.send('Browser.setWindowBounds', {
+                windowId,
+                bounds: { windowState: 'normal', left: 100, top: 100, width: 1280, height: 900 },
+              });
+              await cdp.detach().catch(() => {});
+            }
+          } catch {
+            // Non-fatal if CDP window bounds not supported
+          }
+        }
+        this.startPostLoginWatcher();
         break;
 
       case 'loading':
       case 'unknown':
-        // Mark as auth_required conservatively — the UI will show a prompt
-        this.setStatus('auth_required');
-        this.log.warn('auth', `Indeterminate auth state: ${result.state}`);
+        this.setStatus('connection_error');
+        this.errorMessage = `Unable to verify Flow authentication (state: ${result.state}).`;
+        this.log.warn('auth', `Indeterminate auth state: ${result.state}; set connection_error`);
         break;
     }
   }
@@ -1473,6 +1673,8 @@ if ($targetPids.Count -gt 0) {
 
   private async cleanupPlaywrightObjects(): Promise<void> {
     this.stopPostLoginWatcher();
+    this.activeJobPages.clear();
+    this.mainPage = null;
 
     // Close context with timeout (which closes all pages)
     if (this.context) {

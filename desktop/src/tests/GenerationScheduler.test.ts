@@ -408,4 +408,46 @@ describe('GenerationScheduler', () => {
     const reloaded = await ProjectRepository.get(project.projectId);
     expect(reloaded?.slots[0]?.status).toBe('cancelled');
   });
+
+  it('FAIR SCHEDULING: 1-image job is assigned immediately even when a large batch is queued ahead of it', async () => {
+    const pool = new WorkerPool();
+    const worker1 = createMockWorker('prof_fair_1', 1);
+    const worker2 = createMockWorker('prof_fair_2', 1);
+    pool.registerWorker(worker1);
+    pool.registerWorker(worker2);
+
+    // Create a large 5-slot project first
+    const largeProj = await ProjectRepository.create({
+      name: 'Large Batch Project',
+      prompts: [
+        { text: 'Prompt 1', type: 'video' },
+        { text: 'Prompt 2', type: 'video' },
+        { text: 'Prompt 3', type: 'video' },
+        { text: 'Prompt 4', type: 'video' },
+        { text: 'Prompt 5', type: 'video' },
+      ],
+    });
+
+    // Create a 1-slot image project second
+    const smallProj = await ProjectRepository.create({
+      name: 'Small Image Project',
+      prompts: [{ text: 'Single Image', type: 'image' }],
+    });
+
+    scheduler = new GenerationScheduler(pool);
+
+    // Enqueue both projects
+    await scheduler.enqueueProject(largeProj.projectId);
+    await scheduler.enqueueProject(smallProj.projectId);
+
+    // Verify: With fair round-robin scheduling, worker1 got a job from largeProj and worker2 got a job from smallProj
+    // The small project was NOT starved behind the 5-slot large project!
+    await vi.waitFor(
+      async () => {
+        const smallJobs = await JobRepository.getJobsByProject(smallProj.projectId);
+        expect(['assigned', 'starting', 'generating']).toContain(smallJobs[0]?.status);
+      },
+      { timeout: 2000, interval: 50 }
+    );
+  });
 });

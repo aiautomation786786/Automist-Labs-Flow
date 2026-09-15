@@ -220,13 +220,21 @@ export class CreditFailureDetector {
       if (lower.includes(phrase)) return 'auth_required';
     }
 
-    // Check browser disconnection / page crash
+    // Check browser disconnection / page crash / CDP endpoint errors
     if (
       lower.includes('target closed') ||
       lower.includes('page crashed') ||
       lower.includes('browser has been closed') ||
       lower.includes('session closed') ||
-      lower.includes('connection refused')
+      lower.includes('connection refused') ||
+      lower.includes('no active page') ||
+      lower.includes('automation endpoint') ||
+      lower.includes('cdp connection') ||
+      lower.includes('playwright cdp') ||
+      lower.includes('cdp port') ||
+      lower.includes('cdp probe') ||
+      lower.includes('no active browser context') ||
+      lower.includes('does not support dedicated job pages')
     ) {
       return 'browser_error';
     }

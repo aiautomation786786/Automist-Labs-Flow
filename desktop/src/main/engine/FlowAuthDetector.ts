@@ -214,7 +214,7 @@ export class FlowAuthDetector {
         return { state: 'login_required', url, detectedEmail: null, locale: extractLocale(url) };
       }
 
-      // Check if we're in a project or the Flow studio — both mean authenticated
+      // Check if we're in a project, the Flow studio, or an authenticated Flow home/tools page
       const isFlowAuthenticated = await safeEvaluate(
         page,
         () => {
@@ -224,10 +224,15 @@ export class FlowAuthDetector {
           );
           const projectLink = document.querySelector('a[href*="/project/"]');
           const isOnProjectPage = window.location.pathname.includes('/project/');
-          const hasAccountButton = !!document.querySelector('[aria-label*="Google Account"], [aria-label*="@"]');
-          const hasNewProjectButton = !!document.querySelector('.new-project-button, [class*="new-project"]');
+          const hasAccountButton = !!document.querySelector(
+            '[aria-label*="Google Account"], [aria-label*="@"], img[src*="googleusercontent.com"], button[aria-label*="Account"], [data-email]'
+          );
+          const hasNewProjectButton = !!document.querySelector(
+            '.new-project-button, [class*="new-project"], button[aria-label*="New project"], [data-testid*="new-project"]'
+          );
+          const hasButtons = document.querySelectorAll('button').length > 2;
 
-          return !!(sidebar || promptInput || projectLink || isOnProjectPage || hasAccountButton || hasNewProjectButton);
+          return !!(sidebar || promptInput || projectLink || isOnProjectPage || hasAccountButton || hasNewProjectButton || (hasButtons && !document.querySelector('a[href*="signin"], button[aria-label*="Sign in"]')));
         },
         false,
         2500,
@@ -243,23 +248,21 @@ export class FlowAuthDetector {
         return { state: 'authenticated', url, detectedEmail, locale };
       }
 
-      // Landing page with "Create with Google Flow" / Sign in button
-      const isLandingPage = await safeEvaluate(
+      // Explicit unauthenticated sign-in prompt / button check
+      const hasSignInPrompt = await safeEvaluate(
         page,
         () => {
-          const text = document.body?.innerText ?? '';
-          return (
-            text.includes('Create with Google Flow') ||
-            text.includes('Your AI creative studio') ||
-            !!document.querySelector('a[href*="signin"], button[aria-label*="Sign in"]')
-          );
+          const hasSignInButton = !!document.querySelector('a[href*="accounts.google.com/signin"], a[href*="signin"], button[aria-label*="Sign in"]');
+          const bodyText = document.body?.innerText ?? '';
+          const hasSignInText = bodyText.includes('Sign in with Google') || bodyText.includes('Sign in to Flow');
+          return hasSignInButton || hasSignInText;
         },
         false,
         2500,
       );
 
-      if (isLandingPage) {
-        log.info('auth_detector', 'Flow landing page detected; login or project entry required');
+      if (hasSignInPrompt) {
+        log.info('auth_detector', 'Flow unauthenticated landing page detected; sign-in required');
         return { state: 'login_required', url, detectedEmail: null, locale: extractLocale(url) };
       }
 
@@ -324,8 +327,15 @@ export class FlowAuthDetector {
       // Give the page a moment to redirect if auth is needed
       await page.waitForTimeout(2000);
     } catch (err) {
-      log.error('auth_detector', 'Navigation to Flow failed', err as Error);
-      return { state: 'unknown', url: flowUrl, detectedEmail: null, locale: null };
+      log.warn('auth_detector', `Initial navigation to Flow failed (${(err as Error).message}), retrying once...`);
+      try {
+        await page.waitForTimeout(1500);
+        await page.goto(flowUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.waitForTimeout(2000);
+      } catch (retryErr) {
+        log.error('auth_detector', 'Navigation to Flow failed after retry', retryErr as Error);
+        return { state: 'unknown', url: flowUrl, detectedEmail: null, locale: null };
+      }
     }
 
     return this.check(page, profileId);

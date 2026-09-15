@@ -27,8 +27,26 @@ function getStatusInfo(p: ProfileSessionSnapshot): StatusInfo {
   if (s === 'auth_required' || cs === 'login_required') {
     return { label: 'Sign-In Required', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', emoji: '🔑' };
   }
-  if (s === 'chrome_launched' || s === 'connecting' || s === 'connected') {
-    return { label: 'Connecting...', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', emoji: '◌' };
+  if (s === 'chrome_launched') {
+    return { label: 'Starting Chrome…', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', emoji: '◌' };
+  }
+  if (s === 'waiting_for_cdp') {
+    return { label: 'Waiting for CDP…', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', emoji: '⏳' };
+  }
+  if (s === 'connecting') {
+    return { label: 'Connecting automation…', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', emoji: '◌' };
+  }
+  if (s === 'creating_page') {
+    return { label: 'Creating page…', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', emoji: '📄' };
+  }
+  if (s === 'connected') {
+    return { label: 'Connected', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', emoji: '◌' };
+  }
+  if (s === 'reconnecting') {
+    return { label: 'Reconnecting…', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', emoji: '🔄' };
+  }
+  if (s === 'connection_error') {
+    return { label: 'Connection Error', color: '#ef4444', bg: 'rgba(239,68,68,0.12)', emoji: '⚠️' };
   }
   if (s === 'browser_open' || cs === 'browser_open') {
     return { label: 'Browser Open', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)', emoji: '🌐' };
@@ -43,7 +61,7 @@ function getStatusInfo(p: ProfileSessionSnapshot): StatusInfo {
     return { label: 'Error', color: '#ef4444', bg: 'rgba(239,68,68,0.12)', emoji: '❌' };
   }
   // created / stopped
-  return { label: 'Offline', color: '#64748b', bg: 'rgba(100,116,139,0.10)', emoji: '⚪' };
+  return { label: 'Stopped', color: '#64748b', bg: 'rgba(100,116,139,0.10)', emoji: '⚪' };
 }
 
 // ---------------------------------------------------------------------------
@@ -451,29 +469,22 @@ export const ProfilesScreen: React.FC = () => {
     if (!window.flowApi?.createExistingProfile) return;
     try {
       setIsConnectingExisting(true);
-      setConnectExistingMsg({ text: 'Registering existing profile…' });
+      setConnectExistingMsg({ text: 'Registering profile and copying session…' });
       const created = await window.flowApi.createExistingProfile({
         displayName: existingDisplayName.trim() || 'Flow Account',
         localProfileDirectory: selectedFolder,
         expectedEmail: existingEmail.trim() || undefined,
       });
 
-      setConnectExistingMsg({ text: 'Checking connection state…' });
-      const detection = window.flowApi.detectProfileState
-        ? await window.flowApi.detectProfileState(created.profileId)
-        : null;
-
-      if (detection?.state === 'open_and_attachable') {
-        setConnectExistingMsg({ text: 'Profile is open and attachable! Opening Google Flow in a new tab…' });
-        await window.flowApi.openSignIn(created.profileId);
-        setIsExistingModalOpen(false);
-        setFeedback(created.profileId, 'Connected to running Chrome session. Flow opened in new tab.');
-      } else if (detection?.state === 'open_not_attachable') {
-        setIsExistingModalOpen(false);
-        setFeedback(created.profileId, detection.details, true);
+      setConnectExistingMsg({ text: 'Connecting to Google Flow…' });
+      const verifyRes = await window.flowApi.verifyAccount(created.profileId);
+      setIsExistingModalOpen(false);
+      if (verifyRes.success || verifyRes.status === 'ready') {
+        setFeedback(created.profileId, `Connected successfully! Account: ${verifyRes.detectedEmail || created.displayName}`);
+      } else if (verifyRes.status === 'auth_required') {
+        setFeedback(created.profileId, 'Google sign-in required. Please complete sign-in in the opened Chrome window.');
       } else {
-        setIsExistingModalOpen(false);
-        setFeedback(created.profileId, 'Profile registered. Click "Open Login" to launch.');
+        setFeedback(created.profileId, verifyRes.error || `Connected with status: ${verifyRes.status}`);
       }
       await loadProfiles();
     } catch (err) {
@@ -486,14 +497,17 @@ export const ProfilesScreen: React.FC = () => {
   // ---- Render ----
 
   const isStopped = (p: ProfileSessionSnapshot) =>
-    p.status === 'stopped' || p.status === 'created' || p.status === 'error';
+    p.status === 'stopped' || p.status === 'created' || p.status === 'error' || p.status === 'connection_error';
 
   const isBrowserRunning = (p: ProfileSessionSnapshot) =>
     p.status === 'browser_open' ||
     p.status === 'chrome_launched' ||
+    p.status === 'waiting_for_cdp' ||
     p.status === 'connecting' ||
+    p.status === 'creating_page' ||
     p.status === 'connected' ||
     p.status === 'auth_required' ||
+    p.status === 'reconnecting' ||
     p.status === 'ready' ||
     p.status === 'busy';
 
@@ -633,7 +647,9 @@ export const ProfilesScreen: React.FC = () => {
                       <span>
                         Session:{' '}
                         <strong style={{ color: p.status === 'ready' ? 'var(--primary)' : 'var(--text-primary)' }}>
-                          {p.status === 'ready' || p.status === 'busy' ? 'Background (Managed)' : 'Dedicated Profile'}
+                          {p.status === 'ready' || p.status === 'busy'
+                            ? 'Background (Managed)'
+                            : (p.connectionMode === 'existing_chrome' ? 'Imported Chrome Profile' : 'Dedicated Profile')}
                         </strong>
                       </span>
                       <span>

@@ -98,6 +98,7 @@ export class GenerationScheduler {
     }
 
     await ProjectRepository.update(projectId, { status: 'queued' });
+    this.activeProjectIds.add(projectId);
 
     const createdJobs: GenerationJobEntity[] = [];
 
@@ -128,8 +129,6 @@ export class GenerationScheduler {
     }
 
     logger.info('scheduler', `Enqueued ${createdJobs.length} jobs for project ${projectId}`);
-
-    this.activeProjectIds.add(projectId);
 
     // Trigger immediate event-driven dispatch
     this.triggerDispatch();
@@ -344,11 +343,13 @@ export class GenerationScheduler {
 
         // Step 1: Collect and assign all eligible jobs across all available execution contexts in burst
         const assignments = await this.collectAndAssignEligibleJobs();
+        console.log(`[Scheduler] dispatchLoop pass: collected ${assignments.length} assignments (activeProjects: ${Array.from(this.activeProjectIds).join(', ')})`);
         if (assignments.length === 0) {
           break;
         }
 
-        // Step 2: Concurrently persist assignments and launch jobs asynchronously
+        // Step 2: Persist assignments and launch jobs asynchronously with per-worker staggered ramp-up
+        const workerDelays = new Map<string, number>();
         await Promise.all(
           assignments.map(async ({ worker, job, project }) => {
             try {
@@ -370,8 +371,20 @@ export class GenerationScheduler {
               generationEventBus.emitTyped('job:assigned', assignedJob, worker.profileId);
               generationEventBus.emitTyped('worker:busy', worker.profileId, job.jobId);
 
+              // Stagger start slightly per worker to prevent simultaneous tab burst storms in production
+              const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
+              const currentDelay = isTestEnv ? 0 : (workerDelays.get(worker.profileId) || 0);
+              if (!isTestEnv) {
+                workerDelays.set(worker.profileId, currentDelay + 400);
+              }
+
               // Step 3: Execute job asynchronously without awaiting long-running browser generation
-              this.executeJobOnWorker(worker, assignedJob)
+              (async () => {
+                if (currentDelay > 0) {
+                  await new Promise((resolve) => setTimeout(resolve, currentDelay));
+                }
+                await this.executeJobOnWorker(worker, assignedJob);
+              })()
                 .catch((err) => {
                   logger.error('scheduler', `Unhandled error executing job ${job.jobId}`, err as Error);
                 })
@@ -406,7 +419,12 @@ export class GenerationScheduler {
       return [];
     }
 
-    const assignments: Array<{ job: GenerationJobEntity; project: ProjectEntity; worker: ProfileWorker }> = [];
+    interface ProjectQueueItem {
+      project: ProjectEntity;
+      queuedJobs: GenerationJobEntity[];
+      pointer: number;
+    }
+    const projectQueues: ProjectQueueItem[] = [];
 
     for (const projectId of Array.from(this.activeProjectIds)) {
       const project = await ProjectRepository.get(projectId);
@@ -432,21 +450,49 @@ export class GenerationScheduler {
       }
 
       const sortedJobs = this.sortAllJobsByProcessingOrder(queuedJobs, project.settings.processingOrder);
+      projectQueues.push({
+        project,
+        queuedJobs: sortedJobs,
+        pointer: 0,
+      });
+    }
 
-      for (const job of sortedJobs) {
-        const slot = project.slots.find((s) => s.slotIndex === job.slotIndex);
-        if (!slot || slot.status === 'completed') continue;
+    if (projectQueues.length === 0) {
+      return [];
+    }
 
-        const worker = this.workerPool.getAvailableWorker(project.settings.selectedProfileIds);
-        if (!worker) {
-          // All eligible workers are at full capacity
-          break;
+    const assignments: Array<{ job: GenerationJobEntity; project: ProjectEntity; worker: ProfileWorker }> = [];
+    let progressInRound = true;
+
+    // Round-robin interleaving: allocate slots fairly across projects so smaller/newer projects
+    // are never starved behind large multi-slot batches
+    while (progressInRound) {
+      progressInRound = false;
+
+      for (const item of projectQueues) {
+        while (item.pointer < item.queuedJobs.length) {
+          const job = item.queuedJobs[item.pointer]!;
+          item.pointer++;
+
+          const slot = item.project.slots.find((s) => s.slotIndex === job.slotIndex);
+          if (!slot || slot.status === 'completed') continue;
+
+          const worker = this.workerPool.getAvailableWorker(item.project.settings.selectedProfileIds);
+          if (!worker) {
+            logger.info('scheduler', `No available worker for job ${job.jobId} (project ${item.project.projectId}). Allowed profiles: ${JSON.stringify(item.project.settings.selectedProfileIds || 'all')}`);
+            // Worker capacity not available for this project's requirements right now
+            // Revert pointer so this job remains at front of queue for future rounds
+            item.pointer--;
+            break; // Yield cycle so other eligible projects have an opportunity
+          }
+
+          // Assign immediately in memory and track in-flight to prevent race conditions
+          worker.assignJob(job);
+          this.inFlightJobIds.add(job.jobId);
+          assignments.push({ job, project: item.project, worker });
+          progressInRound = true;
+          break; // Fair share: assigned 1 slot to this project in this cycle, advance to next project
         }
-
-        // Assign immediately in memory and track in-flight to prevent race conditions
-        worker.assignJob(job);
-        this.inFlightJobIds.add(job.jobId);
-        assignments.push({ job, project, worker });
       }
     }
 
@@ -458,6 +504,22 @@ export class GenerationScheduler {
    */
   private async executeJobOnWorker(worker: ProfileWorker, job: GenerationJobEntity): Promise<void> {
     try {
+      // Pre-flight check: ensure worker session is ready and has an active page
+      if (worker.session && !worker.session.isReady) {
+        logger.warn('scheduler', `Worker ${worker.profileId} is not ready before starting job ${job.jobId} (status: ${worker.session.status}). Requeueing safely.`);
+        worker.release(job.jobId);
+        await JobRepository.updateJob(job.projectId, job.jobId, {
+          status: 'queued',
+          profileId: undefined,
+        });
+        await ProjectRepository.updateSlot(job.projectId, job.slotIndex, {
+          status: 'queued',
+          assignedProfileId: undefined,
+        });
+        generationEventBus.emitTyped('job:queued', job);
+        return;
+      }
+
       const project = await ProjectRepository.get(job.projectId);
       let isGemini =
         job.provider === 'gemini' ||
@@ -854,15 +916,6 @@ export class GenerationScheduler {
   async reconcileActiveProjects(): Promise<void> {
     try {
       const projects = await ProjectRepository.getAll();
-      const diskActiveIds = new Set<string>();
-      for (const p of projects) {
-        if (p.status === 'queued' || p.status === 'running') {
-          diskActiveIds.add(p.projectId);
-        }
-      }
-      for (const id of diskActiveIds) {
-        this.activeProjectIds.add(id);
-      }
       for (const id of Array.from(this.activeProjectIds)) {
         const matching = projects.find((p) => p.projectId === id);
         if (!matching || (matching.status !== 'queued' && matching.status !== 'running')) {

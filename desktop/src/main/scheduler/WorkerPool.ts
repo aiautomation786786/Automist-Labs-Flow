@@ -53,11 +53,17 @@ export class WorkerPool {
       if (snapshot.status === 'ready') {
         this.syncWithSessionManager();
         generationEventBus.emitTyped('worker:available', snapshot.profileId);
-      } else if (snapshot.status === 'error' || snapshot.status === 'stopped' || snapshot.status === 'auth_required') {
+      } else if (snapshot.status === 'error' || snapshot.status === 'connection_error') {
         const worker = this.workers.get(snapshot.profileId);
         if (worker) {
           worker.markError(snapshot.errorMessage || `Session status: ${snapshot.status}`);
-          logger.warn('worker_pool', `Profile ${snapshot.profileId} status changed to ${snapshot.status}; marked unavailable`);
+          logger.warn('worker_pool', `Profile ${snapshot.profileId} status changed to ${snapshot.status}; marked error`);
+        }
+      } else if (snapshot.status === 'stopped' || snapshot.status === 'auth_required') {
+        const worker = this.workers.get(snapshot.profileId);
+        if (worker && worker.state !== 'error') {
+          worker.markError(`Session is ${snapshot.status}`);
+          logger.info('worker_pool', `Profile ${snapshot.profileId} status is ${snapshot.status}; worker made unavailable`);
         }
       }
     });

@@ -128,7 +128,23 @@ export interface ExistingProfileDetectionResult {
  *                    │
  *                  [ready]
  */
-export type ProfileSessionStatus = 'created' | 'starting' | 'browser_open' | 'chrome_launched' | 'connecting' | 'connected' | 'auth_required' | 'ready' | 'busy' | 'stopping' | 'stopped' | 'error';
+export type ProfileSessionStatus =
+  | 'created'
+  | 'starting'
+  | 'browser_open'
+  | 'chrome_launched'
+  | 'waiting_for_cdp'
+  | 'connecting'
+  | 'creating_page'
+  | 'connected'
+  | 'auth_required'
+  | 'ready'
+  | 'busy'
+  | 'reconnecting'
+  | 'connection_error'
+  | 'stopping'
+  | 'stopped'
+  | 'error';
 /**
  * Snapshot of an active ProfileSession, suitable for sending over IPC.
  */

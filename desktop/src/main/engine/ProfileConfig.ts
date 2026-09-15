@@ -179,7 +179,7 @@ export class ProfileConfigManager {
 
     const profileIds = fs
       .readdirSync(rootDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory() && d.name.startsWith('profile_'))
+      .filter((d) => d.isDirectory() && d.name.startsWith('profile_') && fs.existsSync(path.join(rootDir, d.name, 'profile.json')))
       .map((d) => d.name);
 
     const configs: ProfileConfig[] = [];

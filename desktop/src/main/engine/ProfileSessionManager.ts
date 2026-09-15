@@ -155,6 +155,15 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       expectedEmail: params.expectedEmail,
     });
 
+    // Seed session data from existing local Chrome profile so authenticated session is preserved
+    if (userDataDir && params.localProfileDirectory) {
+      LocalChromeProfileDiscoverer.seedDedicatedUserDataDir(
+        userDataDir,
+        params.localProfileDirectory,
+        config.userDataDir
+      );
+    }
+
     const updated = ProfileConfigManager.update(config.profileId, {
       connectionMode: 'existing_chrome',
       localProfileDirectory: params.localProfileDirectory,
@@ -352,46 +361,64 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       return;
     }
 
-    appLogger.info('session_manager', `Auto-starting ${profiles.length} background profile sessions in parallel...`);
+    const enabledProfiles = profiles.filter((p) => p.enabled !== false);
+    appLogger.info('session_manager', `Auto-starting ${enabledProfiles.length} background profile session(s)...`);
 
-    const startTasks = profiles.map(async (config) => {
-      try {
-        let session = this.sessions.get(config.profileId);
-        if (!session) {
-          const existingPort = this.portAllocator.getPort(config.profileId);
-          if (!existingPort) {
-            this.portAllocator.setAllocation(config.profileId, config.cdpPort);
-          }
-          session = new ProfileSession(config);
-          this.sessions.set(config.profileId, session);
-          this.attachSessionEvents(session);
-        }
-
-        if (session.isReady || session.status === 'busy') return;
-
-        // Auto-start in background off-screen mode with bounded retry
-        let attempts = 0;
-        const maxAttempts = 2;
-        while (attempts < maxAttempts) {
-          attempts++;
-          try {
-            await session.start({ headless: false, background: true });
-            appLogger.info('session_manager', `Profile ${config.profileId} auto-start finished with status: ${session.status}`);
-            break;
-          } catch (err) {
-            if (attempts >= maxAttempts) {
-              throw err;
+    await Promise.allSettled(
+      enabledProfiles.map(async (config) => {
+        try {
+          let session = this.sessions.get(config.profileId);
+          if (!session) {
+            const existingPort = this.portAllocator.getPort(config.profileId);
+            if (!existingPort) {
+              this.portAllocator.setAllocation(config.profileId, config.cdpPort);
             }
-            appLogger.warn('session_manager', `Retry ${attempts}/${maxAttempts} auto-starting profile ${config.profileId}: ${(err as Error).message}`);
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            session = new ProfileSession(config);
+            this.sessions.set(config.profileId, session);
+            this.attachSessionEvents(session);
           }
-        }
-      } catch (err) {
-        appLogger.warn('session_manager', `Auto-start notice for ${config.profileId}: ${(err as Error).message}`);
-      }
-    });
 
-    await Promise.allSettled(startTasks);
+          if (session.isReady || session.status === 'busy') return;
+
+          // For existing_chrome profiles: do NOT silently launch the user's normal Chrome with personal tabs in background
+          if (config.connectionMode === 'existing_chrome') {
+            let isPortActive = false;
+            try {
+              await probeCdpPort(config.cdpPort);
+              isPortActive = true;
+            } catch {
+              isPortActive = false;
+            }
+
+            if (!isPortActive) {
+              appLogger.info('session_manager', `Skipping auto-launch for existing_chrome profile ${config.profileId} (Chrome not currently running with debugging on port ${config.cdpPort})`);
+              return;
+            }
+          }
+
+          // Auto-start in background off-screen mode with bounded retry
+          let attempts = 0;
+          const maxAttempts = 2;
+          while (attempts < maxAttempts) {
+            attempts++;
+            try {
+              await session.start({ headless: false, background: true });
+              appLogger.info('session_manager', `Profile ${config.profileId} auto-start finished with status: ${session.status}`);
+              break;
+            } catch (err) {
+              if (attempts >= maxAttempts) {
+                throw err;
+              }
+              appLogger.warn('session_manager', `Retry ${attempts}/${maxAttempts} auto-starting profile ${config.profileId}: ${(err as Error).message}`);
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+          }
+        } catch (err) {
+          appLogger.warn('session_manager', `Auto-start notice for ${config.profileId}: ${(err as Error).message}`);
+        }
+      })
+    );
+
     appLogger.info('session_manager', 'All background profile auto-start attempts completed');
   }
 
@@ -592,35 +619,34 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
     });
 
     if (!isPidAlive && !isPortActive && session.status !== 'ready' && session.status !== 'connected' && session.status !== 'browser_open') {
-      // Check if credentials exist on disk from previous login
-      const localEmail = LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
-        config.userDataDir,
-        config.chromeProfileName || 'Default'
-      );
-      if (localEmail) {
-        try {
-          appLogger.info('session_manager', `verifyAccount: Starting background session for ${profileId} (${localEmail}) to verify Flow authentication`);
-          await session.start({ headless: false, background: true });
-          if (session.isReady || (session.status as string) === 'ready') {
-            this.emit('session:status', session.getSnapshot());
-            this.emit('session:ready', profileId);
-            return {
-              success: true,
-              status: 'ready',
-              detectedEmail: session.getSnapshot().detectedEmail || localEmail,
-            };
-          }
-        } catch (err) {
-          appLogger.warn('session_manager', `verifyAccount: Background check notice for ${profileId}: ${(err as Error).message}`);
+      try {
+        const localEmail = LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
+          config.userDataDir,
+          config.chromeProfileName || 'Default'
+        ) || config.expectedEmail;
+        appLogger.info('session_manager', `verifyAccount: Starting background session for ${profileId} (${localEmail || 'dedicated'}) to verify Flow authentication`);
+        await session.start({ headless: false, background: true });
+        if (session.isReady || (session.status as string) === 'ready') {
+          this.emit('session:status', session.getSnapshot());
+          this.emit('session:ready', profileId);
+          return {
+            success: true,
+            status: 'ready',
+            detectedEmail: session.getSnapshot().detectedEmail || localEmail || null,
+          };
         }
+      } catch (err) {
+        appLogger.warn('session_manager', `verifyAccount: Background check notice for ${profileId}: ${(err as Error).message}`);
       }
 
-      return {
-        success: false,
-        status: session.status,
-        detectedEmail: null,
-        error: 'Dedicated Chrome is not running. Click "Open Login" to launch it.',
-      };
+      if (!session.isProcessAlive() && !session.isReady) {
+        return {
+          success: false,
+          status: session.status,
+          detectedEmail: null,
+          error: 'Dedicated Chrome is not running. Click "Open Login" to launch it.',
+        };
+      }
     }
 
     // 3. Connect to running browser & verify auth with defensive timeout

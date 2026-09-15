@@ -175,18 +175,11 @@ export class GeminiVideoExecutionService {
 
       // --- LIVE EXECUTION MODE ---
       jobPage = null;
-      if (typeof worker.session?.createJobPage === 'function') {
-        try {
-          jobPage = await worker.session.createJobPage('https://gemini.google.com/videos');
-          log.info('gemini_video_exec', 'Dedicated job page instantiated for Gemini video tab lifecycle');
-        } catch (tabErr) {
-          log.warn('gemini_video_exec', `Could not create dedicated tab, using default session page: ${(tabErr as Error).message}`);
-        }
+      if (!worker.session || typeof worker.session.createJobPage !== 'function') {
+        throw new Error(`Profile ${worker.profileId} does not support dedicated job pages.`);
       }
-
-      if (!jobPage) {
-        throw new Error('Failed to create an isolated job page for Gemini generation.');
-      }
+      jobPage = await worker.session.createJobPage(jobId, 'https://gemini.google.com/videos');
+      log.info('gemini_video_exec', `Dedicated job page instantiated for Gemini video tab lifecycle (job ${jobId})`);
 
       const page = jobPage;
 
@@ -410,12 +403,14 @@ export class GeminiVideoExecutionService {
 
       throw err;
     } finally {
-      if (jobPage && typeof worker.session?.closeJobPage === 'function') {
+      if (typeof worker.session?.closeJobPage === 'function') {
         try {
-          await worker.session.closeJobPage(jobPage);
+          await worker.session.closeJobPage(jobId);
         } catch (closeErr) {
           log.debug('gemini_video_exec', `Error closing Gemini job page: ${(closeErr as Error).message}`);
         }
+      } else if (jobPage && !jobPage.isClosed()) {
+        await jobPage.close().catch(() => {});
       }
       worker.release(jobId);
       generationEventBus.emitTyped('worker:available', worker.profileId);

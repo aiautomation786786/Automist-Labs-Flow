@@ -107,13 +107,9 @@ export class ImageExecutionService {
 
       // Create a dedicated fresh Flow tab if running in live mode with a live session
       if (triggerClick && typeof worker.session?.createJobPage === 'function') {
-        try {
-          jobPage = await worker.session.createJobPage();
-          automation = new FlowAutomationSession(worker.session, jobPage);
-          log.info('image_exec', 'Dedicated job page instantiated for job tab lifecycle');
-        } catch (tabErr) {
-          log.warn('image_exec', `Could not create dedicated tab, using default session page: ${(tabErr as Error).message}`);
-        }
+        jobPage = await worker.session.createJobPage(jobId);
+        automation = new FlowAutomationSession(worker.session, jobPage);
+        log.info('image_exec', `Dedicated job page instantiated for job ${jobId}`);
       }
 
       // Step 2: Ensure Flow is loaded and authenticated
@@ -437,15 +433,17 @@ export class ImageExecutionService {
       throw err;
     } finally {
       // Step 12: Safely close dedicated Flow tab after asset persistence or error
-      if (jobPage && typeof worker.session?.closeJobPage === 'function') {
+      if (typeof worker.session?.closeJobPage === 'function') {
         try {
-          await worker.session.closeJobPage(jobPage);
+          await worker.session.closeJobPage(jobId);
         } catch (closeErr) {
           log.debug('image_exec', `Error closing job page: ${(closeErr as Error).message}`);
         }
+      } else if (jobPage && !jobPage.isClosed()) {
+        await jobPage.close().catch(() => {});
       }
 
-      // Step 13: Release only THIS job's slot (worker may still hold other concurrent jobs)
+      // Step 13: Release only THIS job's slot AFTER tab closure
       worker.release(jobId);
       generationEventBus.emitTyped('worker:available', worker.profileId);
     }
