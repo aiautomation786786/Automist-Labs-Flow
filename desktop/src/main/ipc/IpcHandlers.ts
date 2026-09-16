@@ -53,6 +53,7 @@ import { ImportedMediaRenderer } from '../render/ImportedMediaRenderer';
 import { PublishingAccountService } from '../publishing/PublishingAccountService';
 import { WatchedFolderRepository } from '../storage/WatchedFolderRepository';
 import { WatchedFolderHistoryRepository } from '../storage/WatchedFolderHistoryRepository';
+import { WatchedFolderEngine } from '../watcher/WatchedFolderEngine';
 import type {
   VideoFactoryConfig,
   VideoFactoryStage,
@@ -1192,7 +1193,9 @@ export class IpcHandlers {
 
     ipcMain.handle('watchedFolder:create', async (_event, params: unknown) => {
       if (!params || typeof params !== 'object') throw new Error('Invalid watched folder create params');
-      return await WatchedFolderRepository.create(params as CreateWatchedFolderParams);
+      const created = await WatchedFolderRepository.create(params as CreateWatchedFolderParams);
+      WatchedFolderEngine.getInstance().syncWatcher(created.id).catch(() => {});
+      return created;
     });
 
     ipcMain.handle('watchedFolder:update', async (_event, params: unknown) => {
@@ -1200,11 +1203,14 @@ export class IpcHandlers {
       if (!p || typeof p.id !== 'string' || !p.patch) {
         throw new Error('Invalid watched folder update params');
       }
-      return await WatchedFolderRepository.update(p.id, p.patch);
+      const updated = await WatchedFolderRepository.update(p.id, p.patch);
+      WatchedFolderEngine.getInstance().syncWatcher(updated.id).catch(() => {});
+      return updated;
     });
 
     ipcMain.handle('watchedFolder:delete', async (_event, id: unknown) => {
       if (typeof id !== 'string') throw new Error('Invalid watched folder id');
+      WatchedFolderEngine.getInstance().removeWatcher(id);
       const success = await WatchedFolderRepository.delete(id);
       return { success };
     });
@@ -1214,7 +1220,9 @@ export class IpcHandlers {
       if (!p || typeof p.id !== 'string' || typeof p.paused !== 'boolean') {
         throw new Error('Invalid setPaused params');
       }
-      return await WatchedFolderRepository.setPaused(p.id, p.paused);
+      const updated = await WatchedFolderRepository.setPaused(p.id, p.paused);
+      WatchedFolderEngine.getInstance().syncWatcher(updated.id).catch(() => {});
+      return updated;
     });
 
     ipcMain.handle('watchedFolder:getHistory', async (_event, params: unknown) => {
@@ -1223,6 +1231,11 @@ export class IpcHandlers {
         throw new Error('Invalid getHistory params');
       }
       return await WatchedFolderHistoryRepository.getHistory(p.id, p.limit);
+    });
+
+    // Wire event notifications from WatchedFolderEngine to renderer
+    WatchedFolderEngine.getInstance().setEventHandler((eventName, payload) => {
+      getWebContents?.()?.send(eventName, payload);
     });
 
     if (typeof (sessionManager as any)?.on === 'function') {

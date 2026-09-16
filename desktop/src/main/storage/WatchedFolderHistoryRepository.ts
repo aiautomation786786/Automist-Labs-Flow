@@ -79,6 +79,23 @@ export class WatchedFolderHistoryRepository {
   }
 
   /**
+   * Retrieves an existing history record by file path, if any.
+   */
+  static async getRecordByPath(watcherId: string, filePath: string): Promise<WatchedFileRecord | null> {
+    const records = await this.loadRecords(watcherId);
+    return records.find((r) => r.filePath === filePath) || null;
+  }
+
+  /**
+   * Retrieves an existing history record by SHA-256 hash, if any.
+   */
+  static async getRecordByHash(watcherId: string, hashSha256: string): Promise<WatchedFileRecord | null> {
+    if (!hashSha256) return null;
+    const records = await this.loadRecords(watcherId);
+    return records.find((r) => r.hashSha256 === hashSha256) || null;
+  }
+
+  /**
    * Records or updates a file status in the watcher history ledger.
    */
   static async recordFile(
@@ -88,7 +105,10 @@ export class WatchedFolderHistoryRepository {
     return await fileMutex.runExclusive(`watch_hist_${watcherId}`, async () => {
       const records = await this.loadRecords(watcherId);
       const existingIndex = records.findIndex(
-        (r) => r.hashSha256 === record.hashSha256 || (r.filePath === record.filePath && r.id === record.id)
+        (r) =>
+          (record.id && r.id === record.id) ||
+          (record.hashSha256 && r.hashSha256 === record.hashSha256) ||
+          (r.filePath === record.filePath && (!record.id || r.id === record.id))
       );
 
       const fullRecord: WatchedFileRecord = {

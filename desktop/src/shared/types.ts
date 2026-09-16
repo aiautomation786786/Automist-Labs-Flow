@@ -1841,7 +1841,7 @@ export interface WatchedFileRecord {
     fileSizeBytes: number;
     fileMtimeMs: number;
     hashSha256: string;
-    status: 'stabilizing' | 'ingested' | 'skipped_duplicate' | 'error';
+    status: 'stabilizing' | 'ready' | 'processing' | 'ingested' | 'skipped_duplicate' | 'error';
     detectedAt: string;
     ingestedAt?: string;
     projectId?: string;
