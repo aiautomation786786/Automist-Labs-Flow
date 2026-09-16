@@ -115,8 +115,7 @@ export class WatchedFolderHistoryRepository {
       const existingIndex = records.findIndex(
         (r) =>
           (record.id && r.id === record.id) ||
-          (record.hashSha256 && r.hashSha256 === record.hashSha256) ||
-          (r.filePath === record.filePath && (!record.id || r.id === record.id))
+          (r.filePath === record.filePath)
       );
 
       const fullRecord: WatchedFileRecord = {

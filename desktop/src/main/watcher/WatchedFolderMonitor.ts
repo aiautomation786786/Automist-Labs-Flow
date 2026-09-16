@@ -123,7 +123,7 @@ export class WatchedFolderMonitor {
     }
 
     // Schedule initial scan
-    this.scheduleNextScan(100);
+    this.scheduleNextScan(Math.min(100, this.options.pollIntervalMs ?? 100));
   }
 
   /**
