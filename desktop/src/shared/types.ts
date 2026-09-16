@@ -1832,6 +1832,8 @@ export interface WatchedFolderEntity {
     updatedAt: string;
     lastPolledAt?: string;
     lastIngestedAt?: string;
+    lastCadenceRunAt?: string;
+    nextScheduledRunAt?: string;
     lastError?: string;
     stats: {
         totalDetected: number;
@@ -1849,7 +1851,7 @@ export interface WatchedFileRecord {
     fileSizeBytes: number;
     fileMtimeMs: number;
     hashSha256: string;
-    status: 'stabilizing' | 'ready' | 'processing' | 'ingested' | 'skipped_duplicate' | 'error';
+    status: 'stabilizing' | 'ready' | 'waiting_for_cadence' | 'processing' | 'ingested' | 'skipped_duplicate' | 'error';
     detectedAt: string;
     ingestedAt?: string;
     projectId?: string;

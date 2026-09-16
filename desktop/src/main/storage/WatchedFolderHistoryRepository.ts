@@ -96,6 +96,14 @@ export class WatchedFolderHistoryRepository {
   }
 
   /**
+   * Retrieves all records currently waiting for cadence execution.
+   */
+  static async getPendingCadenceRecords(watcherId: string): Promise<WatchedFileRecord[]> {
+    const records = await this.loadRecords(watcherId);
+    return records.filter((r) => r.status === 'waiting_for_cadence');
+  }
+
+  /**
    * Records or updates a file status in the watcher history ledger.
    */
   static async recordFile(

@@ -16,6 +16,7 @@ import type {
 import { WatchedFolderRepository } from '../storage/WatchedFolderRepository';
 import { WatchedFolderMonitor, type WatchedFolderMonitorOptions } from './WatchedFolderMonitor';
 import { WatchedFolderPipelineService } from '../pipeline/WatchedFolderPipelineService';
+import { WatchedFolderCadenceService } from '../cadence/WatchedFolderCadenceService';
 import { AppLogger } from '../utils/AppLogger';
 
 const logger = new AppLogger({ mirrorToStderr: false });
@@ -48,6 +49,7 @@ export class WatchedFolderEngine {
       this.instance.shutdown();
       this.instance = null;
     }
+    WatchedFolderCadenceService.resetState();
   }
 
   /**
@@ -77,10 +79,10 @@ export class WatchedFolderEngine {
     logger.info('watcher_engine', 'Initializing WatchedFolderEngine...');
     this.isInitialized = true;
 
-    // Set default pipeline ingestion handler if not already injected
+    // Set default cadence ingestion handler if not already injected
     if (!this.mediaReadyHandler) {
       this.setMediaReadyHandler(async (record, entity) => {
-        await WatchedFolderPipelineService.ingest(record, entity);
+        await WatchedFolderCadenceService.handleMediaReady(record, entity);
       });
     }
 
@@ -88,7 +90,10 @@ export class WatchedFolderEngine {
       // 1. Cold-start crash recovery: reconcile any interrupted processing records
       await WatchedFolderPipelineService.reconcileIncompleteRecords();
 
-      // 2. Restore enabled monitors
+      // 2. Initialize cadence service (restores cadence schedules & catch-up runs)
+      await WatchedFolderCadenceService.initialize();
+
+      // 3. Restore enabled monitors
       const watchers = await WatchedFolderRepository.getAll();
       for (const watcher of watchers) {
         if (watcher.enabled && watcher.status !== 'paused') {
@@ -106,6 +111,7 @@ export class WatchedFolderEngine {
    */
   shutdown(): void {
     logger.info('watcher_engine', `Shutting down WatchedFolderEngine (${this.monitors.size} monitors)...`);
+    WatchedFolderCadenceService.shutdown();
     for (const monitor of this.monitors.values()) {
       try {
         monitor.stop();
@@ -135,6 +141,8 @@ export class WatchedFolderEngine {
     } else {
       this.startMonitor(watcher);
     }
+
+    await WatchedFolderCadenceService.syncWatcher(id);
   }
 
   /**
@@ -148,6 +156,7 @@ export class WatchedFolderEngine {
    * Removes and stops a watcher monitor.
    */
   removeWatcher(id: string): void {
+    WatchedFolderCadenceService.removeWatcher(id);
     const monitor = this.monitors.get(id);
     if (monitor) {
       monitor.stop();

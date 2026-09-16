@@ -253,14 +253,38 @@ export class WatchedFolderPipelineService {
         });
         break;
 
-      case 'import_render_publish':
+      case 'import_render_publish': {
         // Render imported media and prepare publishing metadata; publishing schedule owned by Phase 4D
         logger.info('pipeline_service', `Workflow import_render_publish: Rendering and preparing publishing for ${project.projectId}...`);
         await ImportedMediaRenderer.renderImportedVideo({
           projectId: project.projectId,
           rawModeOnly: true,
         });
+
+        // If publishDelayHours is configured, calculate target scheduledPublishAt
+        const delayHours = _entity.cadence?.publishDelayHours ?? 0;
+        const now = new Date();
+        const scheduledPublishAt = delayHours > 0
+          ? new Date(now.getTime() + delayHours * 3600 * 1000).toISOString()
+          : undefined;
+
+        // Attach prepared publishing state with separate scheduledPublishAt
+        await ProjectRepository.update(project.projectId, {
+          publishing: {
+            status: 'draft',
+            platform: 'youtube',
+            scheduledPublishAt,
+            metadata: {
+              title: project.name,
+              description: '',
+              tags: [],
+              privacyStatus: 'private',
+              scheduledPublishAt,
+            },
+          },
+        });
         break;
+      }
 
       case 'ai_script_rewrite':
         // Run transcription using existing AudioTranscriptionService

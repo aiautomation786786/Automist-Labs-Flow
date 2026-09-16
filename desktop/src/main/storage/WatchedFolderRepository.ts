@@ -278,6 +278,31 @@ export class WatchedFolderRepository {
   }
 
   /**
+   * Atomically updates cadence run and next-scheduled timestamps.
+   */
+  static async updateCadenceTimestamps(
+    id: string,
+    lastCadenceRunAt?: string,
+    nextScheduledRunAt?: string
+  ): Promise<WatchedFolderEntity | null> {
+    return await fileMutex.runExclusive('watched_folder_index', async () => {
+      const existing = await this.readWatcherInternal(id);
+      if (!existing) return null;
+
+      const now = new Date().toISOString();
+      const updated: WatchedFolderEntity = {
+        ...existing,
+        lastCadenceRunAt: lastCadenceRunAt !== undefined ? lastCadenceRunAt : existing.lastCadenceRunAt,
+        nextScheduledRunAt: nextScheduledRunAt !== undefined ? nextScheduledRunAt : existing.nextScheduledRunAt,
+        updatedAt: now,
+      };
+
+      await this.saveWatcherAtomic(updated);
+      return updated;
+    });
+  }
+
+  /**
    * Safely pauses or resumes a watched folder.
    */
   static async setPaused(id: string, paused: boolean): Promise<WatchedFolderEntity> {
