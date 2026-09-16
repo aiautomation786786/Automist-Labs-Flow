@@ -1761,6 +1761,111 @@ export interface FlowApi {
     getProjectPublishingState?: (projectId: string) => Promise<ProjectPublishingState | null>;
     generatePublishingMetadata?: (projectId: string) => Promise<PublishingAiSuggestion>;
     onPublishingProgress?: (callback: (event: PublishingProgressEvent) => void) => () => void;
+
+    // Watched Folder & Cadence Automation API (Phase 4)
+    listWatchedFolders?: () => Promise<WatchedFolderEntity[]>;
+    getWatchedFolder?: (id: string) => Promise<WatchedFolderEntity | null>;
+    createWatchedFolder?: (params: CreateWatchedFolderParams) => Promise<WatchedFolderEntity>;
+    updateWatchedFolder?: (id: string, params: UpdateWatchedFolderParams) => Promise<WatchedFolderEntity>;
+    deleteWatchedFolder?: (id: string) => Promise<{ success: boolean }>;
+    setWatchedFolderPaused?: (id: string, paused: boolean) => Promise<WatchedFolderEntity>;
+    getWatchedFolderHistory?: (id: string, limit?: number) => Promise<WatchedFileRecord[]>;
+}
+
+// =============================================================================
+// Watched Folder & Cadence Automation Types (Phase 4)
+// =============================================================================
+
+export type WatchedFolderStatus =
+    | 'idle'
+    | 'watching'
+    | 'paused'
+    | 'processing'
+    | 'error';
+
+export type CadenceMode =
+    | 'immediate'
+    | 'scheduled'
+    | 'interval';
+
+export type WatchedMediaWorkflow =
+    | 'import_only'
+    | 'import_and_render'
+    | 'import_render_publish'
+    | 'ai_script_rewrite';
+
+export interface WatchedFolderCadenceConfig {
+    mode: CadenceMode;
+    dailyTime?: string;
+    intervalMinutes?: number;
+    catchUpMissed?: boolean;
+    publishDelayHours?: number;
+}
+
+export interface WatchedFolderProcessingRules {
+    channelId?: string;
+    workflow: WatchedMediaWorkflow;
+    stabilityDurationMs?: number;
+    maxBatchSize?: number;
+    ingestOrder?: 'oldest_first' | 'newest_first';
+    deleteSourceOnSuccess?: boolean;
+    targetAspectRatio?: SupportedAspectRatio;
+}
+
+export interface WatchedFolderEntity {
+    id: string;
+    name: string;
+    folderPath: string;
+    enabled: boolean;
+    status: WatchedFolderStatus;
+    cadence: WatchedFolderCadenceConfig;
+    rules: WatchedFolderProcessingRules;
+    createdAt: string;
+    updatedAt: string;
+    lastPolledAt?: string;
+    lastIngestedAt?: string;
+    lastError?: string;
+    stats: {
+        totalDetected: number;
+        totalIngested: number;
+        totalErrors: number;
+        lastIngestedFilename?: string;
+    };
+}
+
+export interface WatchedFileRecord {
+    id: string;
+    watcherId: string;
+    filePath: string;
+    filename: string;
+    fileSizeBytes: number;
+    fileMtimeMs: number;
+    hashSha256: string;
+    status: 'stabilizing' | 'ingested' | 'skipped_duplicate' | 'error';
+    detectedAt: string;
+    ingestedAt?: string;
+    projectId?: string;
+    error?: string;
+}
+
+export interface CreateWatchedFolderParams {
+    name: string;
+    folderPath: string;
+    channelId?: string;
+    workflow?: WatchedMediaWorkflow;
+    cadence?: WatchedFolderCadenceConfig;
+    rules?: Partial<WatchedFolderProcessingRules>;
+    enabled?: boolean;
+}
+
+export interface UpdateWatchedFolderParams {
+    name?: string;
+    folderPath?: string;
+    channelId?: string;
+    workflow?: WatchedMediaWorkflow;
+    cadence?: WatchedFolderCadenceConfig;
+    rules?: Partial<WatchedFolderProcessingRules>;
+    enabled?: boolean;
 }
 export interface DiscoveredLocalProfile {
     profileDirectory: string;

@@ -290,5 +290,47 @@ export class AssetManager {
     }
     return dir;
   }
+
+  /**
+   * Returns the root watched folders directory: %LOCALAPPDATA%\GoogleFlowApp\watched_folders
+   */
+  static getWatchedFoldersRootDir(): string {
+    return path.join(getAppDataDir(), 'watched_folders');
+  }
+
+  /**
+   * Returns the storage directory for a specific watched folder:
+   * %LOCALAPPDATA%\GoogleFlowApp\watched_folders\{watcherId}
+   */
+  static getWatchedFolderDir(watcherId: string): string {
+    return path.join(this.getWatchedFoldersRootDir(), watcherId);
+  }
+
+  /**
+   * Returns the path to a watcher's watcher.json file.
+   */
+  static getWatchedFolderJsonPath(watcherId: string): string {
+    return path.join(this.getWatchedFolderDir(watcherId), 'watcher.json');
+  }
+
+  /**
+   * Returns the path to a watcher's history.json deduplication ledger file.
+   */
+  static getWatchedFolderHistoryJsonPath(watcherId: string): string {
+    return path.join(this.getWatchedFolderDir(watcherId), 'history.json');
+  }
+
+  /**
+   * Ensures the watcher directory exists.
+   */
+  static ensureWatchedFolderDirectories(watcherId: string): { watcherDir: string } {
+    const watcherDir = this.getWatchedFolderDir(watcherId);
+    for (const dir of [this.getWatchedFoldersRootDir(), watcherDir]) {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    }
+    return { watcherDir };
+  }
 }
 

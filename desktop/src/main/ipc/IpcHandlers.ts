@@ -51,6 +51,8 @@ import { MediaImportService } from '../import/MediaImportService';
 import { AudioTranscriptionService } from '../transcription/AudioTranscriptionService';
 import { ImportedMediaRenderer } from '../render/ImportedMediaRenderer';
 import { PublishingAccountService } from '../publishing/PublishingAccountService';
+import { WatchedFolderRepository } from '../storage/WatchedFolderRepository';
+import { WatchedFolderHistoryRepository } from '../storage/WatchedFolderHistoryRepository';
 import type {
   VideoFactoryConfig,
   VideoFactoryStage,
@@ -67,6 +69,8 @@ import type {
   ImportMediaParams,
   BurnImportedSubtitlesParams,
   YouTubePublishingMetadata,
+  CreateWatchedFolderParams,
+  UpdateWatchedFolderParams,
 } from '../../shared/types';
 
 const logger = new AppLogger({ mirrorToStderr: false });
@@ -1172,6 +1176,53 @@ export class IpcHandlers {
     ipcMain.handle('publishing:generateMetadata', async (_event, projectId: unknown) => {
       if (typeof projectId !== 'string') throw new Error('Invalid projectId for generateMetadata');
       return await ScriptAiService.generatePublishingMetadata(projectId);
+    });
+
+    // -------------------------------------------------------------------------
+    // Watched Folders & Cadence Automation API (Phase 4)
+    // -------------------------------------------------------------------------
+    ipcMain.handle('watchedFolder:list', async () => {
+      return await WatchedFolderRepository.getAll();
+    });
+
+    ipcMain.handle('watchedFolder:get', async (_event, id: unknown) => {
+      if (typeof id !== 'string') throw new Error('Invalid watched folder id');
+      return await WatchedFolderRepository.get(id);
+    });
+
+    ipcMain.handle('watchedFolder:create', async (_event, params: unknown) => {
+      if (!params || typeof params !== 'object') throw new Error('Invalid watched folder create params');
+      return await WatchedFolderRepository.create(params as CreateWatchedFolderParams);
+    });
+
+    ipcMain.handle('watchedFolder:update', async (_event, params: unknown) => {
+      const p = params as { id: string; patch: UpdateWatchedFolderParams };
+      if (!p || typeof p.id !== 'string' || !p.patch) {
+        throw new Error('Invalid watched folder update params');
+      }
+      return await WatchedFolderRepository.update(p.id, p.patch);
+    });
+
+    ipcMain.handle('watchedFolder:delete', async (_event, id: unknown) => {
+      if (typeof id !== 'string') throw new Error('Invalid watched folder id');
+      const success = await WatchedFolderRepository.delete(id);
+      return { success };
+    });
+
+    ipcMain.handle('watchedFolder:setPaused', async (_event, params: unknown) => {
+      const p = params as { id: string; paused: boolean };
+      if (!p || typeof p.id !== 'string' || typeof p.paused !== 'boolean') {
+        throw new Error('Invalid setPaused params');
+      }
+      return await WatchedFolderRepository.setPaused(p.id, p.paused);
+    });
+
+    ipcMain.handle('watchedFolder:getHistory', async (_event, params: unknown) => {
+      const p = params as { id: string; limit?: number };
+      if (!p || typeof p.id !== 'string') {
+        throw new Error('Invalid getHistory params');
+      }
+      return await WatchedFolderHistoryRepository.getHistory(p.id, p.limit);
     });
 
     if (typeof (sessionManager as any)?.on === 'function') {

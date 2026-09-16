@@ -72,6 +72,10 @@ import type {
   ProjectPublishingState,
   PublishingProgressEvent,
   PublishingAiSuggestion,
+  WatchedFolderEntity,
+  CreateWatchedFolderParams,
+  UpdateWatchedFolderParams,
+  WatchedFileRecord,
 } from '../shared/types';
 
 const flowApi: FlowApi = {
@@ -386,6 +390,28 @@ const flowApi: FlowApi = {
     ipcRenderer.on('flow:publishing:progress', handler);
     return () => ipcRenderer.removeListener('flow:publishing:progress', handler);
   },
+
+  // Watched Folders & Cadence Automation API (Phase 4)
+  listWatchedFolders: (): Promise<WatchedFolderEntity[]> =>
+    ipcRenderer.invoke('watchedFolder:list'),
+
+  getWatchedFolder: (id: string): Promise<WatchedFolderEntity | null> =>
+    ipcRenderer.invoke('watchedFolder:get', id),
+
+  createWatchedFolder: (params: CreateWatchedFolderParams): Promise<WatchedFolderEntity> =>
+    ipcRenderer.invoke('watchedFolder:create', params),
+
+  updateWatchedFolder: (id: string, params: UpdateWatchedFolderParams): Promise<WatchedFolderEntity> =>
+    ipcRenderer.invoke('watchedFolder:update', { id, patch: params }),
+
+  deleteWatchedFolder: (id: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('watchedFolder:delete', id),
+
+  setWatchedFolderPaused: (id: string, paused: boolean): Promise<WatchedFolderEntity> =>
+    ipcRenderer.invoke('watchedFolder:setPaused', { id, paused }),
+
+  getWatchedFolderHistory: (id: string, limit?: number): Promise<WatchedFileRecord[]> =>
+    ipcRenderer.invoke('watchedFolder:getHistory', { id, limit }),
 };
 
 contextBridge.exposeInMainWorld('flowApi', flowApi);
