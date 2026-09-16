@@ -15,6 +15,7 @@ import type {
 } from '../../shared/types';
 import { WatchedFolderRepository } from '../storage/WatchedFolderRepository';
 import { WatchedFolderMonitor, type WatchedFolderMonitorOptions } from './WatchedFolderMonitor';
+import { WatchedFolderPipelineService } from '../pipeline/WatchedFolderPipelineService';
 import { AppLogger } from '../utils/AppLogger';
 
 const logger = new AppLogger({ mirrorToStderr: false });
@@ -76,7 +77,18 @@ export class WatchedFolderEngine {
     logger.info('watcher_engine', 'Initializing WatchedFolderEngine...');
     this.isInitialized = true;
 
+    // Set default pipeline ingestion handler if not already injected
+    if (!this.mediaReadyHandler) {
+      this.setMediaReadyHandler(async (record, entity) => {
+        await WatchedFolderPipelineService.ingest(record, entity);
+      });
+    }
+
     try {
+      // 1. Cold-start crash recovery: reconcile any interrupted processing records
+      await WatchedFolderPipelineService.reconcileIncompleteRecords();
+
+      // 2. Restore enabled monitors
       const watchers = await WatchedFolderRepository.getAll();
       for (const watcher of watchers) {
         if (watcher.enabled && watcher.status !== 'paused') {

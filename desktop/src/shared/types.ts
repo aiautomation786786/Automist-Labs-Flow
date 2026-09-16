@@ -567,6 +567,9 @@ export interface ProjectSourceMedia {
     hasAudio: boolean;
     importedAt: string;
     mediaPath: string; // Project-local relative path, e.g. "videos/source_video.mp4"
+    watcherId?: string;
+    watchedFileRecordId?: string;
+    workflow?: WatchedMediaWorkflow;
 }
 
 /**
@@ -605,6 +608,8 @@ export interface ProjectEntity {
     campaignTag?: string;
     channelId?: string;
     channelName?: string;
+    watcherId?: string;
+    watchedFileRecordId?: string;
     createdAt: string;
     updatedAt: string;
     status: ProjectStatus;
@@ -1375,6 +1380,9 @@ export interface ImportMediaParams {
     name?: string;
     channelId?: string;
     channelName?: string;
+    watcherId?: string;
+    watchedFileRecordId?: string;
+    workflow?: WatchedMediaWorkflow;
 }
 
 export interface TranscribeMediaParams {

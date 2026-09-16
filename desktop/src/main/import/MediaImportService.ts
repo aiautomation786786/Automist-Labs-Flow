@@ -118,6 +118,9 @@ export class MediaImportService {
       hasAudio: probe.hasAudio,
       importedAt: now,
       mediaPath: `videos/${targetFilename}`,
+      watcherId: params.watcherId,
+      watchedFileRecordId: params.watchedFileRecordId,
+      workflow: params.workflow,
     };
 
     const settings: ProjectSettings = {
@@ -138,6 +141,8 @@ export class MediaImportService {
       name: rawName,
       channelId: params.channelId,
       channelName: params.channelName,
+      watcherId: params.watcherId,
+      watchedFileRecordId: params.watchedFileRecordId,
       createdAt: now,
       updatedAt: now,
       status: 'draft',
