@@ -16,12 +16,14 @@ import {
   SparklesIcon,
   UsersIcon,
   SettingsIcon,
+  EyeIcon,
+  TvIcon,
 } from './Icons';
 import { InfinityFlowMark } from './InfinityFlowLogo';
 import type { ProfileSessionSnapshot, VideoFactoryMode } from '../../shared/types';
 
 type View =
-  | { type: 'projects'; initialTab?: 'projects' | 'channels' }
+  | { type: 'projects'; initialTab?: 'projects' | 'channels' | 'watched_folders' }
   | { type: 'single_image' }
   | { type: 'single_video' }
   | { type: 'bulk_image' }
@@ -33,6 +35,7 @@ type View =
   | { type: 'workspace'; projectId: string }
   | { type: 'create_video'; initialMode?: VideoFactoryMode; initialSkillId?: string; initialChannelId?: string }
   | { type: 'channels' }
+  | { type: 'watched_folders' }
   | { type: 'skills' }
   | { type: 'profiles' }
   | { type: 'settings' };
@@ -97,6 +100,8 @@ export const AppShell: React.FC = () => {
       });
     } else if (currentView.type === 'channels') {
       setCurrentView({ type: 'projects', initialTab: 'channels' });
+    } else if (currentView.type === 'watched_folders') {
+      setCurrentView({ type: 'projects', initialTab: 'watched_folders' });
     }
   }, [currentView, viewCategory]);
 
@@ -129,8 +134,25 @@ export const AppShell: React.FC = () => {
           id: 'projects',
           label: 'Projects',
           icon: <FolderIcon size={16} />,
-          isActive: currentView.type === 'projects' || currentView.type === 'workspace',
-          onClick: () => setCurrentView({ type: 'projects' }),
+          isActive:
+            (currentView.type === 'projects' &&
+              (!currentView.initialTab || currentView.initialTab === 'projects')) ||
+            currentView.type === 'workspace',
+          onClick: () => setCurrentView({ type: 'projects', initialTab: 'projects' }),
+        },
+        {
+          id: 'channels',
+          label: 'Channels',
+          icon: <TvIcon size={16} />,
+          isActive: currentView.type === 'projects' && currentView.initialTab === 'channels',
+          onClick: () => setCurrentView({ type: 'projects', initialTab: 'channels' }),
+        },
+        {
+          id: 'watched_folders',
+          label: 'Watched Folders',
+          icon: <EyeIcon size={16} />,
+          isActive: currentView.type === 'projects' && currentView.initialTab === 'watched_folders',
+          onClick: () => setCurrentView({ type: 'projects', initialTab: 'watched_folders' }),
         },
       ],
     },

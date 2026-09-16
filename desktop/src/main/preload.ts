@@ -412,6 +412,12 @@ const flowApi: FlowApi = {
 
   getWatchedFolderHistory: (id: string, limit?: number): Promise<WatchedFileRecord[]> =>
     ipcRenderer.invoke('watchedFolder:getHistory', { id, limit }),
+
+  onWatchedFolderMediaReady: (callback: (data: { record: WatchedFileRecord; watcherId: string }) => void) => {
+    const handler = (_e: unknown, data: any) => callback(data);
+    ipcRenderer.on('flow:watchedFolder:mediaReady', handler);
+    return () => ipcRenderer.removeListener('flow:watchedFolder:mediaReady', handler);
+  },
 };
 
 contextBridge.exposeInMainWorld('flowApi', flowApi);

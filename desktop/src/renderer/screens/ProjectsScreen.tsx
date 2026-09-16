@@ -4,6 +4,7 @@ import type {
   ChannelEntity,
   DeliveryHistoryRecord,
   PublishingAccountEntity,
+  WatchedFolderEntity,
 } from '../../shared/types';
 import {
   PlusIcon,
@@ -14,14 +15,16 @@ import {
   AlertCircleIcon,
   CheckCircleIcon,
   RefreshIcon,
+  EyeIcon,
 } from '../components/Icons';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { ChannelModal } from '../components/ChannelModal';
+import { WatchedFoldersView } from '../components/WatchedFoldersView';
 
 interface ProjectsScreenProps {
   onOpenProject: (projectId: string) => void;
   onNavigateNewProject: () => void;
-  initialTab?: 'projects' | 'channels';
+  initialTab?: 'projects' | 'channels' | 'watched_folders';
   onNavigateVideoFactory?: (channelId?: string) => void;
 }
 
@@ -33,7 +36,8 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
 }) => {
   const [projects, setProjects] = useState<ProjectEntity[]>([]);
   const [channels, setChannels] = useState<ChannelEntity[]>([]);
-  const [activeTab, setActiveTab] = useState<'projects' | 'channels'>(initialTab);
+  const [watchedFolders, setWatchedFolders] = useState<WatchedFolderEntity[]>([]);
+  const [activeTab, setActiveTab] = useState<'projects' | 'channels' | 'watched_folders'>(initialTab);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -72,25 +76,36 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
 
   const loadData = async (silent = false) => {
     try {
-      if (!silent && projects.length === 0 && channels.length === 0) {
+      if (!silent && projects.length === 0 && channels.length === 0 && watchedFolders.length === 0) {
         setLoading(true);
       }
       if (window.flowApi) {
-        const [projList, chList, pubAccounts] = await Promise.all([
+        const [projList, chList, pubAccounts, wfList] = await Promise.all([
           window.flowApi.listProjects ? window.flowApi.listProjects() : Promise.resolve([]),
           window.flowApi.listChannels ? window.flowApi.listChannels() : Promise.resolve([]),
           window.flowApi.listPublishingAccounts ? window.flowApi.listPublishingAccounts() : Promise.resolve([]),
+          window.flowApi.listWatchedFolders ? window.flowApi.listWatchedFolders() : Promise.resolve([]),
         ]);
         setProjects(projList || []);
         setChannels(chList || []);
         setPublishingAccounts(pubAccounts || []);
+        setWatchedFolders(wfList || []);
       }
     } catch (err) {
-      console.error('Failed to load projects and channels', err);
+      console.error('Failed to load projects, channels, and watched folders', err);
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (window.flowApi?.onWatchedFolderMediaReady) {
+      const unsub = window.flowApi.onWatchedFolderMediaReady(() => {
+        loadData(true);
+      });
+      return () => unsub();
+    }
+  }, []);
 
   const handleConnectYouTube = async () => {
     if (!connectClientId.trim() || !connectClientSecret.trim()) {
@@ -491,7 +506,7 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
               <PlusIcon size={16} />
               New Project
             </button>
-          ) : (
+          ) : activeTab === 'channels' ? (
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
                 type="button"
@@ -537,11 +552,11 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
                 </button>
               )}
             </div>
-          )}
+          ) : null}
         </div>
       </div>
 
-      {/* Top View Switcher Tabs (Projects vs Channels) */}
+      {/* Top View Switcher Tabs (Projects vs Channels vs Watched Folders) */}
       <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
         <button
           data-testid="tab-projects"
@@ -563,6 +578,18 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
         >
           <TvIcon size={15} />
           Channels ({channels.length})
+        </button>
+        <button
+          data-testid="tab-watched-folders"
+          className={`btn-sm ${activeTab === 'watched_folders' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => {
+            setActiveTab('watched_folders');
+            setActiveChannelDetail(null);
+          }}
+          style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+        >
+          <EyeIcon size={15} />
+          Watched Folders ({watchedFolders.length})
         </button>
       </div>
 
@@ -754,6 +781,22 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
                                 }}
                               >
                                 Unsorted
+                              </span>
+                            )}
+                            {p.watcherId && (
+                              <span
+                                data-testid={`badge-watcher-${p.projectId}`}
+                                style={{
+                                  fontSize: '10.5px',
+                                  fontWeight: 600,
+                                  padding: '1px 6px',
+                                  borderRadius: '4px',
+                                  backgroundColor: 'rgba(139, 92, 246, 0.12)',
+                                  color: '#a78bfa',
+                                  border: '1px solid rgba(139, 92, 246, 0.25)',
+                                }}
+                              >
+                                👁️ Watched Folder
                               </span>
                             )}
                           </div>
@@ -1534,6 +1577,19 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
             </div>
           )}
         </>
+      )}
+
+      {/* ================================================================ */}
+      {/* TAB 3: WATCHED FOLDERS VIEW (Phase 4 Automation)                  */}
+      {/* ================================================================ */}
+      {activeTab === 'watched_folders' && (
+        <WatchedFoldersView
+          watchedFolders={watchedFolders}
+          channels={channels}
+          onRefresh={() => loadData(true)}
+          onOpenProject={onOpenProject}
+          setNotification={setNotification}
+        />
       )}
 
       {/* Confirmation Modal for Project Deletion */}

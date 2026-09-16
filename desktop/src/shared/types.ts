@@ -1778,6 +1778,7 @@ export interface FlowApi {
     deleteWatchedFolder?: (id: string) => Promise<{ success: boolean }>;
     setWatchedFolderPaused?: (id: string, paused: boolean) => Promise<WatchedFolderEntity>;
     getWatchedFolderHistory?: (id: string, limit?: number) => Promise<WatchedFileRecord[]>;
+    onWatchedFolderMediaReady?: (callback: (data: { record: WatchedFileRecord; watcherId: string }) => void) => () => void;
 }
 
 // =============================================================================
