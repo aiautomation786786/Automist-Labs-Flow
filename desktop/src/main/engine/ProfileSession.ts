@@ -188,17 +188,18 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
 
         if (detection.state === 'open_and_attachable') {
           // Case A: Profile is already open and automation-connectable via CDP
-          this.isExistingBrowser = true;
-          if (detection.cdpPort) {
-            this.config.cdpPort = detection.cdpPort;
+          // CRITICAL: We only attach if the active CDP port strictly matches this session's allocated port.
+          // We must NEVER hijack or mutate this.config.cdpPort with a foreign port (such as 9222).
+          if (detection.cdpPort && detection.cdpPort === this.config.cdpPort) {
+            this.isExistingBrowser = true;
+            this.log.info('session', 'Attaching to running Chrome profile with CDP', {
+              profile: detection.profileDisplayName || detection.profileDirectory,
+              cdpPort: this.config.cdpPort,
+            });
+            await this.connectPlaywright();
+            await this.checkAuth();
+            return;
           }
-          this.log.info('session', 'Attaching to running Chrome profile with CDP', {
-            profile: detection.profileDisplayName || detection.profileDirectory,
-            cdpPort: this.config.cdpPort,
-          });
-          await this.connectPlaywright();
-          await this.checkAuth();
-          return;
         }
 
         // Case B / C: Profile is running without CDP endpoint or not running.
@@ -968,6 +969,16 @@ if ($targetPids.Count -gt 0) {
       localProfileDirectory: this.config.localProfileDirectory,
       chromePid: this.chromeProcess?.pid,
     };
+  }
+
+  /** Returns the configured CDP port for this session. */
+  get cdpPort(): number {
+    return this.config.cdpPort;
+  }
+
+  /** Ensures the session's CDP port matches the persisted profile configuration. */
+  setCdpPort(port: number): void {
+    this.config.cdpPort = port;
   }
 
   /** Returns the active Playwright Page, or null if not connected or closed. */

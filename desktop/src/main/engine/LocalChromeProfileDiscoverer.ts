@@ -331,7 +331,7 @@ export class LocalChromeProfileDiscoverer {
    *  - Running chrome.exe processes via PowerShell / Win32
    *  - Whether `--remote-debugging-port` is already active
    */
-  static async isProfileInUse(userDataDir: string, _profileDirectory?: string): Promise<ProfileInUseResult> {
+  static async isProfileInUse(userDataDir: string, profileDirectory?: string): Promise<ProfileInUseResult> {
     if (process.platform !== 'win32') {
       return { inUse: false, pids: [] };
     }
@@ -388,6 +388,18 @@ export class LocalChromeProfileDiscoverer {
         }
 
         if (procUserData && procUserData === normTargetUserData) {
+          // If a specific profileDirectory was requested, verify that the process command line
+          // either matches that profile directory or defaults to it
+          if (profileDirectory) {
+            const profMatch = cmd.match(/--profile-directory=["']?([^"'\s]+)["']?/i);
+            if (profMatch?.[1]) {
+              if (profMatch[1].toLowerCase() !== profileDirectory.toLowerCase()) {
+                // Different profile running under the same user-data-dir; do not match this process PID or port
+                continue;
+              }
+            }
+          }
+
           matchingPids.push(proc.ProcessId);
 
           // Check if remote debugging port is present
@@ -547,14 +559,16 @@ export class LocalChromeProfileDiscoverer {
 
   /**
    * Searches for an active CDP endpoint across candidate ports.
+   * If a preferredPort is specified, ONLY that port is probed to strictly guarantee profile isolation.
    */
   static async findActiveCdpEndpoint(preferredPort?: number): Promise<{ port: number } | null> {
-    const candidatePorts = preferredPort
-      ? [preferredPort, 9222, 9223, 9224, 9225]
-      : [9222, 9223, 9224, 9225];
-    const uniquePorts = [...new Set(candidatePorts)];
+    if (preferredPort) {
+      const isOk = await this.probePort(preferredPort);
+      return isOk ? { port: preferredPort } : null;
+    }
 
-    for (const port of uniquePorts) {
+    const candidatePorts = [9222, 9223, 9224, 9225];
+    for (const port of candidatePorts) {
       try {
         const isOk = await this.probePort(port);
         if (isOk) {
@@ -621,8 +635,10 @@ export class LocalChromeProfileDiscoverer {
       };
     }
 
-    // Profile IS OPEN! Check if automation / CDP connection is available
-    const activeCdp = await this.findActiveCdpEndpoint(procInfo.cdpPort || target.preferredCdpPort);
+    // Profile IS OPEN! Check if automation / CDP connection is available.
+    // When preferredCdpPort is known, only that port is checked to avoid cross-profile port hijacking.
+    const portToProbe = target.preferredCdpPort ?? procInfo.cdpPort;
+    const activeCdp = await this.findActiveCdpEndpoint(portToProbe);
 
     if (activeCdp) {
       return {

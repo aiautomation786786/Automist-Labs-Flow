@@ -78,6 +78,18 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
     appLogger.info('session_manager', 'ProfileSessionManager initialized', {
       chromePath: this.chromePath,
     });
+
+    // Pre-register all persisted profile port allocations to ensure port isolation across manager lifetime
+    try {
+      const persisted = ProfileConfigManager.list();
+      for (const p of persisted) {
+        if (p.profileId && p.cdpPort) {
+          this.portAllocator.setAllocation(p.profileId, p.cdpPort);
+        }
+      }
+    } catch {
+      // Ignore if profiles directory has not been initialized yet
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -506,6 +518,8 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       session = new ProfileSession(config);
       this.sessions.set(profileId, session);
       this.attachSessionEvents(session);
+    } else {
+      session.setCdpPort(config.cdpPort);
     }
 
     appLogger.info('session_manager', 'launchLoginBrowser: launching dedicated Chrome for login', {
@@ -597,6 +611,8 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       session = new ProfileSession(config);
       this.sessions.set(profileId, session);
       this.attachSessionEvents(session);
+    } else {
+      session.setCdpPort(config.cdpPort);
     }
 
     // 2. Check if Chrome process is alive or CDP port is responsive
@@ -792,7 +808,10 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       const session = this.sessions.get(config.profileId);
 
       if (session) {
-        snapshots.push(session.getSnapshot());
+        const snap = session.getSnapshot();
+        // Defensive invariant: snapshot cdpPort must always reflect profile's persisted/allocated port
+        snap.cdpPort = config.cdpPort;
+        snapshots.push(snap);
       } else {
         const localEmail = LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
           config.userDataDir,

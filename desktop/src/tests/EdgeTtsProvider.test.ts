@@ -84,7 +84,7 @@ describe('EdgeTtsProvider Unit & Token Tests', () => {
       expect(result.sizeBytes).toBe(result.audioBuffer.length);
     } catch (err: any) {
       // If CI or offline environment blocks Bing WebSocket connection, verify that it failed with network/timeout error
-      expect(err?.message).toMatch(/websocket|timeout|econnrefused|enotfound|connect/i);
+      expect(err?.message).toMatch(/websocket|timeout|econnrefused|enotfound|connect|econnreset/i);
     }
   }, 15000);
 });
