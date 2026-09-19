@@ -17,11 +17,12 @@ describe('Profile CDP Port Isolation Regression Tests', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-profile-isolation-test-'));
     originalLocalAppData = process.env['LOCALAPPDATA'];
     process.env['LOCALAPPDATA'] = tempDir;
-    vi.spyOn(ProfileConfigManager, 'getProfilesRootDir').mockReturnValue(path.join(tempDir, 'AutomistLabs', 'FlowProfiles'));
+    ProfileConfigManager.setCustomProfilesRootDir(path.join(tempDir, 'AutomistLabs', 'FlowProfiles'));
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    ProfileConfigManager.setCustomProfilesRootDir(null);
     if (originalLocalAppData !== undefined) {
       process.env['LOCALAPPDATA'] = originalLocalAppData;
     }

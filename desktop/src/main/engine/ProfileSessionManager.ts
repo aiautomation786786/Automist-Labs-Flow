@@ -55,7 +55,24 @@ export interface ManagerEventMap {
 export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
   private readonly sessions = new Map<string, ProfileSession>();
   private readonly portAllocator: ChromePortAllocator;
+  private readonly profileOperationLocks = new Map<string, Promise<any>>();
   private chromePath: string;
+
+  private async withProfileLock<T>(profileId: string, fn: () => Promise<T>): Promise<T> {
+    const existing = this.profileOperationLocks.get(profileId);
+    if (existing) {
+      await existing.catch(() => {});
+    }
+    const promise = fn();
+    this.profileOperationLocks.set(profileId, promise);
+    try {
+      return await promise;
+    } finally {
+      if (this.profileOperationLocks.get(profileId) === promise) {
+        this.profileOperationLocks.delete(profileId);
+      }
+    }
+  }
 
   constructor(options: {
     portAllocator?: ChromePortAllocator;
@@ -110,7 +127,27 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
     notes?: string;
     expectedEmail?: string;
   }): Promise<ProfileConfig> {
-    // Use a stable temporary key for the port allocation.
+    // 1. Deduplication check: if canonical profile already exists with matching email, reuse it
+    if (params.expectedEmail) {
+      const normEmail = params.expectedEmail.trim().toLowerCase();
+      const existing = ProfileConfigManager.list().find(
+        (p) =>
+          (p.expectedEmail && p.expectedEmail.trim().toLowerCase() === normEmail) ||
+          (p.detectedEmail && p.detectedEmail.trim().toLowerCase() === normEmail)
+      );
+      if (existing) {
+        appLogger.info('session_manager', 'Profile with this email already exists; returning canonical profile', {
+          profileId: existing.profileId,
+          email: normEmail,
+        });
+        if (params.autoStart) {
+          await this.startProfile(existing.profileId, params.headless ?? false);
+        }
+        return existing;
+      }
+    }
+
+    // 2. Use a stable temporary key for the port allocation.
     // We reassign to the real profileId immediately after the config is created.
     const tempKey = `pending_${process.hrtime.bigint().toString()}`;
     const cdpPort = await this.portAllocator.allocate(tempKey);
@@ -262,88 +299,97 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
    * @param headless   Launch Chrome headless.
    */
   async startProfile(profileId: string, headless = false): Promise<void> {
-    const config = ProfileConfigManager.read(profileId);
+    return this.withProfileLock(profileId, async () => {
+      const config = ProfileConfigManager.read(profileId);
 
-    // Reuse existing session object if possible
-    let session = this.sessions.get(profileId);
+      // Reuse existing session object if possible
+      let session = this.sessions.get(profileId);
 
-    if (session && session.status !== 'stopped' && session.status !== 'error') {
-      if (session.status === 'chrome_launched' || session.status === 'connecting') {
-        appLogger.info('session_manager', 'Profile is currently starting or connecting, ignoring duplicate start call', { profileId, status: session.status });
+      if (session && session.status !== 'stopped' && session.status !== 'error') {
+        if (session.status === 'chrome_launched' || session.status === 'connecting') {
+          appLogger.info('session_manager', 'Profile is currently starting or connecting, ignoring duplicate start call', { profileId, status: session.status });
+          return;
+        }
+        if (session.status === 'browser_open' || (session.isProcessAlive() && !session.getPage())) {
+          appLogger.info('session_manager', 'Connecting to existing running session', { profileId });
+          await session.connectToRunningBrowser();
+          await session.verifyAuth();
+          return;
+        }
+        appLogger.warn('session_manager', 'Profile already running', {
+          profileId,
+          status: session.status,
+        });
         return;
       }
-      if (session.status === 'browser_open' || (session.isProcessAlive() && !session.getPage())) {
-        appLogger.info('session_manager', 'Connecting to existing running session', { profileId });
+
+      // Check if Chrome is already active on the configured CDP port
+      let isPortActive = false;
+      try {
+        await probeCdpPort(config.cdpPort);
+        isPortActive = true;
+      } catch {
+        isPortActive = false;
+      }
+
+      if (!isPortActive) {
+        // Ensure port is allocated for new launch
+        const existingPort = this.portAllocator.getPort(profileId);
+        if (!existingPort) {
+          // Allocate the port stored in the profile config
+          const available = await this.portAllocator.allocate(profileId, config.cdpPort);
+          if (available !== config.cdpPort) {
+            // Port stored in profile config is taken; update config with new port
+            const updatedConfig = ProfileConfigManager.update(profileId, { cdpPort: available });
+            appLogger.warn('session_manager', 'CDP port conflict — assigned new port', {
+              profileId,
+              oldPort: config.cdpPort,
+              newPort: available,
+            });
+            Object.assign(config, updatedConfig);
+          }
+        }
+      }
+
+      if (!session) {
+        session = new ProfileSession(config);
+        this.sessions.set(profileId, session);
+        this.attachSessionEvents(session);
+      } else {
+        session.updateConfig(config);
+        session.setCdpPort(config.cdpPort);
+      }
+
+      if (isPortActive) {
+        appLogger.info('session_manager', 'CDP port already active; attaching to running Chrome', { profileId, port: config.cdpPort });
         await session.connectToRunningBrowser();
         await session.verifyAuth();
         return;
       }
-      appLogger.warn('session_manager', 'Profile already running', {
-        profileId,
-        status: session.status,
-      });
-      return;
-    }
 
-    // Check if Chrome is already active on the configured CDP port
-    let isPortActive = false;
-    try {
-      await probeCdpPort(config.cdpPort);
-      isPortActive = true;
-    } catch {
-      isPortActive = false;
-    }
+      appLogger.info('session_manager', 'Starting profile', { profileId, headless });
 
-    if (!isPortActive) {
-      // Ensure port is allocated for new launch
-      const existingPort = this.portAllocator.getPort(profileId);
-      if (!existingPort) {
-        // Allocate the port stored in the profile config
-        const available = await this.portAllocator.allocate(profileId, config.cdpPort);
-        if (available !== config.cdpPort) {
-          // Port stored in profile config is taken; update config with new port
-          const updatedConfig = ProfileConfigManager.update(profileId, { cdpPort: available });
-          appLogger.warn('session_manager', 'CDP port conflict — assigned new port', {
-            profileId,
-            oldPort: config.cdpPort,
-            newPort: available,
-          });
-          Object.assign(config, updatedConfig);
-        }
-      }
-    }
-
-    session = new ProfileSession(config);
-    this.sessions.set(profileId, session);
-    this.attachSessionEvents(session);
-
-    if (isPortActive) {
-      appLogger.info('session_manager', 'CDP port already active; attaching to running Chrome', { profileId, port: config.cdpPort });
-      await session.connectToRunningBrowser();
-      await session.verifyAuth();
-      return;
-    }
-
-    appLogger.info('session_manager', 'Starting profile', { profileId, headless });
-
-    // Non-blocking start; session events will update callers
-    await session.start(headless);
+      // Non-blocking start; session events will update callers
+      await session.start(headless);
+    });
   }
 
   /**
    * Stops a running profile session.
    */
   async stopProfile(profileId: string): Promise<void> {
-    const session = this.sessions.get(profileId);
+    return this.withProfileLock(profileId, async () => {
+      const session = this.sessions.get(profileId);
 
-    if (!session) {
-      appLogger.warn('session_manager', 'stopProfile called on unknown profile', { profileId });
-      return;
-    }
+      if (!session) {
+        appLogger.warn('session_manager', 'stopProfile called on unknown profile', { profileId });
+        return;
+      }
 
-    await session.stop();
-    this.portAllocator.release(profileId);
-    appLogger.info('session_manager', 'Profile stopped', { profileId });
+      await session.stop();
+      this.portAllocator.release(profileId);
+      appLogger.info('session_manager', 'Profile stopped', { profileId });
+    });
   }
 
   /**
@@ -501,42 +547,44 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
     userDataDir: string;
     message: string;
   }> {
-    const config = ProfileConfigManager.read(profileId);
+    return this.withProfileLock(profileId, async () => {
+      const config = ProfileConfigManager.read(profileId);
 
-    // Reuse or create a session object
-    let session = this.sessions.get(profileId);
-    if (!session) {
-      // Ensure port is allocated
-      const existingPort = this.portAllocator.getPort(profileId);
-      if (!existingPort) {
-        const available = await this.portAllocator.allocate(profileId, config.cdpPort);
-        if (available !== config.cdpPort) {
-          const updatedConfig = ProfileConfigManager.update(profileId, { cdpPort: available });
-          Object.assign(config, updatedConfig);
+      // Reuse or create a session object
+      let session = this.sessions.get(profileId);
+      if (!session) {
+        // Ensure port is allocated
+        const existingPort = this.portAllocator.getPort(profileId);
+        if (!existingPort) {
+          const available = await this.portAllocator.allocate(profileId, config.cdpPort);
+          if (available !== config.cdpPort) {
+            const updatedConfig = ProfileConfigManager.update(profileId, { cdpPort: available });
+            Object.assign(config, updatedConfig);
+          }
         }
+        session = new ProfileSession(config);
+        this.sessions.set(profileId, session);
+        this.attachSessionEvents(session);
+      } else {
+        session.setCdpPort(config.cdpPort);
       }
-      session = new ProfileSession(config);
-      this.sessions.set(profileId, session);
-      this.attachSessionEvents(session);
-    } else {
-      session.setCdpPort(config.cdpPort);
-    }
 
-    appLogger.info('session_manager', 'launchLoginBrowser: launching dedicated Chrome for login', {
-      profileId,
-      cdpPort: config.cdpPort,
-      userDataDir: config.userDataDir,
+      appLogger.info('session_manager', 'launchLoginBrowser: launching dedicated Chrome for login', {
+        profileId,
+        cdpPort: config.cdpPort,
+        userDataDir: config.userDataDir,
+      });
+
+      const result = await session.launchLoginBrowser();
+
+      return {
+        success: true,
+        pid: result.pid,
+        cdpPort: result.cdpPort,
+        userDataDir: result.userDataDir,
+        message: `Chrome opened — Sign into Google in the Flow window. (PID: ${result.pid}, port: ${result.cdpPort})`,
+      };
     });
-
-    const result = await session.launchLoginBrowser();
-
-    return {
-      success: true,
-      pid: result.pid,
-      cdpPort: result.cdpPort,
-      userDataDir: result.userDataDir,
-      message: `Chrome opened — Sign into Google in the Flow window. (PID: ${result.pid}, port: ${result.cdpPort})`,
-    };
   }
 
   /**
@@ -544,38 +592,40 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
    * If Chrome is already running, reconnects to it and brings Flow tab to front.
    */
   async openSignIn(profileId: string): Promise<ProfileSessionSnapshot> {
-    const config = ProfileConfigManager.read(profileId);
-    let session = this.sessions.get(profileId);
-    if (!session) {
-      const existingPort = this.portAllocator.getPort(profileId);
-      if (!existingPort) {
-        this.portAllocator.setAllocation(profileId, config.cdpPort);
+    return this.withProfileLock(profileId, async () => {
+      const config = ProfileConfigManager.read(profileId);
+      let session = this.sessions.get(profileId);
+      if (!session) {
+        const existingPort = this.portAllocator.getPort(profileId);
+        if (!existingPort) {
+          this.portAllocator.setAllocation(profileId, config.cdpPort);
+        }
+        session = new ProfileSession(config);
+        this.sessions.set(profileId, session);
+        this.attachSessionEvents(session);
       }
-      session = new ProfileSession(config);
-      this.sessions.set(profileId, session);
-      this.attachSessionEvents(session);
-    }
 
-    let isRunning = session.isProcessAlive();
-    if (!isRunning) {
-      try {
-        await probeCdpPort(config.cdpPort);
-        isRunning = true;
-      } catch {
-        isRunning = false;
+      let isRunning = session.isProcessAlive();
+      if (!isRunning) {
+        try {
+          await probeCdpPort(config.cdpPort);
+          isRunning = true;
+        } catch {
+          isRunning = false;
+        }
       }
-    }
 
-    if (isRunning) {
-      // Reconnect to existing browser and reuse/open Flow tab
-      const page = await session.connectToRunningBrowser();
-      await page.bringToFront().catch(() => {});
+      if (isRunning) {
+        // Reconnect to existing browser and reuse/open Flow tab
+        const page = await session.connectToRunningBrowser();
+        await page.bringToFront().catch(() => {});
+        return session.getSnapshot();
+      }
+
+      // Otherwise do a full start
+      await session.start(false);
       return session.getSnapshot();
-    }
-
-    // Otherwise do a full start
-    await session.start(false);
-    return session.getSnapshot();
+    });
   }
 
   /**
@@ -599,7 +649,8 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
     detectedEmail: string | null;
     error?: string;
   }> {
-    const config = ProfileConfigManager.read(profileId);
+    return this.withProfileLock(profileId, async () => {
+      const config = ProfileConfigManager.read(profileId);
 
     // 1. Get or instantiate session
     let session = this.sessions.get(profileId);
@@ -758,6 +809,7 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
         error: (err as Error).message,
       };
     }
+    });
   }
 
   /**

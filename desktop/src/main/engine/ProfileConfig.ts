@@ -23,8 +23,22 @@ import { LocalChromeProfileDiscoverer } from './LocalChromeProfileDiscoverer';
 // Path helpers
 // ---------------------------------------------------------------------------
 
+let customProfilesRootDir: string | null = null;
+
+/** Override profiles root directory for testing/isolation. */
+export function setCustomProfilesRootDir(dir: string | null): void {
+  customProfilesRootDir = dir;
+}
+
 /** Returns the root directory for all profiles. */
 export function getProfilesRootDir(): string {
+  if (customProfilesRootDir) {
+    return customProfilesRootDir;
+  }
+  const envOverride = process.env['FLOW_PROFILES_DIR'];
+  if (envOverride) {
+    return envOverride;
+  }
   if (process.platform === 'win32') {
     const localAppData = process.env['LOCALAPPDATA'] ?? process.env['APPDATA'];
     if (localAppData) {
@@ -169,8 +183,12 @@ export class ProfileConfigManager {
     }
   }
 
-  /** Returns all profiles found in the profiles root directory. */
-  static readAll(): ProfileConfig[] {
+  static setCustomProfilesRootDir(dir: string | null): void {
+    setCustomProfilesRootDir(dir);
+  }
+
+  /** Reads raw configs without triggering reconciliation (used internally). */
+  private static readRawAll(): ProfileConfig[] {
     const rootDir = getProfilesRootDir();
 
     if (!fs.existsSync(rootDir)) {
@@ -194,6 +212,96 @@ export class ProfileConfigManager {
     }
 
     return configs;
+  }
+
+  /**
+   * Reconciles persisted profiles so that:
+   *  ONE logical account = ONE canonical profile directory = ONE stable CDP port.
+   *
+   * 1. Removes empty directories starting with profile_ without profile.json.
+   * 2. Detects duplicates by matching normalized email or matching display name.
+   * 3. Retains the canonical profile (authenticated or oldest) and cleanly deletes
+   *    unauthenticated duplicate stubs from disk.
+   */
+  static reconcileCanonicalProfiles(): ProfileConfig[] {
+    const rootDir = getProfilesRootDir();
+    if (!fs.existsSync(rootDir)) {
+      return [];
+    }
+
+    // 1. Clean empty/corrupted profile directories
+    try {
+      const entries = fs.readdirSync(rootDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && entry.name.startsWith('profile_')) {
+          const cfgPath = path.join(rootDir, entry.name, 'profile.json');
+          if (!fs.existsSync(cfgPath)) {
+            try {
+              fs.rmSync(path.join(rootDir, entry.name), { recursive: true, force: true });
+              appLogger.info('profile_config', `Removed empty profile directory without profile.json: ${entry.name}`);
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    const allConfigs = this.readRawAll();
+    if (allConfigs.length <= 1) {
+      return allConfigs;
+    }
+
+    // 2. Identify canonical profile vs duplicate stubs
+    // Canonical criteria:
+    //  - Has detectedEmail or expectedEmail
+    //  - Or connectionMode === 'existing_chrome'
+    //  - Older createdAt
+    const sorted = [...allConfigs].sort((a, b) => {
+      const aAuth = (a.detectedEmail || a.expectedEmail || a.connectionMode === 'existing_chrome') ? 1 : 0;
+      const bAuth = (b.detectedEmail || b.expectedEmail || b.connectionMode === 'existing_chrome') ? 1 : 0;
+      if (aAuth !== bAuth) return bAuth - aAuth;
+      return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+    });
+
+    const canonicalMap = new Map<string, ProfileConfig>();
+    const duplicateIdsToDelete = new Set<string>();
+
+    for (const config of sorted) {
+      const email = (config.detectedEmail || config.expectedEmail || '').trim().toLowerCase();
+      const name = (config.displayName || '').trim().toLowerCase();
+
+      let existingCanonical: ProfileConfig | undefined;
+      if (email) {
+        existingCanonical = canonicalMap.get(`email:${email}`);
+      }
+      if (!existingCanonical && name) {
+        existingCanonical = canonicalMap.get(`name:${name}`);
+      }
+
+      if (existingCanonical && existingCanonical.profileId !== config.profileId) {
+        appLogger.warn('profile_config', `Identified duplicate profile '${config.profileId}' (${config.displayName}, port ${config.cdpPort}) matching canonical '${existingCanonical.profileId}' (${existingCanonical.displayName}, port ${existingCanonical.cdpPort})`);
+        duplicateIdsToDelete.add(config.profileId);
+      } else {
+        if (email) canonicalMap.set(`email:${email}`, config);
+        if (name) canonicalMap.set(`name:${name}`, config);
+      }
+    }
+
+    // 3. Delete duplicates from disk
+    for (const dupId of duplicateIdsToDelete) {
+      appLogger.info('profile_config', `Pruning duplicate profile directory: ${dupId}`);
+      this.delete(dupId);
+    }
+
+    return this.readRawAll();
+  }
+
+  /** Returns all canonical profiles found in the profiles root directory, reconciling any duplicates. */
+  static readAll(): ProfileConfig[] {
+    return this.reconcileCanonicalProfiles();
   }
 
   /** Alias for readAll() */

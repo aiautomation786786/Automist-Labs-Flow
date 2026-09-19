@@ -113,6 +113,8 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   private detectedEmail: string | null = null;
   private flowUrl: string | null = null;
   private isConnectingPromise: Promise<Page> | null = null;
+  private startPromise: Promise<void> | null = null;
+  private verifyPromise: Promise<FlowAuthCheckResult & { pagesCount: number; flowPageFound: boolean }> | null = null;
   private jobPageCreationMutex: Promise<void> = Promise.resolve();
 
   private acquireJobPageCreationLock(): Promise<() => void> {
@@ -150,6 +152,19 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
 
   /** Starts the session: launches Chrome, connects Playwright, checks auth. */
   async start(options: boolean | { headless?: boolean; background?: boolean } = false): Promise<void> {
+    if (this.startPromise) {
+      this.log.info('session', 'Session start already in progress; awaiting active start promise');
+      return this.startPromise;
+    }
+    this.startPromise = this._startInternal(options);
+    try {
+      await this.startPromise;
+    } finally {
+      this.startPromise = null;
+    }
+  }
+
+  private async _startInternal(options: boolean | { headless?: boolean; background?: boolean } = false): Promise<void> {
     const headless = typeof options === 'boolean' ? options : (options?.headless ?? false);
     const background = typeof options === 'boolean' ? !headless : (options?.background ?? !headless);
 
@@ -323,74 +338,6 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
           }
         } catch (repositionErr) {
           this.log.debug('chrome_launch', 'CDP reposition notice', { error: (repositionErr as Error).message });
-        }
-
-        // If we previously called Win32 ShowWindow(SW_HIDE), restore window to taskbar via SW_SHOW=5
-        if (process.platform === 'win32') {
-          try {
-            const port = this.config.cdpPort;
-            const rootPid = pid || 0;
-            const restoreScript = `
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class Win32WindowRestorer {
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-  [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-}
-"@ -ErrorAction SilentlyContinue
-
-$targetPids = @(${rootPid});
-$port = ${port};
-
-$conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1;
-if ($conn) { $targetPids += [int]$conn.OwningProcess }
-
-$snapshotPids = @($targetPids | Where-Object { $_ -gt 0 });
-foreach ($p in $snapshotPids) {
-  $children = Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ParentProcessId -eq $p }
-  foreach ($c in $children) { $targetPids += [int]$c.ProcessId }
-}
-
-$byCmd = Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*--remote-debugging-port=$port*" }
-foreach ($b in $byCmd) { $targetPids += [int]$b.ProcessId }
-
-$targetPids = $targetPids | Where-Object { $_ -gt 0 } | Select-Object -Unique
-
-if ($targetPids.Count -gt 0) {
-  [Win32WindowRestorer]::EnumWindows({
-    param($hwnd, $lparam)
-    $procId = 0
-    [Win32WindowRestorer]::GetWindowThreadProcessId($hwnd, [ref]$procId) | Out-Null
-    if ($targetPids -contains $procId) {
-      # Clear WS_EX_TOOLWINDOW (0x80), add WS_EX_APPWINDOW (0x40000)
-      $exStyle = [Win32WindowRestorer]::GetWindowLong($hwnd, -20)
-      $newExStyle = ($exStyle -band (-bnot 0x00000080)) -bor 0x00040000
-      [Win32WindowRestorer]::SetWindowLong($hwnd, -20, $newExStyle) | Out-Null
-      [Win32WindowRestorer]::ShowWindow($hwnd, 5) | Out-Null # SW_SHOW = 5
-      # SWP_SHOWWINDOW = 0x0040
-      [Win32WindowRestorer]::SetWindowPos($hwnd, [IntPtr]::Zero, 100, 100, 1280, 900, 0x0040) | Out-Null
-    }
-    return $true
-  }, [IntPtr]::Zero) | Out-Null
-}
-`.trim();
-
-            const encoded = Buffer.from(restoreScript, 'utf16le').toString('base64');
-            execSync(`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand ${encoded}`, {
-              timeout: 5000,
-              stdio: 'ignore',
-              windowsHide: true,
-            });
-            this.log.info('chrome_launch', 'Chrome window restored to taskbar via Win32 EnumWindows + SW_SHOW');
-          } catch {
-            // Non-fatal
-          }
         }
 
         this.startPostLoginWatcher();
@@ -790,6 +737,19 @@ if ($targetPids.Count -gt 0) {
    * runs FlowAuthDetector, and updates session state and metadata.
    */
   async verifyAuth(): Promise<FlowAuthCheckResult & { pagesCount: number; flowPageFound: boolean }> {
+    if (this.verifyPromise) {
+      this.log.info('auth_verify', 'Verification already in progress; awaiting active verification');
+      return this.verifyPromise;
+    }
+    this.verifyPromise = this._verifyAuthInternal();
+    try {
+      return await this.verifyPromise;
+    } finally {
+      this.verifyPromise = null;
+    }
+  }
+
+  private async _verifyAuthInternal(): Promise<FlowAuthCheckResult & { pagesCount: number; flowPageFound: boolean }> {
     // 1. Ensure connected to running browser
     let page = this.page;
     if (!page || page.isClosed() || !this.browser || !this.browser.isConnected()) {
