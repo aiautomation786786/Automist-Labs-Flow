@@ -61,21 +61,6 @@ import type {
   SeparateFilesInput,
   SystemMetrics,
   GeminiKeySummary,
-  ImportMediaParams,
-  MediaProbeResult,
-  TranscribeMediaParams,
-  BurnImportedSubtitlesParams,
-  TranscriptProgressEvent,
-  TranscriptEntity,
-  PublishingAccountEntity,
-  YouTubePublishingMetadata,
-  ProjectPublishingState,
-  PublishingProgressEvent,
-  PublishingAiSuggestion,
-  WatchedFolderEntity,
-  CreateWatchedFolderParams,
-  UpdateWatchedFolderParams,
-  WatchedFileRecord,
 } from '../shared/types';
 
 const flowApi: FlowApi = {
@@ -325,99 +310,6 @@ const flowApi: FlowApi = {
 
   parseSeparateFiles: (input: SeparateFilesInput): Promise<ScriptParseResult> =>
     ipcRenderer.invoke('script:parseSeparateFiles', input),
-
-  selectVideoFile: (): Promise<string | null> =>
-    ipcRenderer.invoke('system:selectVideoFile'),
-
-  probeVideoFile: (filePath: string): Promise<MediaProbeResult> =>
-    ipcRenderer.invoke('media:probeVideo', filePath),
-
-  importMediaToProject: (params: ImportMediaParams): Promise<ProjectEntity> =>
-    ipcRenderer.invoke('media:importToProject', params),
-
-  transcribeProjectAudio: (params: TranscribeMediaParams): Promise<TranscriptEntity> =>
-    ipcRenderer.invoke('media:transcribe', params),
-
-  cancelTranscription: (projectId: string): Promise<void> =>
-    ipcRenderer.invoke('media:cancelTranscription', projectId),
-
-  getProjectTranscript: (projectId: string): Promise<TranscriptEntity | null> =>
-    ipcRenderer.invoke('media:getTranscript', projectId),
-
-  burnImportedSubtitles: (params: BurnImportedSubtitlesParams): Promise<FinalRenderManifest> =>
-    ipcRenderer.invoke('media:burnSubtitles', params),
-
-  onTranscriptProgress: (callback: (event: TranscriptProgressEvent) => void) => {
-    const handler = (_e: unknown, data: TranscriptProgressEvent) => callback(data);
-    ipcRenderer.on('flow:transcript:progress', handler);
-    return () => ipcRenderer.removeListener('flow:transcript:progress', handler);
-  },
-
-  listPublishingAccounts: (): Promise<PublishingAccountEntity[]> =>
-    ipcRenderer.invoke('publishing:listAccounts'),
-
-  getPublishingAccount: (id: string): Promise<PublishingAccountEntity | null> =>
-    ipcRenderer.invoke('publishing:getAccount', id),
-
-  connectYouTubeAccount: (params: { clientId: string; clientSecret: string }): Promise<PublishingAccountEntity> =>
-    ipcRenderer.invoke('publishing:connectYouTube', params),
-
-  disconnectPublishingAccount: (id: string): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke('publishing:disconnectAccount', id),
-
-  linkChannelToPublishingAccount: (channelId: string, publishingAccountId?: string): Promise<ChannelEntity> =>
-    ipcRenderer.invoke('publishing:linkChannel', { channelId, publishingAccountId }),
-
-  publishProjectToYouTube: (params: {
-    projectId: string;
-    publishingAccountId?: string;
-    metadata: YouTubePublishingMetadata;
-    forceRetry?: boolean;
-  }): Promise<ProjectPublishingState> =>
-    ipcRenderer.invoke('publishing:publishProject', params),
-
-  cancelPublishing: (projectId: string): Promise<void> =>
-    ipcRenderer.invoke('publishing:cancelPublish', projectId),
-
-  getProjectPublishingState: (projectId: string): Promise<ProjectPublishingState | null> =>
-    ipcRenderer.invoke('publishing:getProjectPublishingState', projectId),
-
-  generatePublishingMetadata: (projectId: string): Promise<PublishingAiSuggestion> =>
-    ipcRenderer.invoke('publishing:generateMetadata', projectId),
-
-  onPublishingProgress: (callback: (event: PublishingProgressEvent) => void) => {
-    const handler = (_e: unknown, data: PublishingProgressEvent) => callback(data);
-    ipcRenderer.on('flow:publishing:progress', handler);
-    return () => ipcRenderer.removeListener('flow:publishing:progress', handler);
-  },
-
-  // Watched Folders & Cadence Automation API (Phase 4)
-  listWatchedFolders: (): Promise<WatchedFolderEntity[]> =>
-    ipcRenderer.invoke('watchedFolder:list'),
-
-  getWatchedFolder: (id: string): Promise<WatchedFolderEntity | null> =>
-    ipcRenderer.invoke('watchedFolder:get', id),
-
-  createWatchedFolder: (params: CreateWatchedFolderParams): Promise<WatchedFolderEntity> =>
-    ipcRenderer.invoke('watchedFolder:create', params),
-
-  updateWatchedFolder: (id: string, params: UpdateWatchedFolderParams): Promise<WatchedFolderEntity> =>
-    ipcRenderer.invoke('watchedFolder:update', { id, patch: params }),
-
-  deleteWatchedFolder: (id: string): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke('watchedFolder:delete', id),
-
-  setWatchedFolderPaused: (id: string, paused: boolean): Promise<WatchedFolderEntity> =>
-    ipcRenderer.invoke('watchedFolder:setPaused', { id, paused }),
-
-  getWatchedFolderHistory: (id: string, limit?: number): Promise<WatchedFileRecord[]> =>
-    ipcRenderer.invoke('watchedFolder:getHistory', { id, limit }),
-
-  onWatchedFolderMediaReady: (callback: (data: { record: WatchedFileRecord; watcherId: string }) => void) => {
-    const handler = (_e: unknown, data: any) => callback(data);
-    ipcRenderer.on('flow:watchedFolder:mediaReady', handler);
-    return () => ipcRenderer.removeListener('flow:watchedFolder:mediaReady', handler);
-  },
 };
 
 contextBridge.exposeInMainWorld('flowApi', flowApi);

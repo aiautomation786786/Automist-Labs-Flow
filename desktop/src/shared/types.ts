@@ -542,64 +542,7 @@ export interface QuarantineRecord {
  */
 export type ProjectStatus = 'draft' | 'queued' | 'running' | 'paused' | 'completed' | 'cancelled' | 'deleting';
 /**
- * Origin type of a project.
- *  - 'created': Standard first-party AI generation project.
- *  - 'imported': Imported local media project (Path B).
- *  - 'hybrid': Future hybrid combining imported media with AI generation.
- */
-export type ProjectOriginType = 'created' | 'imported' | 'hybrid';
-
-/**
- * Persistent source media metadata for imported projects.
- * Privacy invariant: Original host filesystem paths are NEVER exposed to renderer/UI.
- */
-export interface ProjectSourceMedia {
-    sourceType: 'local_file';
-    originalFilename: string;
-    fileSizeBytes: number;
-    hashSha256: string;
-    durationSeconds: number;
-    width: number;
-    height: number;
-    fps: number;
-    videoCodec: string;
-    audioCodec?: string;
-    hasAudio: boolean;
-    importedAt: string;
-    mediaPath: string; // Project-local relative path, e.g. "videos/source_video.mp4"
-    watcherId?: string;
-    watchedFileRecordId?: string;
-    workflow?: WatchedMediaWorkflow;
-}
-
-/**
- * Validated segment cue representing a time-bounded phrase or sentence of transcribed speech.
- */
-export interface TranscriptCue {
-    cueIndex: number;
-    startMs: number;
-    endMs: number;
-    text: string;
-    words?: Array<{ word: string; startMs: number; endMs: number }>;
-    confidence?: number;
-}
-
-/**
- * Persistent transcript entity stored at metadata/transcript.json.
- */
-export interface TranscriptEntity {
-    version: 1;
-    projectId: string;
-    sourceMediaPath: string;
-    fullText: string;
-    cues: TranscriptCue[];
-    language?: string;
-    createdAt: string;
-    provider: 'gemini' | 'mock';
-}
-
-/**
- * Complete persistent entity representing a Google Flow creation or imported media project.
+ * Complete persistent entity representing a Google Flow creation project.
  * Stored at: %LOCALAPPDATA%\GoogleFlowApp\projects\{projectId}\project.json
  */
 export interface ProjectEntity {
@@ -608,15 +551,9 @@ export interface ProjectEntity {
     campaignTag?: string;
     channelId?: string;
     channelName?: string;
-    watcherId?: string;
-    watchedFileRecordId?: string;
     createdAt: string;
     updatedAt: string;
     status: ProjectStatus;
-    origin?: ProjectOriginType;
-    sourceMedia?: ProjectSourceMedia;
-    transcript?: TranscriptEntity;
-    publishing?: ProjectPublishingState;
     settings: ProjectSettings;
     slots: PromptSlotEntity[];
     stats: ProjectStats;
@@ -1128,7 +1065,6 @@ export interface ChannelEntity {
     defaultMotionStyle?: MotionStyle;
     defaultSubtitleStyle?: string;
     defaultTransitionStyle?: TransitionStyle;
-    linkedPublishingAccountId?: string;
     enabled: boolean;
     createdAt: string;
     updatedAt: string;
@@ -1147,7 +1083,6 @@ export interface CreateChannelParams {
     defaultMotionStyle?: MotionStyle;
     defaultSubtitleStyle?: string;
     defaultTransitionStyle?: TransitionStyle;
-    linkedPublishingAccountId?: string;
     enabled?: boolean;
 }
 export type DeliveryStatus = 'delivered' | 'failed';
@@ -1362,48 +1297,6 @@ export interface CreateProjectParams {
         provider?: GenerationProvider;
     }>;
 }
-export interface MediaProbeResult {
-    valid: boolean;
-    durationSeconds: number;
-    width: number;
-    height: number;
-    fps: number;
-    videoCodec: string;
-    audioCodec?: string;
-    hasAudio: boolean;
-    fileSizeBytes: number;
-    error?: string;
-}
-
-export interface ImportMediaParams {
-    filePath: string;
-    name?: string;
-    channelId?: string;
-    channelName?: string;
-    watcherId?: string;
-    watchedFileRecordId?: string;
-    workflow?: WatchedMediaWorkflow;
-}
-
-export interface TranscribeMediaParams {
-    projectId: string;
-}
-
-export interface BurnImportedSubtitlesParams {
-    projectId: string;
-    subtitleStyle?: string;
-    subtitleConfig?: SubtitleConfig;
-    rawModeOnly?: boolean;
-}
-
-export interface TranscriptProgressEvent {
-    projectId: string;
-    percent: number;
-    stage: string;
-    message?: string;
-    status?: 'running' | 'completed' | 'failed';
-    error?: string;
-}
 
 export interface SchedulerCapacityMetrics {
     totalProfiles: number;
@@ -1414,111 +1307,6 @@ export interface SchedulerCapacityMetrics {
     activeJobs: number;
     availableCapacity: number;
     pendingJobs: number;
-}
-
-export type PublishingPlatform = 'youtube';
-export type PublishingAccountStatus = 'connected' | 'revoked' | 'expired' | 'error';
-
-export interface PublishingAccountEntity {
-    id: string;
-    platform: PublishingPlatform;
-    displayName: string;
-    externalChannelId: string;
-    externalChannelTitle: string;
-    avatarUrl?: string;
-    connectedAt: string;
-    updatedAt: string;
-    status: PublishingAccountStatus;
-    totalPublishedCount: number;
-    lastPublishedAt?: string;
-    lastQuotaError?: string;
-    linkedChannelIds: string[];
-    hasClientSecret: boolean;
-}
-
-export interface PublishingAccountSecrets {
-    clientId: string;
-    clientSecretEnc?: string;
-    refreshTokenEnc?: string;
-    accessTokenEnc?: string;
-    tokenExpiryMs?: number;
-}
-
-/**
- * Strict YouTube Publishing Metadata.
- * Contains ONLY actual fields required or accepted by YouTube video publish/insert API.
- */
-export interface YouTubePublishingMetadata {
-    title: string;
-    description: string;
-    tags: string[];
-    privacyStatus: 'private' | 'unlisted' | 'public';
-    scheduledPublishAt?: string; // ISO 8601 string for YouTube native scheduling
-    categoryId?: string;
-    thumbnailPath?: string;
-}
-
-/**
- * Separate AI suggestion payload.
- * UI/AI suggestions such as suggestedThumbnailHook are kept strictly outside YouTubePublishingMetadata
- * so they are never accidentally sent in the YouTube API publishing payload.
- */
-export interface PublishingAiSuggestion {
-    metadata: YouTubePublishingMetadata;
-    suggestedThumbnailHook?: string;
-}
-
-export type PublishingStatus =
-    | 'draft'
-    | 'ready_to_publish'
-    | 'pending'
-    | 'uploading'
-    | 'unknown'
-    | 'published'
-    | 'failed'
-    | 'cancelled';
-
-export interface ProjectPublishingState {
-    status: PublishingStatus;
-    platform?: PublishingPlatform;
-    publishingAccountId?: string;
-    platformVideoId?: string;
-    publishedUrl?: string;
-    publishedAt?: string;
-    scheduledPublishAt?: string; // YouTube-native publishAt
-    lastError?: string;
-    metadata?: YouTubePublishingMetadata;
-}
-
-export interface PublishingHistoryRecord {
-    id: string;
-    projectId: string;
-    publishingAccountId: string;
-    platform: PublishingPlatform;
-    platformVideoId?: string;
-    publishedUrl?: string;
-    status: PublishingStatus;
-    resumableSessionUri?: string;
-    uploadedBytes?: number;
-    totalBytes?: number;
-    metadataSnapshot: YouTubePublishingMetadata;
-    error?: string;
-    createdAt: string;
-    completedAt?: string;
-}
-
-export interface PublishingProgressEvent {
-    projectId: string;
-    publishingAccountId?: string;
-    percent: number;
-    stage: 'preparing' | 'uploading' | 'verifying' | 'completed' | 'failed';
-    stageMessage: string;
-    bytesUploaded?: number;
-    totalBytes?: number;
-    status: PublishingStatus;
-    error?: string;
-    videoId?: string;
-    videoUrl?: string;
 }
 
 export interface FlowApi {
@@ -1746,137 +1534,6 @@ export interface FlowApi {
     getSystemMetrics?: () => Promise<SystemMetrics>;
     parseSeparateFiles?: (input: SeparateFilesInput) => Promise<ScriptParseResult>;
     selectScriptFile?: () => Promise<{ filePath: string; fileName: string; content: string } | null>;
-    selectVideoFile?: () => Promise<string | null>;
-    probeVideoFile?: (filePath: string) => Promise<MediaProbeResult>;
-    importMediaToProject?: (params: ImportMediaParams) => Promise<ProjectEntity>;
-    transcribeProjectAudio?: (params: TranscribeMediaParams) => Promise<TranscriptEntity>;
-    cancelTranscription?: (projectId: string) => Promise<void>;
-    getProjectTranscript?: (projectId: string) => Promise<TranscriptEntity | null>;
-    burnImportedSubtitles?: (params: BurnImportedSubtitlesParams) => Promise<FinalRenderManifest>;
-    onTranscriptProgress?: (callback: (event: TranscriptProgressEvent) => void) => () => void;
-    listPublishingAccounts?: () => Promise<PublishingAccountEntity[]>;
-    getPublishingAccount?: (id: string) => Promise<PublishingAccountEntity | null>;
-    connectYouTubeAccount?: (params: { clientId: string; clientSecret: string }) => Promise<PublishingAccountEntity>;
-    disconnectPublishingAccount?: (id: string) => Promise<{ success: boolean }>;
-    linkChannelToPublishingAccount?: (channelId: string, publishingAccountId?: string) => Promise<ChannelEntity>;
-    publishProjectToYouTube?: (params: {
-        projectId: string;
-        publishingAccountId?: string;
-        metadata: YouTubePublishingMetadata;
-        forceRetry?: boolean;
-    }) => Promise<ProjectPublishingState>;
-    cancelPublishing?: (projectId: string) => Promise<void>;
-    getProjectPublishingState?: (projectId: string) => Promise<ProjectPublishingState | null>;
-    generatePublishingMetadata?: (projectId: string) => Promise<PublishingAiSuggestion>;
-    onPublishingProgress?: (callback: (event: PublishingProgressEvent) => void) => () => void;
-
-    // Watched Folder & Cadence Automation API (Phase 4)
-    listWatchedFolders?: () => Promise<WatchedFolderEntity[]>;
-    getWatchedFolder?: (id: string) => Promise<WatchedFolderEntity | null>;
-    createWatchedFolder?: (params: CreateWatchedFolderParams) => Promise<WatchedFolderEntity>;
-    updateWatchedFolder?: (id: string, params: UpdateWatchedFolderParams) => Promise<WatchedFolderEntity>;
-    deleteWatchedFolder?: (id: string) => Promise<{ success: boolean }>;
-    setWatchedFolderPaused?: (id: string, paused: boolean) => Promise<WatchedFolderEntity>;
-    getWatchedFolderHistory?: (id: string, limit?: number) => Promise<WatchedFileRecord[]>;
-    onWatchedFolderMediaReady?: (callback: (data: { record: WatchedFileRecord; watcherId: string }) => void) => () => void;
-}
-
-// =============================================================================
-// Watched Folder & Cadence Automation Types (Phase 4)
-// =============================================================================
-
-export type WatchedFolderStatus =
-    | 'idle'
-    | 'watching'
-    | 'paused'
-    | 'processing'
-    | 'error';
-
-export type CadenceMode =
-    | 'immediate'
-    | 'scheduled'
-    | 'interval';
-
-export type WatchedMediaWorkflow =
-    | 'import_only'
-    | 'import_and_render'
-    | 'import_render_publish'
-    | 'ai_script_rewrite';
-
-export interface WatchedFolderCadenceConfig {
-    mode: CadenceMode;
-    dailyTime?: string;
-    intervalMinutes?: number;
-    catchUpMissed?: boolean;
-    publishDelayHours?: number;
-}
-
-export interface WatchedFolderProcessingRules {
-    channelId?: string;
-    workflow: WatchedMediaWorkflow;
-    stabilityDurationMs?: number;
-    maxBatchSize?: number;
-    ingestOrder?: 'oldest_first' | 'newest_first';
-    deleteSourceOnSuccess?: boolean;
-    targetAspectRatio?: SupportedAspectRatio;
-}
-
-export interface WatchedFolderEntity {
-    id: string;
-    name: string;
-    folderPath: string;
-    enabled: boolean;
-    status: WatchedFolderStatus;
-    cadence: WatchedFolderCadenceConfig;
-    rules: WatchedFolderProcessingRules;
-    createdAt: string;
-    updatedAt: string;
-    lastPolledAt?: string;
-    lastIngestedAt?: string;
-    lastCadenceRunAt?: string;
-    nextScheduledRunAt?: string;
-    lastError?: string;
-    stats: {
-        totalDetected: number;
-        totalIngested: number;
-        totalErrors: number;
-        lastIngestedFilename?: string;
-    };
-}
-
-export interface WatchedFileRecord {
-    id: string;
-    watcherId: string;
-    filePath: string;
-    filename: string;
-    fileSizeBytes: number;
-    fileMtimeMs: number;
-    hashSha256: string;
-    status: 'stabilizing' | 'ready' | 'waiting_for_cadence' | 'processing' | 'ingested' | 'skipped_duplicate' | 'error';
-    detectedAt: string;
-    ingestedAt?: string;
-    projectId?: string;
-    error?: string;
-}
-
-export interface CreateWatchedFolderParams {
-    name: string;
-    folderPath: string;
-    channelId?: string;
-    workflow?: WatchedMediaWorkflow;
-    cadence?: WatchedFolderCadenceConfig;
-    rules?: Partial<WatchedFolderProcessingRules>;
-    enabled?: boolean;
-}
-
-export interface UpdateWatchedFolderParams {
-    name?: string;
-    folderPath?: string;
-    channelId?: string;
-    workflow?: WatchedMediaWorkflow;
-    cadence?: WatchedFolderCadenceConfig;
-    rules?: Partial<WatchedFolderProcessingRules>;
-    enabled?: boolean;
 }
 export interface DiscoveredLocalProfile {
     profileDirectory: string;

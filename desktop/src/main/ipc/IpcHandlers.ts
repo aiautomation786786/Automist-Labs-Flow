@@ -46,14 +46,6 @@ import { SkillRepository } from '../storage/SkillRepository';
 import { ScriptAiService } from '../ai/ScriptAiService';
 import { GeminiApiKeyManager } from '../ai/GeminiApiKeyManager';
 import { VideoFactoryPipelineManager } from '../pipeline/VideoFactoryPipelineManager';
-import { MediaProbeService } from '../import/MediaProbeService';
-import { MediaImportService } from '../import/MediaImportService';
-import { AudioTranscriptionService } from '../transcription/AudioTranscriptionService';
-import { ImportedMediaRenderer } from '../render/ImportedMediaRenderer';
-import { PublishingAccountService } from '../publishing/PublishingAccountService';
-import { WatchedFolderRepository } from '../storage/WatchedFolderRepository';
-import { WatchedFolderHistoryRepository } from '../storage/WatchedFolderHistoryRepository';
-import { WatchedFolderEngine } from '../watcher/WatchedFolderEngine';
 import type {
   VideoFactoryConfig,
   VideoFactoryStage,
@@ -67,11 +59,6 @@ import type {
   ScriptAiGenerateParams,
   RefineSceneParams,
   AnalyzeAlignParams,
-  ImportMediaParams,
-  BurnImportedSubtitlesParams,
-  YouTubePublishingMetadata,
-  CreateWatchedFolderParams,
-  UpdateWatchedFolderParams,
 } from '../../shared/types';
 
 const logger = new AppLogger({ mirrorToStderr: false });
@@ -864,27 +851,6 @@ export class IpcHandlers {
       return null;
     });
 
-    ipcMain.handle('system:selectVideoFile', async () => {
-      try {
-        const electron = require('electron');
-        if (electron?.dialog?.showOpenDialog) {
-          const result = await electron.dialog.showOpenDialog({
-            title: 'Select Video File for Import',
-            properties: ['openFile'],
-            filters: [
-              { name: 'Video Files', extensions: ['mp4', 'mov', 'mkv'] },
-            ],
-          });
-          if (!result.canceled && result.filePaths.length > 0) {
-            return result.filePaths[0];
-          }
-        }
-      } catch (err) {
-        logger.warn('ipc', 'Failed to open video file dialog', { error: (err as Error).message });
-      }
-      return null;
-    });
-
     ipcMain.handle('system:selectMultipleImageFiles', async () => {
       try {
         const electron = require('electron');
@@ -1076,166 +1042,6 @@ export class IpcHandlers {
 
     generationEventBus.on('pipeline:progress' as any, (event: any) => {
       getWebContents?.()?.send('flow:pipeline:progress', event);
-    });
-
-    generationEventBus.on('transcript:progress' as any, (event: any) => {
-      getWebContents?.()?.send('flow:transcript:progress', event);
-    });
-
-    // -------------------------------------------------------------------------
-    // Media Import & Transcription API
-    // -------------------------------------------------------------------------
-    ipcMain.handle('media:probeVideo', async (_event, filePath: unknown) => {
-      if (typeof filePath !== 'string') throw new Error('Invalid filePath for probeVideo');
-      return await MediaProbeService.probeMedia(filePath);
-    });
-
-    ipcMain.handle('media:importToProject', async (_event, params: unknown) => {
-      if (!params || typeof params !== 'object') throw new Error('Invalid importToProject params');
-      return await MediaImportService.importMedia(params as ImportMediaParams);
-    });
-
-    ipcMain.handle('media:transcribe', async (_event, params: unknown) => {
-      const p = params as { projectId: string };
-      if (!p || typeof p.projectId !== 'string') throw new Error('Invalid transcribe params');
-      return await AudioTranscriptionService.transcribeProject(p.projectId);
-    });
-
-    ipcMain.handle('media:cancelTranscription', async (_event, projectId: unknown) => {
-      if (typeof projectId !== 'string') throw new Error('Invalid projectId for cancelTranscription');
-      AudioTranscriptionService.cancelTranscription(projectId);
-      return { success: true };
-    });
-
-    ipcMain.handle('media:getTranscript', async (_event, projectId: unknown) => {
-      if (typeof projectId !== 'string') throw new Error('Invalid projectId for getTranscript');
-      return await AudioTranscriptionService.getTranscript(projectId);
-    });
-
-    ipcMain.handle('media:burnSubtitles', async (_event, params: unknown) => {
-      if (!params || typeof params !== 'object') throw new Error('Invalid burnSubtitles params');
-      return await ImportedMediaRenderer.renderImportedVideo(params as BurnImportedSubtitlesParams);
-    });
-
-    // -------------------------------------------------------------------------
-    // Publishing Accounts & YouTube Publishing API (Phase 3)
-    // -------------------------------------------------------------------------
-    ipcMain.handle('publishing:listAccounts', async () => {
-      return await PublishingAccountService.listAccounts();
-    });
-
-    ipcMain.handle('publishing:getAccount', async (_event, id: unknown) => {
-      if (typeof id !== 'string') throw new Error('Invalid account id');
-      return await PublishingAccountService.getAccount(id);
-    });
-
-    ipcMain.handle('publishing:connectYouTube', async (_event, params: unknown) => {
-      const p = params as { clientId: string; clientSecret: string };
-      if (!p || typeof p.clientId !== 'string' || typeof p.clientSecret !== 'string') {
-        throw new Error('Invalid connectYouTube params');
-      }
-      return await PublishingAccountService.connectYouTubeAccount(p);
-    });
-
-    ipcMain.handle('publishing:disconnectAccount', async (_event, id: unknown) => {
-      if (typeof id !== 'string') throw new Error('Invalid account id');
-      return await PublishingAccountService.disconnectAccount(id);
-    });
-
-    ipcMain.handle('publishing:linkChannel', async (_event, params: unknown) => {
-      const p = params as { channelId: string; publishingAccountId?: string };
-      if (!p || typeof p.channelId !== 'string') throw new Error('Invalid linkChannel params');
-      return await PublishingAccountService.linkChannel(p.channelId, p.publishingAccountId);
-    });
-
-    ipcMain.handle('publishing:publishProject', async (_event, params: unknown) => {
-      const p = params as {
-        projectId: string;
-        publishingAccountId?: string;
-        metadata: YouTubePublishingMetadata;
-        forceRetry?: boolean;
-      };
-      if (!p || typeof p.projectId !== 'string' || !p.metadata) {
-        throw new Error('Invalid publishProject params');
-      }
-      return await PublishingAccountService.publishProject(p, (progressEvent) => {
-        getWebContents?.()?.send('flow:publishing:progress', progressEvent);
-      });
-    });
-
-    ipcMain.handle('publishing:cancelPublish', async (_event, projectId: unknown) => {
-      if (typeof projectId !== 'string') throw new Error('Invalid projectId for cancelPublish');
-      await PublishingAccountService.cancelPublishing(projectId);
-      return { success: true };
-    });
-
-    ipcMain.handle('publishing:getProjectPublishingState', async (_event, projectId: unknown) => {
-      if (typeof projectId !== 'string') throw new Error('Invalid projectId for getProjectPublishingState');
-      return await PublishingAccountService.getProjectPublishingState(projectId);
-    });
-
-    ipcMain.handle('publishing:generateMetadata', async (_event, projectId: unknown) => {
-      if (typeof projectId !== 'string') throw new Error('Invalid projectId for generateMetadata');
-      return await ScriptAiService.generatePublishingMetadata(projectId);
-    });
-
-    // -------------------------------------------------------------------------
-    // Watched Folders & Cadence Automation API (Phase 4)
-    // -------------------------------------------------------------------------
-    ipcMain.handle('watchedFolder:list', async () => {
-      return await WatchedFolderRepository.getAll();
-    });
-
-    ipcMain.handle('watchedFolder:get', async (_event, id: unknown) => {
-      if (typeof id !== 'string') throw new Error('Invalid watched folder id');
-      return await WatchedFolderRepository.get(id);
-    });
-
-    ipcMain.handle('watchedFolder:create', async (_event, params: unknown) => {
-      if (!params || typeof params !== 'object') throw new Error('Invalid watched folder create params');
-      const created = await WatchedFolderRepository.create(params as CreateWatchedFolderParams);
-      WatchedFolderEngine.getInstance().syncWatcher(created.id).catch(() => {});
-      return created;
-    });
-
-    ipcMain.handle('watchedFolder:update', async (_event, params: unknown) => {
-      const p = params as { id: string; patch: UpdateWatchedFolderParams };
-      if (!p || typeof p.id !== 'string' || !p.patch) {
-        throw new Error('Invalid watched folder update params');
-      }
-      const updated = await WatchedFolderRepository.update(p.id, p.patch);
-      WatchedFolderEngine.getInstance().syncWatcher(updated.id).catch(() => {});
-      return updated;
-    });
-
-    ipcMain.handle('watchedFolder:delete', async (_event, id: unknown) => {
-      if (typeof id !== 'string') throw new Error('Invalid watched folder id');
-      WatchedFolderEngine.getInstance().removeWatcher(id);
-      const success = await WatchedFolderRepository.delete(id);
-      return { success };
-    });
-
-    ipcMain.handle('watchedFolder:setPaused', async (_event, params: unknown) => {
-      const p = params as { id: string; paused: boolean };
-      if (!p || typeof p.id !== 'string' || typeof p.paused !== 'boolean') {
-        throw new Error('Invalid setPaused params');
-      }
-      const updated = await WatchedFolderRepository.setPaused(p.id, p.paused);
-      WatchedFolderEngine.getInstance().syncWatcher(updated.id).catch(() => {});
-      return updated;
-    });
-
-    ipcMain.handle('watchedFolder:getHistory', async (_event, params: unknown) => {
-      const p = params as { id: string; limit?: number };
-      if (!p || typeof p.id !== 'string') {
-        throw new Error('Invalid getHistory params');
-      }
-      return await WatchedFolderHistoryRepository.getHistory(p.id, p.limit);
-    });
-
-    // Wire event notifications from WatchedFolderEngine to renderer
-    WatchedFolderEngine.getInstance().setEventHandler((eventName, payload) => {
-      getWebContents?.()?.send(eventName, payload);
     });
 
     if (typeof (sessionManager as any)?.on === 'function') {

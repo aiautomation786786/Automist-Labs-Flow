@@ -3,7 +3,6 @@ import type {
   ChannelEntity,
   ProjectEntity,
   DeliveryHistoryRecord,
-  PublishingAccountEntity,
 } from '../../shared/types';
 import {
   PlusIcon,
@@ -29,7 +28,6 @@ export const ChannelsScreen: React.FC<ChannelsScreenProps> = ({
   const [channels, setChannels] = useState<ChannelEntity[]>([]);
   const [projects, setProjects] = useState<ProjectEntity[]>([]);
   const [historyRecords, setHistoryRecords] = useState<DeliveryHistoryRecord[]>([]);
-  const [publishingAccounts, setPublishingAccounts] = useState<PublishingAccountEntity[]>([]);
   const [activeTab, setActiveTab] = useState<'channels' | 'projects' | 'history'>('channels');
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -44,28 +42,18 @@ export const ChannelsScreen: React.FC<ChannelsScreenProps> = ({
   const [deliveryNotification, setDeliveryNotification] = useState<{ message: string; isError?: boolean } | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // YouTube Accounts Modal state
-  const [isYouTubeAccountsModalOpen, setIsYouTubeAccountsModalOpen] = useState(false);
-  const [connectClientId, setConnectClientId] = useState('');
-  const [connectClientSecret, setConnectClientSecret] = useState('');
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [connectError, setConnectError] = useState<string | null>(null);
-  const [accountToDisconnect, setAccountToDisconnect] = useState<PublishingAccountEntity | null>(null);
-
   const loadData = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
       if (window.flowApi) {
-        const [chList, projList, histResult, pubList] = await Promise.all([
+        const [chList, projList, histResult] = await Promise.all([
           window.flowApi.listChannels ? window.flowApi.listChannels() : Promise.resolve([]),
           window.flowApi.listProjects ? window.flowApi.listProjects() : Promise.resolve([]),
           window.flowApi.getChannelHistory ? window.flowApi.getChannelHistory({ limit: 100 }) : Promise.resolve({ records: [], total: 0, limit: 100, offset: 0 }),
-          window.flowApi.listPublishingAccounts ? window.flowApi.listPublishingAccounts() : Promise.resolve([]),
         ]);
         setChannels(chList || []);
         setProjects(projList || []);
         setHistoryRecords(histResult?.records || []);
-        setPublishingAccounts(pubList || []);
       }
     } catch (err) {
       console.error('Failed to load channel data', err);
@@ -222,53 +210,6 @@ export const ChannelsScreen: React.FC<ChannelsScreenProps> = ({
     }
   };
 
-  const handleDisconnectAccount = async (account: PublishingAccountEntity) => {
-    if (!window.flowApi?.disconnectPublishingAccount) return;
-    try {
-      await window.flowApi.disconnectPublishingAccount(account.id);
-      setPublishingAccounts((prev) => prev.filter((a) => a.id !== account.id));
-      setDeliveryNotification({
-        message: `Disconnected YouTube account "${account.externalChannelTitle}". Any linked content channels have been safely unlinked.`,
-      });
-      await loadData(true);
-    } catch (err: any) {
-      setDeliveryNotification({
-        message: `Failed to disconnect account: ${err.message}`,
-        isError: true,
-      });
-    } finally {
-      setAccountToDisconnect(null);
-    }
-  };
-
-  const handleConnectAccount = async () => {
-    if (!connectClientId.trim() || !connectClientSecret.trim()) {
-      setConnectError('Both Client ID and Client Secret are required');
-      return;
-    }
-    setIsConnecting(true);
-    setConnectError(null);
-    try {
-      if (window.flowApi?.connectYouTubeAccount) {
-        const acc = await window.flowApi.connectYouTubeAccount({
-          clientId: connectClientId.trim(),
-          clientSecret: connectClientSecret.trim(),
-        });
-        setPublishingAccounts((prev) => [...prev.filter((a) => a.id !== acc.id), acc]);
-        setConnectClientId('');
-        setConnectClientSecret('');
-        setDeliveryNotification({
-          message: `Successfully connected YouTube channel "${acc.externalChannelTitle}"!`,
-        });
-        await loadData(true);
-      }
-    } catch (err: any) {
-      setConnectError(err.message || 'Failed to connect YouTube account');
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
   const handleReveal = (filePath: string) => {
     if (window.flowApi?.revealAsset) {
       window.flowApi.revealAsset(filePath);
@@ -337,39 +278,6 @@ export const ChannelsScreen: React.FC<ChannelsScreenProps> = ({
           >
             <RefreshIcon size={14} className={isRefreshing ? 'spin' : undefined} />
           </button>
-
-          <button
-            onClick={() => setIsYouTubeAccountsModalOpen(true)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              backgroundColor: 'rgba(220, 38, 38, 0.12)',
-              color: '#f87171',
-              border: '1px solid rgba(220, 38, 38, 0.3)',
-              borderRadius: '8px',
-              padding: '10px 14px',
-              fontWeight: 600,
-              fontSize: '13px',
-              cursor: 'pointer',
-            }}
-          >
-            <span>YouTube Accounts</span>
-            {publishingAccounts.length > 0 && (
-              <span
-                style={{
-                  fontSize: '11px',
-                  padding: '1px 6px',
-                  borderRadius: '999px',
-                  backgroundColor: 'rgba(220, 38, 38, 0.3)',
-                  color: '#fff',
-                }}
-              >
-                {publishingAccounts.length}
-              </span>
-            )}
-          </button>
-
           <button
             onClick={handleOpenCreateModal}
             style={{
@@ -636,22 +544,6 @@ export const ChannelsScreen: React.FC<ChannelsScreenProps> = ({
                               <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700 }}>
                                 {channel.name}
                               </h3>
-                              {channel.linkedPublishingAccountId && (
-                                <span
-                                  style={{
-                                    fontSize: '10px',
-                                    fontWeight: 700,
-                                    padding: '2px 6px',
-                                    borderRadius: '4px',
-                                    backgroundColor: 'rgba(220, 38, 38, 0.15)',
-                                    color: '#f87171',
-                                    border: '1px solid rgba(220, 38, 38, 0.3)',
-                                  }}
-                                  title="Linked to YouTube Publishing Account"
-                                >
-                                  YouTube
-                                </span>
-                              )}
                               {channel.enabled ? (
                                 <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#22c55e' }} title="Active" />
                               ) : (
@@ -1096,182 +988,6 @@ export const ChannelsScreen: React.FC<ChannelsScreenProps> = ({
         isDanger={true}
         onConfirm={handleDeleteChannelConfirm}
         onCancel={() => setChannelToDelete(null)}
-      />
-
-      {/* YouTube Accounts Modal */}
-      {isYouTubeAccountsModalOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            backdropFilter: 'blur(6px)',
-            zIndex: 1000,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '20px',
-          }}
-          onClick={() => !isConnecting && setIsYouTubeAccountsModalOpen(false)}
-        >
-          <div
-            style={{
-              backgroundColor: '#1e1e24',
-              border: '1px solid var(--border-color, #333)',
-              borderRadius: '12px',
-              width: '100%',
-              maxWidth: '560px',
-              maxHeight: '85vh',
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div style={{ padding: '16px 20px', borderBottom: '1px solid #333', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '16px', fontWeight: 700 }}>Connected YouTube Accounts</span>
-              </div>
-              <button
-                onClick={() => !isConnecting && setIsYouTubeAccountsModalOpen(false)}
-                style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '20px', cursor: 'pointer' }}
-              >
-                &times;
-              </button>
-            </div>
-
-            {/* Body */}
-            <div style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {publishingAccounts.length === 0 ? (
-                <div style={{ padding: '24px', textAlign: 'center', color: '#94a3b8', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px dashed #444' }}>
-                  No YouTube accounts connected yet. Connect your Google Cloud Desktop OAuth credentials below.
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {publishingAccounts.map((acc) => (
-                    <div
-                      key={acc.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '12px 16px',
-                        borderRadius: '8px',
-                        backgroundColor: 'rgba(0,0,0,0.25)',
-                        border: '1px solid #333',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        {acc.avatarUrl ? (
-                          <img src={acc.avatarUrl} alt="" style={{ width: '36px', height: '36px', borderRadius: '50%' }} />
-                        ) : (
-                          <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700 }}>
-                            YT
-                          </div>
-                        )}
-                        <div>
-                          <div style={{ fontSize: '14px', fontWeight: 600 }}>{acc.externalChannelTitle}</div>
-                          <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-                            ID: {acc.externalChannelId} &bull; Uploads: {acc.totalPublishedCount || 0}
-                          </div>
-                          {acc.lastQuotaError && (
-                            <div style={{ fontSize: '10.5px', color: '#f87171', marginTop: '2px' }}>
-                              Quota notice: {acc.lastQuotaError}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px', backgroundColor: acc.status === 'connected' ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)', color: acc.status === 'connected' ? '#4ade80' : '#f87171' }}>
-                          {acc.status}
-                        </span>
-                        <button
-                          onClick={() => setAccountToDisconnect(acc)}
-                          style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '12px', padding: '4px' }}
-                          title="Disconnect account"
-                        >
-                          <TrashIcon size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Connect New Account Section */}
-              <div style={{ marginTop: '10px', paddingTop: '16px', borderTop: '1px solid #333' }}>
-                <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>
-                  Connect Another YouTube Account
-                </div>
-                <p style={{ fontSize: '11.5px', color: '#94a3b8', lineHeight: 1.5, margin: '0 0 12px 0' }}>
-                  Input your Google Cloud Desktop OAuth 2.0 credentials to authorize in your browser.
-                </p>
-
-                {connectError && (
-                  <div style={{ padding: '8px 12px', borderRadius: '6px', backgroundColor: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171', fontSize: '12px', marginBottom: '12px' }}>
-                    {connectError}
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '14px' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 600, marginBottom: '4px' }}>Client ID</label>
-                    <input
-                      type="text"
-                      value={connectClientId}
-                      onChange={(e) => setConnectClientId(e.target.value)}
-                      placeholder="1234567890-xxx.apps.googleusercontent.com"
-                      disabled={isConnecting}
-                      style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #444', backgroundColor: 'rgba(0,0,0,0.3)', color: '#fff', fontSize: '12px' }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 600, marginBottom: '4px' }}>Client Secret</label>
-                    <input
-                      type="password"
-                      value={connectClientSecret}
-                      onChange={(e) => setConnectClientSecret(e.target.value)}
-                      placeholder="GOCSPX-xxxxxxxxxxxxxxxx"
-                      disabled={isConnecting}
-                      style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #444', backgroundColor: 'rgba(0,0,0,0.3)', color: '#fff', fontSize: '12px' }}
-                    />
-                  </div>
-                </div>
-
-                <button
-                  onClick={handleConnectAccount}
-                  disabled={isConnecting}
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: '6px',
-                    border: 'none',
-                    backgroundColor: '#dc2626',
-                    color: '#fff',
-                    fontWeight: 600,
-                    fontSize: '12px',
-                    cursor: isConnecting ? 'wait' : 'pointer',
-                  }}
-                >
-                  {isConnecting ? 'Waiting for Browser Consent...' : 'Authorize YouTube in Browser'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Account Disconnect Confirmation Modal */}
-      <ConfirmModal
-        isOpen={Boolean(accountToDisconnect)}
-        title="Disconnect YouTube Account"
-        message={`Are you sure you want to disconnect YouTube channel "${accountToDisconnect?.externalChannelTitle}"? Any linked content channels will be safely unlinked.`}
-        confirmLabel="Disconnect Account"
-        cancelLabel="Cancel"
-        isDanger={true}
-        onConfirm={() => accountToDisconnect && handleDisconnectAccount(accountToDisconnect)}
-        onCancel={() => setAccountToDisconnect(null)}
       />
     </div>
   );

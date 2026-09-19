@@ -19,7 +19,6 @@ import { GenerationScheduler } from './scheduler/GenerationScheduler';
 import { RecoveryManager } from './storage/RecoveryManager';
 import { AssetManager } from './storage/AssetManager';
 import { IpcHandlers } from './ipc/IpcHandlers';
-import { WatchedFolderEngine } from './watcher/WatchedFolderEngine';
 import { AppLogger } from './utils/AppLogger';
 
 const logger = new AppLogger({ mirrorToStderr: true });
@@ -266,13 +265,6 @@ async function initializeApp(): Promise<void> {
       logger.warn('main', 'Background auto-start notice', { error: (err as Error).message });
     });
   }
-
-  // Step 6: Initialize Watched Folder Engine (ZSocial Phase 4B)
-  try {
-    await WatchedFolderEngine.getInstance().initialize();
-  } catch (err) {
-    logger.warn('main', 'WatchedFolderEngine initialization notice', { error: (err as Error).message });
-  }
 }
 
 // Single-instance lock
@@ -293,7 +285,6 @@ if (!gotTheLock) {
 
   app.on('before-quit', async () => {
     scheduler?.stop();
-    WatchedFolderEngine.getInstance().shutdown();
     if (sessionManager) {
       await sessionManager.stopAll().catch(() => {});
     }
@@ -302,7 +293,6 @@ if (!gotTheLock) {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
       scheduler?.stop();
-      WatchedFolderEngine.getInstance().shutdown();
       if (sessionManager) {
         sessionManager.stopAll().catch(() => {});
       }
