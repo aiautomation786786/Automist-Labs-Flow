@@ -19,6 +19,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { execSync } from 'child_process';
 import type { ChromeCandidate, ChromeDiscoveryResult } from '../../shared/types';
 import { appLogger } from '../utils/AppLogger';
@@ -90,8 +91,10 @@ export class WindowsChromeFinder {
 
     if (process.platform === 'win32') {
       candidates.push(...this.scanWindows());
+    } else if (process.platform === 'darwin') {
+      candidates.push(...this.scanMac());
     } else {
-      // Non-Windows: used during CI tests only
+      // Non-Windows (Linux / CI fallback)
       candidates.push(...this.scanNonWindows());
     }
 
@@ -180,6 +183,38 @@ export class WindowsChromeFinder {
     }
 
     return candidates;
+  }
+
+  private static scanMac(): ChromeCandidate[] {
+    const home = os.homedir();
+    const macCandidates: Array<{ path: string; source: ChromeCandidate['source'] }> = [
+      {
+        path: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        source: 'program_files',
+      },
+      {
+        path: path.join(home, 'Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome'),
+        source: 'localappdata',
+      },
+      {
+        path: '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
+        source: 'program_files',
+      },
+      {
+        path: path.join(home, 'Applications', 'Google Chrome Canary.app', 'Contents', 'MacOS', 'Google Chrome Canary'),
+        source: 'localappdata',
+      },
+      {
+        path: '/Applications/Chromium.app/Contents/MacOS/Chromium',
+        source: 'program_files',
+      },
+      {
+        path: path.join(home, 'Applications', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+        source: 'localappdata',
+      },
+    ];
+
+    return macCandidates.map((c) => makeCandidate(c.path, c.source));
   }
 
   private static scanNonWindows(): ChromeCandidate[] {

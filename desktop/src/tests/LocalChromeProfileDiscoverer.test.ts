@@ -221,4 +221,86 @@ describe('LocalChromeProfileDiscoverer', () => {
       expect(Array.isArray(result.pids)).toBe(true);
     });
   });
+
+  describe('CLI Command Flag Extraction & Isolation (extractCommandArg)', () => {
+    it('A. parses double-quoted user-data path with spaces completely', () => {
+      const cmd = 'chrome --user-data-dir="/Users/test/Library/Application Support/Google/Chrome" --flag';
+      expect(LocalChromeProfileDiscoverer.extractCommandArg(cmd, '--user-data-dir')).toBe(
+        '/Users/test/Library/Application Support/Google/Chrome'
+      );
+    });
+
+    it('B. parses single-quoted user-data path with spaces completely', () => {
+      const cmd = "chrome --user-data-dir='/Users/test/Library/Application Support/Google/Chrome' --flag";
+      expect(LocalChromeProfileDiscoverer.extractCommandArg(cmd, '--user-data-dir')).toBe(
+        '/Users/test/Library/Application Support/Google/Chrome'
+      );
+    });
+
+    it('C. parses dedicated Infinity Flow path without quotes', () => {
+      const dedicatedPath = path.join(tempDir, '.google-flow-app', 'FlowProfiles', 'profile-1');
+      const cmd = `chrome --user-data-dir=${dedicatedPath} --remote-debugging-port=9222`;
+      expect(LocalChromeProfileDiscoverer.extractCommandArg(cmd, '--user-data-dir')).toBe(dedicatedPath);
+    });
+
+    it('D. parses "Profile 1" with double quotes completely', () => {
+      const cmd = 'chrome --profile-directory="Profile 1" --remote-debugging-port=9222';
+      expect(LocalChromeProfileDiscoverer.extractCommandArg(cmd, '--profile-directory')).toBe('Profile 1');
+    });
+
+    it('E. parses \'Profile 1\' with single quotes completely', () => {
+      const cmd = "chrome --profile-directory='Profile 1' --remote-debugging-port=9222";
+      expect(LocalChromeProfileDiscoverer.extractCommandArg(cmd, '--profile-directory')).toBe('Profile 1');
+    });
+
+    it('F. parses Default profile without quotes correctly', () => {
+      const cmd = 'chrome --profile-directory=Default --remote-debugging-port=9222';
+      expect(LocalChromeProfileDiscoverer.extractCommandArg(cmd, '--profile-directory')).toBe('Default');
+    });
+
+    it('G. parses CDP port 9222 exactly', () => {
+      const cmd = 'chrome --user-data-dir=/tmp/test --remote-debugging-port=9222';
+      expect(LocalChromeProfileDiscoverer.extractCommandArg(cmd, '--remote-debugging-port')).toBe('9222');
+    });
+
+    it('parses unquoted macOS ps space-joined arguments correctly up to next flag', () => {
+      const cmd = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/Users/test/Library/Application Support/Google/Chrome --profile-directory=Profile 1 --remote-debugging-port=9222';
+      expect(LocalChromeProfileDiscoverer.extractCommandArg(cmd, '--user-data-dir')).toBe(
+        '/Users/test/Library/Application Support/Google/Chrome'
+      );
+      expect(LocalChromeProfileDiscoverer.extractCommandArg(cmd, '--profile-directory')).toBe('Profile 1');
+      expect(LocalChromeProfileDiscoverer.extractCommandArg(cmd, '--remote-debugging-port')).toBe('9222');
+    });
+
+    it('H. profile-1 MUST NOT match profile-10', () => {
+      const baseDir = path.join(tempDir, 'FlowProfiles');
+      const p1Path = path.normalize(path.join(baseDir, 'profile-1')).toLowerCase();
+      const p10Path = path.normalize(path.join(baseDir, 'profile-10')).toLowerCase();
+
+      const cmd = `chrome --user-data-dir=${p10Path}`;
+      const extracted = path.normalize(LocalChromeProfileDiscoverer.extractCommandArg(cmd, '--user-data-dir')!).toLowerCase();
+
+      expect(extracted).toBe(p10Path);
+      expect(extracted === p1Path).toBe(false);
+    });
+
+    it('I. CDP port 9222 MUST NOT match 19222', () => {
+      const cmd = 'chrome --remote-debugging-port=19222';
+      const extractedPort = parseInt(LocalChromeProfileDiscoverer.extractCommandArg(cmd, '--remote-debugging-port')!, 10);
+
+      expect(extractedPort).toBe(19222);
+      expect(extractedPort === 9222).toBe(false);
+    });
+
+    it('J. Personal standard Chrome path MUST NOT match an Infinity Flow FlowProfiles directory', () => {
+      const personalDir = path.normalize(path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome')).toLowerCase();
+      const flowProfilesDir = path.normalize(path.join(tempDir, 'FlowProfiles', 'profile-1')).toLowerCase();
+
+      const cmd = `chrome --user-data-dir="${personalDir}"`;
+      const extracted = path.normalize(LocalChromeProfileDiscoverer.extractCommandArg(cmd, '--user-data-dir')!).toLowerCase();
+
+      expect(extracted).toBe(personalDir);
+      expect(extracted === flowProfilesDir).toBe(false);
+    });
+  });
 });

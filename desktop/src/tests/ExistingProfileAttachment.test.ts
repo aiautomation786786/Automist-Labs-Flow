@@ -8,16 +8,27 @@ import { ProfileSession } from '../main/engine/ProfileSession';
 import { ProfileSessionManager } from '../main/engine/ProfileSessionManager';
 import { ChromePortAllocator } from '../main/engine/ChromePortAllocator';
 import { ProfileConfigManager } from '../main/engine/ProfileConfig';
+import { WindowsChromeFinder } from '../main/engine/WindowsChromeFinder';
 import type { ProfileConfig } from '../shared/types';
 
 describe('Phase 5.4: Existing Chrome Profile Attachment & Safe State Detection', () => {
   let tempDir: string;
   let originalEnv: NodeJS.ProcessEnv;
+  let testChromePath: string;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'existing-profile-test-'));
     originalEnv = { ...process.env };
     process.env.LOCALAPPDATA = tempDir;
+    process.env.FLOW_APPDATA_DIR = tempDir;
+
+    const discovered = WindowsChromeFinder.find().executablePath;
+    if (discovered && fs.existsSync(discovered)) {
+      testChromePath = discovered;
+    } else {
+      testChromePath = path.join(tempDir, process.platform === 'win32' ? 'chrome.exe' : 'Google Chrome');
+      fs.writeFileSync(testChromePath, '');
+    }
   });
 
   afterEach(() => {
@@ -137,7 +148,7 @@ describe('Phase 5.4: Existing Chrome Profile Attachment & Safe State Detection',
       const portAllocator = new ChromePortAllocator({ startPort: 9222 });
       const manager = new ProfileSessionManager({
         portAllocator,
-        chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        chromePath: testChromePath,
       });
 
       const profile = await manager.createExistingChromeProfile({
@@ -163,7 +174,7 @@ describe('Phase 5.4: Existing Chrome Profile Attachment & Safe State Detection',
       const portAllocator = new ChromePortAllocator({ startPort: 9222 });
       const manager = new ProfileSessionManager({
         portAllocator,
-        chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        chromePath: testChromePath,
       });
 
       const profile = await manager.createExistingChromeProfile({

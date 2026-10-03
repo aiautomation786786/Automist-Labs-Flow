@@ -7,17 +7,30 @@ import { ProfileSession } from '../main/engine/ProfileSession';
 import { ProfileSessionManager } from '../main/engine/ProfileSessionManager';
 import { ProfileConfigManager } from '../main/engine/ProfileConfig';
 import { ChromePortAllocator } from '../main/engine/ChromePortAllocator';
+import { WindowsChromeFinder } from '../main/engine/WindowsChromeFinder';
 import type { ProfileConfig } from '../shared/types';
 
 describe('Profile CDP Port Isolation Regression Tests', () => {
   let tempDir: string;
   let originalLocalAppData: string | undefined;
+  let originalFlowAppData: string | undefined;
+  let testChromePath: string;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-profile-isolation-test-'));
     originalLocalAppData = process.env['LOCALAPPDATA'];
+    originalFlowAppData = process.env['FLOW_APPDATA_DIR'];
     process.env['LOCALAPPDATA'] = tempDir;
+    process.env['FLOW_APPDATA_DIR'] = tempDir;
     ProfileConfigManager.setCustomProfilesRootDir(path.join(tempDir, 'AutomistLabs', 'FlowProfiles'));
+
+    const discovered = WindowsChromeFinder.find().executablePath;
+    if (discovered && fs.existsSync(discovered)) {
+      testChromePath = discovered;
+    } else {
+      testChromePath = path.join(tempDir, process.platform === 'win32' ? 'chrome.exe' : 'Google Chrome');
+      fs.writeFileSync(testChromePath, '');
+    }
   });
 
   afterEach(() => {
@@ -25,6 +38,13 @@ describe('Profile CDP Port Isolation Regression Tests', () => {
     ProfileConfigManager.setCustomProfilesRootDir(null);
     if (originalLocalAppData !== undefined) {
       process.env['LOCALAPPDATA'] = originalLocalAppData;
+    } else {
+      delete process.env['LOCALAPPDATA'];
+    }
+    if (originalFlowAppData !== undefined) {
+      process.env['FLOW_APPDATA_DIR'] = originalFlowAppData;
+    } else {
+      delete process.env['FLOW_APPDATA_DIR'];
     }
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
@@ -117,7 +137,7 @@ describe('Profile CDP Port Isolation Regression Tests', () => {
     const portAllocator = new ChromePortAllocator({ startPort: 9222 });
     const manager = new ProfileSessionManager({
       portAllocator,
-      chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      chromePath: testChromePath,
     });
 
     // Create 4 distinct profiles

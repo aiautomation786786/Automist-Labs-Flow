@@ -6,16 +6,27 @@ import { ProfileConfigManager } from '../main/engine/ProfileConfig';
 import { ProfileSession } from '../main/engine/ProfileSession';
 import { ProfileSessionManager } from '../main/engine/ProfileSessionManager';
 import { ChromePortAllocator } from '../main/engine/ChromePortAllocator';
+import { WindowsChromeFinder } from '../main/engine/WindowsChromeFinder';
 import type { ProfileConfig } from '../shared/types';
 
 describe('Phase 5.3: Dedicated Profile Architecture & Multi-Account Isolation', () => {
   let tempDir: string;
   let originalEnv: NodeJS.ProcessEnv;
+  let testChromePath: string;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-profile-test-'));
     originalEnv = { ...process.env };
     process.env.LOCALAPPDATA = tempDir;
+    process.env.FLOW_APPDATA_DIR = tempDir;
+
+    const discovered = WindowsChromeFinder.find().executablePath;
+    if (discovered && fs.existsSync(discovered)) {
+      testChromePath = discovered;
+    } else {
+      testChromePath = path.join(tempDir, process.platform === 'win32' ? 'chrome.exe' : 'Google Chrome');
+      fs.writeFileSync(testChromePath, '');
+    }
   });
 
   afterEach(() => {
@@ -27,9 +38,12 @@ describe('Phase 5.3: Dedicated Profile Architecture & Multi-Account Isolation', 
     }
   });
 
-  it('Requirement 1 & 5: dedicated persistent directories under AutomistLabs\\FlowProfiles and unique CDP ports', async () => {
+  it('Requirement 1 & 5: dedicated persistent directories under FlowProfiles and unique CDP ports', async () => {
     const rootDir = ProfileConfigManager.getProfilesRootDir();
-    expect(rootDir).toBe(path.join(tempDir, 'AutomistLabs', 'FlowProfiles'));
+    const expectedRoot = process.platform === 'win32'
+      ? path.join(tempDir, 'AutomistLabs', 'FlowProfiles')
+      : path.join(tempDir, 'FlowProfiles');
+    expect(rootDir).toBe(expectedRoot);
 
     const portAllocator = new ChromePortAllocator({ portStart: 19222, portEnd: 19350 });
     const p1Port = await portAllocator.allocate('profile-1');
@@ -40,21 +54,24 @@ describe('Phase 5.3: Dedicated Profile Architecture & Multi-Account Isolation', 
 
     const config1 = ProfileConfigManager.create({
       displayName: 'Flow Profile A',
-      chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      chromePath: testChromePath,
       cdpPort: p1Port,
       expectedEmail: 'flow.worker1@gmail.com',
     });
 
     const config2 = ProfileConfigManager.create({
       displayName: 'Flow Profile B',
-      chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      chromePath: testChromePath,
       cdpPort: p2Port,
       expectedEmail: 'flow.worker2@gmail.com',
     });
 
     // Verify completely separate isolated directory paths
-    expect(config1.userDataDir).toContain(path.join('AutomistLabs', 'FlowProfiles', config1.profileId, 'chrome-user-data'));
-    expect(config2.userDataDir).toContain(path.join('AutomistLabs', 'FlowProfiles', config2.profileId, 'chrome-user-data'));
+    const expectedSubdir = process.platform === 'win32'
+      ? path.join('AutomistLabs', 'FlowProfiles')
+      : 'FlowProfiles';
+    expect(config1.userDataDir).toContain(path.join(expectedSubdir, config1.profileId, 'chrome-user-data'));
+    expect(config2.userDataDir).toContain(path.join(expectedSubdir, config2.profileId, 'chrome-user-data'));
     expect(config1.userDataDir).not.toBe(config2.userDataDir);
 
     // Verify they NEVER point to default Chrome user data
@@ -119,7 +136,7 @@ describe('Phase 5.3: Dedicated Profile Architecture & Multi-Account Isolation', 
     const portAllocator = new ChromePortAllocator({ startPort: 9230 });
     const manager = new ProfileSessionManager({
       portAllocator,
-      chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      chromePath: testChromePath,
     });
 
     const p1 = await manager.createProfile({

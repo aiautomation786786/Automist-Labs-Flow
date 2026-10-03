@@ -18,6 +18,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import * as http from 'http';
 import { execSync } from 'child_process';
 import type {
@@ -29,7 +30,7 @@ import { appLogger } from '../utils/AppLogger';
 
 export class LocalChromeProfileDiscoverer {
   /**
-   * Discovers the standard Google Chrome User Data directory on Windows.
+   * Discovers the standard Google Chrome User Data directory on Windows and macOS.
    * Returns null if not found.
    */
   static discoverChromeUserDataDir(overridePath?: string): string | null {
@@ -39,6 +40,21 @@ export class LocalChromeProfileDiscoverer {
 
     if (process.env.CHROME_USER_DATA_DIR && fs.existsSync(process.env.CHROME_USER_DATA_DIR)) {
       return process.env.CHROME_USER_DATA_DIR;
+    }
+
+    if (process.platform === 'darwin') {
+      const home = os.homedir();
+      const macCandidates = [
+        path.join(home, 'Library', 'Application Support', 'Google', 'Chrome'),
+        path.join(home, 'Library', 'Application Support', 'Google', 'Chrome Canary'),
+        path.join(home, 'Library', 'Application Support', 'Chromium'),
+      ];
+      for (const candidate of macCandidates) {
+        if (fs.existsSync(candidate)) {
+          return candidate;
+        }
+      }
+      return null;
     }
 
     const localAppData = process.env.LOCALAPPDATA;
@@ -324,14 +340,154 @@ export class LocalChromeProfileDiscoverer {
   }
 
   /**
+   * Extracts the value of a specific CLI flag (e.g. --user-data-dir, --profile-directory, --remote-debugging-port)
+   * from a process command line string.
+   *
+   * Handles:
+   *  - Double-quoted values: --flag="value with spaces"
+   *  - Single-quoted values: --flag='value with spaces'
+   *  - Unquoted values containing spaces (e.g. macOS /bin/ps format where argv is space-joined):
+   *    captures value up to the start of the next flag (" --") or end of string.
+   *  - Shell-escaped spaces: --flag=value\ with\ spaces
+   *  - Standard unquoted values: --flag=value
+   */
+  static extractCommandArg(cmd: string, flag: string): string | null {
+    if (!cmd) return null;
+
+    // 1. Quoted values: --flag="value" or --flag='value'
+    const quotedRegex = new RegExp(`${flag}=(?:"([^"]*)"|'([^']*)')`, 'i');
+    const quotedMatch = cmd.match(quotedRegex);
+    if (quotedMatch) {
+      const val = quotedMatch[1] ?? quotedMatch[2];
+      return val !== undefined ? val.trim() : null;
+    }
+
+    // 2. Unquoted values: captures up to the start of the next flag (" --") or end of string
+    const unquotedRegex = new RegExp(`${flag}=([^"'\\s][^]*?)(?=(?:\\s+--)|$)`, 'i');
+    const unquotedMatch = cmd.match(unquotedRegex);
+    if (unquotedMatch && unquotedMatch[1] !== undefined) {
+      return unquotedMatch[1].replace(/\\([ \t])/g, '$1').trim();
+    }
+
+    return null;
+  }
+
+  /**
    * Checks whether the target Chrome user-data directory or profile is currently in use
    * by an active Chrome process.
    *
    * Inspects:
    *  - Running chrome.exe processes via PowerShell / Win32
+   *  - Running Google Chrome processes via ps / macOS
    *  - Whether `--remote-debugging-port` is already active
    */
   static async isProfileInUse(userDataDir: string, profileDirectory?: string): Promise<ProfileInUseResult> {
+    if (process.platform === 'darwin') {
+      try {
+        const psOutput = execSync('/bin/ps -eo pid=,command=', {
+          stdio: ['ignore', 'pipe', 'ignore'],
+          timeout: 4000,
+        }).toString();
+
+        const lines = psOutput.split('\n');
+        const normTargetUserData = path.normalize(userDataDir).toLowerCase();
+        const standardDefaultUserData = path.normalize(
+          path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome')
+        ).toLowerCase();
+
+        const matchingPids: number[] = [];
+        let detectedCdpPort: number | undefined;
+
+        for (const line of lines) {
+          const match = line.trim().match(/^(\d+)\s+(.+)$/);
+          if (!match) continue;
+          const pid = parseInt(match[1], 10);
+          const cmd = match[2];
+
+          // Target only Chrome/Chromium browser processes
+          if (!cmd.includes('Google Chrome') && !cmd.includes('Chromium')) continue;
+          // Filter out helper processes and crashpad handlers
+          if (cmd.includes('--type=') || cmd.includes('chrome_crashpad_handler')) continue;
+
+          // Check if command line specifies user-data-dir
+          const rawUserData = this.extractCommandArg(cmd, '--user-data-dir');
+          let procUserData = rawUserData ? path.normalize(rawUserData).toLowerCase() : null;
+
+          if (!procUserData && standardDefaultUserData) {
+            procUserData = standardDefaultUserData;
+          }
+
+          if (procUserData && procUserData === normTargetUserData) {
+            if (profileDirectory) {
+              const profDir = this.extractCommandArg(cmd, '--profile-directory');
+              if (profDir) {
+                if (profDir.toLowerCase() !== profileDirectory.toLowerCase()) {
+                  continue;
+                }
+              }
+            }
+
+            matchingPids.push(pid);
+
+            const portStr = this.extractCommandArg(cmd, '--remote-debugging-port');
+            if (portStr) {
+              const parsedPort = parseInt(portStr, 10);
+              if (!isNaN(parsedPort)) {
+                detectedCdpPort = parsedPort;
+              }
+            }
+          }
+        }
+
+        // SingletonLock check as fallback for target user data dir
+        if (matchingPids.length === 0) {
+          const lockFile = path.join(userDataDir, 'SingletonLock');
+          if (fs.existsSync(lockFile)) {
+            try {
+              const linkTarget = fs.readlinkSync(lockFile);
+              const m = linkTarget.match(/-(\d+)$/);
+              if (m?.[1]) {
+                const lockPid = parseInt(m[1], 10);
+                try {
+                  process.kill(lockPid, 0);
+                  matchingPids.push(lockPid);
+                } catch {
+                  // process dead
+                }
+              }
+            } catch {
+              // ignore
+            }
+          }
+        }
+
+        if (matchingPids.length === 0) {
+          return { inUse: false, pids: [] };
+        }
+
+        if (detectedCdpPort) {
+          const isResponsive = await this.probePort(detectedCdpPort);
+          if (isResponsive) {
+            return {
+              inUse: true,
+              pids: matchingPids,
+              cdpPort: detectedCdpPort,
+              details: `Chrome is running with responsive CDP endpoint on port ${detectedCdpPort}.`,
+            };
+          }
+        }
+
+        return {
+          inUse: true,
+          pids: matchingPids,
+          cdpPort: undefined,
+          details: `Chrome is running (${matchingPids.length} process(es), PIDs: ${matchingPids.join(', ')}) without an accessible remote debugging port.`,
+        };
+      } catch {
+        return { inUse: false, pids: [] };
+      }
+    }
+
     if (process.platform !== 'win32') {
       return { inUse: false, pids: [] };
     }
@@ -379,8 +535,8 @@ export class LocalChromeProfileDiscoverer {
         const cmd = proc.CommandLine || '';
 
         // Check if command line specifies user-data-dir
-        const matchUserData = cmd.match(/--user-data-dir=["']?([^"'\s]+)["']?/i);
-        let procUserData = matchUserData?.[1] ? path.normalize(matchUserData[1]).toLowerCase() : null;
+        const rawUserData = this.extractCommandArg(cmd, '--user-data-dir');
+        let procUserData = rawUserData ? path.normalize(rawUserData).toLowerCase() : null;
 
         // If no --user-data-dir is specified, Chrome defaults to the standard user-data dir
         if (!procUserData && standardDefaultUserData) {
@@ -391,9 +547,9 @@ export class LocalChromeProfileDiscoverer {
           // If a specific profileDirectory was requested, verify that the process command line
           // either matches that profile directory or defaults to it
           if (profileDirectory) {
-            const profMatch = cmd.match(/--profile-directory=["']?([^"'\s]+)["']?/i);
-            if (profMatch?.[1]) {
-              if (profMatch[1].toLowerCase() !== profileDirectory.toLowerCase()) {
+            const profDir = this.extractCommandArg(cmd, '--profile-directory');
+            if (profDir) {
+              if (profDir.toLowerCase() !== profileDirectory.toLowerCase()) {
                 // Different profile running under the same user-data-dir; do not match this process PID or port
                 continue;
               }
@@ -403,9 +559,12 @@ export class LocalChromeProfileDiscoverer {
           matchingPids.push(proc.ProcessId);
 
           // Check if remote debugging port is present
-          const portMatch = cmd.match(/--remote-debugging-port=(\d+)/i);
-          if (portMatch?.[1]) {
-            detectedCdpPort = parseInt(portMatch[1], 10);
+          const portStr = this.extractCommandArg(cmd, '--remote-debugging-port');
+          if (portStr) {
+            const parsedPort = parseInt(portStr, 10);
+            if (!isNaN(parsedPort)) {
+              detectedCdpPort = parsedPort;
+            }
           }
         }
       }
