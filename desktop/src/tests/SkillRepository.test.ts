@@ -8,16 +8,20 @@ import { AssetManager } from '../main/storage/AssetManager';
 
 describe('SkillRepository Unit & Import Tests', () => {
   let tempAppDir: string;
+  const originalEnv = process.env.LOCALAPPDATA;
 
   beforeEach(() => {
     tempAppDir = path.join(os.tmpdir(), `infinity_flow_skill_test_${Date.now()}_${Math.random().toString(36).slice(2)}`);
     fs.mkdirSync(tempAppDir, { recursive: true });
+    process.env.FLOW_APPDATA_DIR = tempAppDir;
     process.env.LOCALAPPDATA = tempAppDir;
     SkillRepository.clearCache();
   });
 
   afterEach(() => {
     SkillRepository.clearCache();
+    delete process.env.FLOW_APPDATA_DIR;
+    process.env.LOCALAPPDATA = originalEnv;
     try {
       if (fs.existsSync(tempAppDir)) {
         fs.rmSync(tempAppDir, { recursive: true, force: true });

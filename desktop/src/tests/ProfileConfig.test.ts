@@ -19,6 +19,7 @@ import type { ProfileConfig } from '../shared/types';
 // resolves the data directory to our temp path.
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gf-test-'));
 process.env['LOCALAPPDATA'] = tmpDir;
+process.env['FLOW_APPDATA_DIR'] = tmpDir;
 
 // Now import (after env is set)
 import { ProfileConfigManager, getProfilesRootDir } from '../main/engine/ProfileConfig';

@@ -13,11 +13,13 @@ describe('PipelineStageValidator Tests', () => {
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'validator-test-'));
+    process.env['FLOW_APPDATA_DIR'] = tempDir;
     prevLocalAppData = process.env['LOCALAPPDATA'];
     process.env['LOCALAPPDATA'] = tempDir;
   });
 
   afterEach(() => {
+    delete process.env['FLOW_APPDATA_DIR'];
     if (prevLocalAppData !== undefined) {
       process.env['LOCALAPPDATA'] = prevLocalAppData;
     } else {

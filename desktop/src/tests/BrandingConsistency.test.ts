@@ -78,7 +78,11 @@ describe('Infinity Flow — Brand Consistency & Asset Integrity', () => {
 
   it('verifies storage paths invariant for zero-data-loss backwards compatibility', () => {
     const appData = getAppDataDir();
-    expect(appData).toContain('GoogleFlowApp');
+    if (process.platform === 'win32') {
+      expect(appData).toContain('GoogleFlowApp');
+    } else {
+      expect(appData).toContain('.google-flow-app');
+    }
 
     const profilesDir = getProfilesRootDir();
     expect(profilesDir).toContain('FlowProfiles');

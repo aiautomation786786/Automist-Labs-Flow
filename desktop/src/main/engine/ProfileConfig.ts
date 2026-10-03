@@ -39,6 +39,9 @@ export function getProfilesRootDir(): string {
   if (envOverride) {
     return envOverride;
   }
+  if (process.env['FLOW_APPDATA_DIR']) {
+    return path.join(process.env['FLOW_APPDATA_DIR'], 'FlowProfiles');
+  }
   if (process.platform === 'win32') {
     const localAppData = process.env['LOCALAPPDATA'] ?? process.env['APPDATA'];
     if (localAppData) {

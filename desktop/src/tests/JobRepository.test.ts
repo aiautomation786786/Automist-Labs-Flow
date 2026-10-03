@@ -18,10 +18,12 @@ describe('JobRepository', () => {
 
   beforeEach(() => {
     tmpBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gf-job-repo-test-'));
+    process.env.FLOW_APPDATA_DIR = tmpBaseDir;
     process.env.LOCALAPPDATA = tmpBaseDir;
   });
 
   afterEach(() => {
+    delete process.env.FLOW_APPDATA_DIR;
     process.env.LOCALAPPDATA = originalEnv;
     if (fs.existsSync(tmpBaseDir)) {
       fs.rmSync(tmpBaseDir, { recursive: true, force: true });

@@ -44,6 +44,7 @@ describe('IpcHandlers Bridge', () => {
 
   beforeEach(() => {
     tmpBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gf-ipc-test-'));
+    process.env.FLOW_APPDATA_DIR = tmpBaseDir;
     process.env.LOCALAPPDATA = tmpBaseDir;
 
     mockIpc = new MockIpcMain();
@@ -76,6 +77,7 @@ describe('IpcHandlers Bridge', () => {
   });
 
   afterEach(() => {
+    delete process.env.FLOW_APPDATA_DIR;
     process.env.LOCALAPPDATA = originalEnv;
     if (fs.existsSync(tmpBaseDir)) {
       fs.rmSync(tmpBaseDir, { recursive: true, force: true });

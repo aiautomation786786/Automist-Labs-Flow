@@ -12,6 +12,7 @@ describe('ChannelRepository Unit & Safety Tests', () => {
 
   beforeEach(() => {
     tmpBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gf-channel-repo-test-'));
+    process.env.FLOW_APPDATA_DIR = tmpBaseDir;
     process.env.LOCALAPPDATA = tmpBaseDir;
     ChannelRepository.clearCache();
     ProjectRepository.clearCache();
@@ -20,6 +21,7 @@ describe('ChannelRepository Unit & Safety Tests', () => {
   afterEach(() => {
     ChannelRepository.clearCache();
     ProjectRepository.clearCache();
+    delete process.env.FLOW_APPDATA_DIR;
     process.env.LOCALAPPDATA = originalEnv;
     if (fs.existsSync(tmpBaseDir)) {
       fs.rmSync(tmpBaseDir, { recursive: true, force: true });

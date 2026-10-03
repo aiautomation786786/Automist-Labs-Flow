@@ -26,6 +26,10 @@ import type { LogLevel, LogEntry } from '../../shared/types';
  * and ~/.local/share on Linux (CI/testing).
  */
 export function getAppDataDir(): string {
+  const envOverride = process.env['FLOW_APPDATA_DIR'];
+  if (envOverride) {
+    return envOverride;
+  }
   if (process.platform === 'win32') {
     const localAppData = process.env['LOCALAPPDATA'] ?? process.env['APPDATA'];
     if (!localAppData) {

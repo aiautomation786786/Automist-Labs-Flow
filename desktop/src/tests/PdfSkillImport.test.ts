@@ -4,6 +4,7 @@ import * as os from 'os';
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'iflow-pdf-skill-test-'));
 process.env['LOCALAPPDATA'] = tmpDir;
+process.env['FLOW_APPDATA_DIR'] = tmpDir;
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PdfTextExtractor } from '../main/storage/PdfTextExtractor';
@@ -51,11 +52,13 @@ describe('PDF Skill Import & Text Extractor (ZBot Parity)', () => {
   beforeEach(() => {
     originalLocalAppData = process.env['LOCALAPPDATA'];
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'iflow-pdf-skill-test-'));
+    process.env['FLOW_APPDATA_DIR'] = tempDir;
     process.env['LOCALAPPDATA'] = tempDir;
     SkillRepository.clearCache();
   });
 
   afterEach(() => {
+    delete process.env['FLOW_APPDATA_DIR'];
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
     } catch {}

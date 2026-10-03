@@ -19,10 +19,12 @@ describe('Storage Concurrency & Lost Update Prevention', () => {
 
   beforeEach(() => {
     tmpBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gf-concurrency-test-'));
+    process.env.FLOW_APPDATA_DIR = tmpBaseDir;
     process.env.LOCALAPPDATA = tmpBaseDir;
   });
 
   afterEach(() => {
+    delete process.env.FLOW_APPDATA_DIR;
     process.env.LOCALAPPDATA = originalEnv;
     if (fs.existsSync(tmpBaseDir)) {
       fs.rmSync(tmpBaseDir, { recursive: true, force: true });
