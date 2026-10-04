@@ -39,5 +39,27 @@
     "shortcutName": "Infinity Flow",
     "uninstallDisplayName": "Infinity Flow",
     "deleteAppDataOnUninstall": false
+  },
+  "mac": {
+    "target": [
+      {
+        "target": "dir",
+        "arch": [
+          "arm64"
+        ]
+      }
+    ],
+    "icon": "assets/infinity-flow-mark.svg",
+    "category": "public.app-category.productivity",
+    "extraResources": [
+      {
+        "from": "node_modules/ffmpeg-static/ffmpeg",
+        "to": "bin/ffmpeg"
+      },
+      {
+        "from": "node_modules/@derhuerst/ffprobe-static/ffprobe",
+        "to": "bin/ffprobe"
+      }
+    ]
   }
 }
