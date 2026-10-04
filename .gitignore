@@ -7,6 +7,10 @@ dist/
 release/
 desktop/dist/
 desktop/release/
+*.dmg
+*.zip
+*.exe
+*.blockmap
 
 # Logs & Debug Data
 logs/
