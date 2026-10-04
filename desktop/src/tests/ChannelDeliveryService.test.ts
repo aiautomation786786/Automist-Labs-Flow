@@ -11,10 +11,12 @@ import { AssetManager } from '../main/storage/AssetManager';
 describe('ChannelDeliveryService Unit & Delivery Tests', () => {
   let tmpBaseDir: string;
   const originalEnv = process.env.LOCALAPPDATA;
+  const originalFlowAppData = process.env.FLOW_APPDATA_DIR;
 
   beforeEach(() => {
     tmpBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gf-delivery-test-'));
     process.env.LOCALAPPDATA = tmpBaseDir;
+    process.env.FLOW_APPDATA_DIR = tmpBaseDir;
     ChannelRepository.clearCache();
     ProjectRepository.clearCache();
     ChannelHistoryRepository.clearCache();
@@ -25,6 +27,11 @@ describe('ChannelDeliveryService Unit & Delivery Tests', () => {
     ProjectRepository.clearCache();
     ChannelHistoryRepository.clearCache();
     process.env.LOCALAPPDATA = originalEnv;
+    if (originalFlowAppData !== undefined) {
+      process.env.FLOW_APPDATA_DIR = originalFlowAppData;
+    } else {
+      delete process.env.FLOW_APPDATA_DIR;
+    }
     if (fs.existsSync(tmpBaseDir)) {
       fs.rmSync(tmpBaseDir, { recursive: true, force: true });
     }

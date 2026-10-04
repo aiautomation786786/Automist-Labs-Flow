@@ -76,11 +76,11 @@ describe('FinalAudioMixer', () => {
     });
 
     // Looping args
-    expect(res.extraInputArgs).toEqual(['-stream_loop', '-1', '-i', sampleAudioPath]);
+    expect(res.extraInputArgs).toEqual(['-i', sampleAudioPath]);
 
     // Trimming and volume
     const joined = res.filterComplexParts.join(';');
-    expect(joined).toContain('[3:a]volume=0.250,atrim=0:15.000,afade=t=out:st=13.500:d=1.500[bgm_trimmed]');
+    expect(joined).toContain('[3:a]aloop=loop=-1:size=2e+09,volume=0.250,atrim=0:15.000,afade=t=out:st=13.500:d=1.500[bgm_trimmed]');
 
     // Split speech pad to prevent multi-consumer error
     expect(joined).toContain('[a_speech]asplit=2[sc_voice][mix_voice]');
@@ -92,7 +92,7 @@ describe('FinalAudioMixer', () => {
     expect(joined).toContain('[mix_voice][ducked_bgm]amix=inputs=2:duration=first:dropout_transition=2,volume=1.5[a_mixed]');
 
     // Loudnorm
-    expect(joined).toContain('[a_mixed]loudnorm=I=-14:TP=-1.5:LRA=11[a_final]');
+    expect(joined).toContain('[a_mixed]atrim=0:15.000,asetpts=PTS-STARTPTS,loudnorm=I=-14:TP=-1.5:LRA=11[a_final]');
     expect(res.outputAudioPad).toBe('[a_final]');
 
     // Metadata
@@ -115,10 +115,10 @@ describe('FinalAudioMixer', () => {
     });
 
     const joined = res.filterComplexParts.join(';');
-    expect(joined).toContain('[2:a]volume=0.150,atrim=0:8.000,afade=t=out:st=6.500:d=1.500[bgm_trimmed]');
+    expect(joined).toContain('[2:a]aloop=loop=-1:size=2e+09,volume=0.150,atrim=0:8.000,afade=t=out:st=6.500:d=1.500[bgm_trimmed]');
     expect(joined).not.toContain('sidechaincompress');
     expect(joined).toContain('[a_speech][bgm_trimmed]amix=inputs=2:duration=first:dropout_transition=2[a_mixed]');
-    expect(joined).toContain('[a_mixed]loudnorm=I=-14:TP=-1.5:LRA=11[a_final]');
+    expect(joined).toContain('[a_mixed]atrim=0:8.000,asetpts=PTS-STARTPTS,loudnorm=I=-14:TP=-1.5:LRA=11[a_final]');
     expect(res.musicTrackMetadata?.duckingEnabled).toBe(false);
   });
 

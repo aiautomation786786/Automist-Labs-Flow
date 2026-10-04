@@ -13,11 +13,14 @@ import type { StoryEntity } from '../shared/types';
 describe('RenderManager Central Orchestration', () => {
   let testAppDir: string;
   let prevLocalAppData: string | undefined;
+  let prevFlowAppData: string | undefined;
 
   beforeEach(() => {
     testAppDir = fs.mkdtempSync(path.join(os.tmpdir(), 'render-manager-test-'));
     prevLocalAppData = process.env['LOCALAPPDATA'];
+    prevFlowAppData = process.env['FLOW_APPDATA_DIR'];
     process.env['LOCALAPPDATA'] = testAppDir;
+    process.env['FLOW_APPDATA_DIR'] = testAppDir;
   });
 
   afterEach(async () => {
@@ -26,6 +29,11 @@ describe('RenderManager Central Orchestration', () => {
       process.env['LOCALAPPDATA'] = prevLocalAppData;
     } else {
       delete process.env['LOCALAPPDATA'];
+    }
+    if (prevFlowAppData !== undefined) {
+      process.env['FLOW_APPDATA_DIR'] = prevFlowAppData;
+    } else {
+      delete process.env['FLOW_APPDATA_DIR'];
     }
     if (fs.existsSync(testAppDir)) {
       try {
@@ -54,6 +62,8 @@ describe('RenderManager Central Orchestration', () => {
     if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir, { recursive: true });
     if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir, { recursive: true });
 
+    const ffmpegBin = SceneRenderer.getFfmpegPath();
+
     const story: StoryEntity = {
       title: 'Render Test Story',
       aspectRatio: '16:9',
@@ -64,13 +74,13 @@ describe('RenderManager Central Orchestration', () => {
         const imagePath = path.join(imagesDir, `scene-${paddedNum}.png`);
 
         // Generate 1.2s tone audio
-        execFileSync('ffmpeg', [
+        execFileSync(ffmpegBin, [
           '-y', '-f', 'lavfi', '-i', `sine=frequency=${400 + num * 100}:duration=1.2`,
           '-c:a', 'libmp3lame', '-b:a', '128k', audioPath,
         ], { stdio: 'ignore' });
 
         // Generate simple test image
-        execFileSync('ffmpeg', [
+        execFileSync(ffmpegBin, [
           '-y', '-f', 'lavfi', '-i', `color=c=${num === 1 ? 'navy' : 'darkgreen'}:s=1280x720:d=1`,
           '-vframes', '1', imagePath,
         ], { stdio: 'ignore' });

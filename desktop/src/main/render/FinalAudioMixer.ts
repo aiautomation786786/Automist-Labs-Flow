@@ -72,16 +72,16 @@ export class FinalAudioMixer {
     const outroFadeDuration = Math.min(1.5, Math.max(0.3, safeDuration * 0.2));
     const outroStartTime = Math.max(0.0, safeDuration - outroFadeDuration);
 
-    // Extra input arguments: loop music indefinitely before input index
-    const extraInputArgs = ['-stream_loop', '-1', '-i', safeBgmPath];
+    // Extra input arguments: input music without deadlock-prone -stream_loop
+    const extraInputArgs = ['-i', safeBgmPath];
 
     const filterParts: string[] = [];
 
-    // Step 1: Trim music to exact duration, apply user volume, and apply outro fade-out
+    // Step 1: Loop music indefinitely via aloop, trim to exact duration, apply user volume, and apply outro fade-out
     const bgmSourcePad = `[${bgmInputIndex}:a]`;
     const trimmedBgmPad = '[bgm_trimmed]';
     filterParts.push(
-      `${bgmSourcePad}volume=${clampedVolume.toFixed(3)},atrim=0:${safeDuration.toFixed(3)},afade=t=out:st=${outroStartTime.toFixed(3)}:d=${outroFadeDuration.toFixed(3)}${trimmedBgmPad}`
+      `${bgmSourcePad}aloop=loop=-1:size=2e+09,volume=${clampedVolume.toFixed(3)},atrim=0:${safeDuration.toFixed(3)},afade=t=out:st=${outroStartTime.toFixed(3)}:d=${outroFadeDuration.toFixed(3)}${trimmedBgmPad}`
     );
 
     if (duckingEnabled) {
@@ -105,7 +105,7 @@ export class FinalAudioMixer {
 
       // Step 5: Final broadcast loudness normalization
       if (applyLoudnorm) {
-        filterParts.push(`${mixedPad}loudnorm=I=-14:TP=-1.5:LRA=11[a_final]`);
+        filterParts.push(`${mixedPad}atrim=0:${safeDuration.toFixed(3)},asetpts=PTS-STARTPTS,loudnorm=I=-14:TP=-1.5:LRA=11[a_final]`);
         return {
           extraInputArgs,
           filterComplexParts: filterParts,
@@ -142,7 +142,7 @@ export class FinalAudioMixer {
       );
 
       if (applyLoudnorm) {
-        filterParts.push(`${mixedPad}loudnorm=I=-14:TP=-1.5:LRA=11[a_final]`);
+        filterParts.push(`${mixedPad}atrim=0:${safeDuration.toFixed(3)},asetpts=PTS-STARTPTS,loudnorm=I=-14:TP=-1.5:LRA=11[a_final]`);
         return {
           extraInputArgs,
           filterComplexParts: filterParts,

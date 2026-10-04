@@ -19,6 +19,7 @@ import { MotionFilterBuilder } from './MotionFilterBuilder';
 import { MotionPlanner, CLIP_RENDER_VERSION } from './MotionPlanner';
 import { SubtitleGenerator } from './SubtitleGenerator';
 import { AudioDurationMeasurer } from '../tts/AudioDurationMeasurer';
+import { FfmpegResolver } from '../utils/FfmpegResolver';
 import { AppLogger } from '../utils/AppLogger';
 import { toEven } from './RenderDimensions';
 import { FfmpegProgressParser, mapFfmpegErrorMessage } from './FfmpegProgressParser';
@@ -27,37 +28,11 @@ const execFileAsync = promisify(execFile);
 const logger = new AppLogger({ mirrorToStderr: false });
 
 export class SceneRenderer {
-  private static ffmpegPathCache: string | null = null;
-  private static ffmpegChecked = false;
-
   /**
-   * Resolves the path to the ffmpeg executable.
+   * Resolves the path to the ffmpeg executable via centralized FfmpegResolver.
    */
   static getFfmpegPath(): string {
-    if (this.ffmpegChecked && this.ffmpegPathCache) {
-      return this.ffmpegPathCache;
-    }
-
-    const candidates = [
-      'C:\\ffmpeg\\bin\\ffmpeg.exe',
-      'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe',
-      'ffmpeg.exe',
-      'ffmpeg',
-    ];
-
-    for (const cand of candidates) {
-      if (cand.includes('\\') || cand.includes('/')) {
-        if (fs.existsSync(cand)) {
-          this.ffmpegPathCache = cand;
-          this.ffmpegChecked = true;
-          return cand;
-        }
-      }
-    }
-
-    this.ffmpegPathCache = 'ffmpeg';
-    this.ffmpegChecked = true;
-    return 'ffmpeg';
+    return FfmpegResolver.findFfmpeg() || 'ffmpeg';
   }
 
   /**

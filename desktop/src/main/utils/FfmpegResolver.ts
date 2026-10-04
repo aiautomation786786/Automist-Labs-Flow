@@ -2,8 +2,9 @@
  * FfmpegResolver – Production-safe resolution and execution of FFmpeg & FFprobe.
  *
  * Responsibilities:
- *  - Discovers ffmpeg / ffprobe binaries across packaged Electron resources,
- *    environment overrides, PATH, and common Windows install directories.
+ *  - Discovers ffmpeg / ffprobe binaries across environment overrides,
+ *    packaged Electron resources, installed static binary packages,
+ *    macOS/Windows platform paths, and PATH fallback.
  *  - Safely extracts 1-frame video posters (JPEG) for card and preview rendering.
  *  - Provides a robust fallback so thumbnail generation never fails or crashes
  *    the app even when running on a machine without FFmpeg installed.
@@ -40,13 +41,49 @@ export class FfmpegResolver {
   private static cachedFfprobePath: string | null = null;
 
   /**
-   * Resolves the ffmpeg executable path safely across packaged app, PATH, and disk.
+   * Clears the cached binary paths. Used during tests and environment changes.
+   */
+  static clearCache(): void {
+    this.cachedFfmpegPath = null;
+    this.cachedFfprobePath = null;
+  }
+
+  /**
+   * Checks if a concrete executable file exists on disk.
+   */
+  static fileExists(filePath: string): boolean {
+    try {
+      return fs.existsSync(filePath);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Resolves static binary path from an installed npm package.
+   */
+  static resolveStaticBinary(packageName: string): string | null {
+    try {
+      const pkg = require(packageName);
+      const binPath = typeof pkg === 'string' ? pkg : (pkg?.path || pkg?.default || null);
+      if (binPath && typeof binPath === 'string' && this.fileExists(binPath)) {
+        return binPath;
+      }
+    } catch {
+      // Package not found or failed to load
+    }
+    return null;
+  }
+
+  /**
+   * Resolves the ffmpeg executable path safely across environment overrides,
+   * packaged app resources, static dependencies, system paths, and PATH.
    */
   static findFfmpeg(): string | null {
     if (this.cachedFfmpegPath) return this.cachedFfmpegPath;
 
     // 1. Explicit env override
-    if (process.env['FFMPEG_PATH'] && fs.existsSync(process.env['FFMPEG_PATH'])) {
+    if (process.env['FFMPEG_PATH'] && this.fileExists(process.env['FFMPEG_PATH'])) {
       this.cachedFfmpegPath = process.env['FFMPEG_PATH'];
       return this.cachedFfmpegPath;
     }
@@ -55,82 +92,139 @@ export class FfmpegResolver {
     const resourcesPath = (process as any).resourcesPath;
     if (resourcesPath) {
       const candidates = [
+        path.join(resourcesPath, 'bin', 'ffmpeg'),
         path.join(resourcesPath, 'bin', 'ffmpeg.exe'),
+        path.join(resourcesPath, 'ffmpeg'),
         path.join(resourcesPath, 'ffmpeg.exe'),
+        path.join(resourcesPath, 'app.asar.unpacked', 'bin', 'ffmpeg'),
         path.join(resourcesPath, 'app.asar.unpacked', 'bin', 'ffmpeg.exe'),
       ];
       for (const c of candidates) {
-        if (fs.existsSync(c)) {
+        if (this.fileExists(c)) {
           this.cachedFfmpegPath = c;
           return this.cachedFfmpegPath;
         }
       }
     }
 
-    // 3. Common Windows install locations
-    const localAppData = process.env['LOCALAPPDATA'] || '';
-    const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
-    const diskCandidates = [
-      'C:\\ffmpeg\\bin\\ffmpeg.exe',
-      path.join(programFiles, 'ffmpeg', 'bin', 'ffmpeg.exe'),
-      path.join(localAppData, 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe'),
-      path.join(localAppData, 'ffmpeg', 'bin', 'ffmpeg.exe'),
-    ];
+    // 3. Installed static binary package
+    const staticBinary = this.resolveStaticBinary('ffmpeg-static');
+    if (staticBinary) {
+      this.cachedFfmpegPath = staticBinary;
+      return this.cachedFfmpegPath;
+    }
 
-    for (const c of diskCandidates) {
-      if (fs.existsSync(c)) {
-        this.cachedFfmpegPath = c;
-        return this.cachedFfmpegPath;
+    // 4. macOS system candidates
+    if (process.platform === 'darwin') {
+      const macCandidates = [
+        '/opt/homebrew/bin/ffmpeg',
+        '/usr/local/bin/ffmpeg',
+      ];
+      for (const c of macCandidates) {
+        if (this.fileExists(c)) {
+          this.cachedFfmpegPath = c;
+          return this.cachedFfmpegPath;
+        }
       }
     }
 
-    // 4. Default to system PATH binary
+    // 5. Common Windows install locations
+    if (process.platform === 'win32') {
+      const localAppData = process.env['LOCALAPPDATA'] || '';
+      const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
+      const diskCandidates = [
+        'C:\\ffmpeg\\bin\\ffmpeg.exe',
+        path.join(programFiles, 'ffmpeg', 'bin', 'ffmpeg.exe'),
+        path.join(localAppData, 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe'),
+        path.join(localAppData, 'ffmpeg', 'bin', 'ffmpeg.exe'),
+      ];
+
+      for (const c of diskCandidates) {
+        if (this.fileExists(c)) {
+          this.cachedFfmpegPath = c;
+          return this.cachedFfmpegPath;
+        }
+      }
+    }
+
+    // 6. Default to system PATH binary
     this.cachedFfmpegPath = 'ffmpeg';
     return this.cachedFfmpegPath;
   }
 
   /**
-   * Resolves the ffprobe executable path safely.
+   * Resolves the ffprobe executable path safely across environment overrides,
+   * packaged app resources, static dependencies, system paths, and PATH.
    */
   static findFfprobe(): string | null {
     if (this.cachedFfprobePath) return this.cachedFfprobePath;
 
-    if (process.env['FFPROBE_PATH'] && fs.existsSync(process.env['FFPROBE_PATH'])) {
+    // 1. Explicit env override
+    if (process.env['FFPROBE_PATH'] && this.fileExists(process.env['FFPROBE_PATH'])) {
       this.cachedFfprobePath = process.env['FFPROBE_PATH'];
       return this.cachedFfprobePath;
     }
 
+    // 2. Packaged Electron application resource paths
     const resourcesPath = (process as any).resourcesPath;
     if (resourcesPath) {
       const candidates = [
+        path.join(resourcesPath, 'bin', 'ffprobe'),
         path.join(resourcesPath, 'bin', 'ffprobe.exe'),
+        path.join(resourcesPath, 'ffprobe'),
         path.join(resourcesPath, 'ffprobe.exe'),
+        path.join(resourcesPath, 'app.asar.unpacked', 'bin', 'ffprobe'),
         path.join(resourcesPath, 'app.asar.unpacked', 'bin', 'ffprobe.exe'),
       ];
       for (const c of candidates) {
-        if (fs.existsSync(c)) {
+        if (this.fileExists(c)) {
           this.cachedFfprobePath = c;
           return this.cachedFfprobePath;
         }
       }
     }
 
-    const localAppData = process.env['LOCALAPPDATA'] || '';
-    const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
-    const diskCandidates = [
-      'C:\\ffmpeg\\bin\\ffprobe.exe',
-      path.join(programFiles, 'ffmpeg', 'bin', 'ffprobe.exe'),
-      path.join(localAppData, 'Microsoft', 'WinGet', 'Links', 'ffprobe.exe'),
-      path.join(localAppData, 'ffmpeg', 'bin', 'ffprobe.exe'),
-    ];
+    // 3. Installed static binary package
+    const staticBinary = this.resolveStaticBinary('@derhuerst/ffprobe-static');
+    if (staticBinary) {
+      this.cachedFfprobePath = staticBinary;
+      return this.cachedFfprobePath;
+    }
 
-    for (const c of diskCandidates) {
-      if (fs.existsSync(c)) {
-        this.cachedFfprobePath = c;
-        return this.cachedFfprobePath;
+    // 4. macOS system candidates
+    if (process.platform === 'darwin') {
+      const macCandidates = [
+        '/opt/homebrew/bin/ffprobe',
+        '/usr/local/bin/ffprobe',
+      ];
+      for (const c of macCandidates) {
+        if (this.fileExists(c)) {
+          this.cachedFfprobePath = c;
+          return this.cachedFfprobePath;
+        }
       }
     }
 
+    // 5. Common Windows install locations
+    if (process.platform === 'win32') {
+      const localAppData = process.env['LOCALAPPDATA'] || '';
+      const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
+      const diskCandidates = [
+        'C:\\ffmpeg\\bin\\ffprobe.exe',
+        path.join(programFiles, 'ffmpeg', 'bin', 'ffprobe.exe'),
+        path.join(localAppData, 'Microsoft', 'WinGet', 'Links', 'ffprobe.exe'),
+        path.join(localAppData, 'ffmpeg', 'bin', 'ffprobe.exe'),
+      ];
+
+      for (const c of diskCandidates) {
+        if (this.fileExists(c)) {
+          this.cachedFfprobePath = c;
+          return this.cachedFfprobePath;
+        }
+      }
+    }
+
+    // 6. Default to system PATH binary
     this.cachedFfprobePath = 'ffprobe';
     return this.cachedFfprobePath;
   }

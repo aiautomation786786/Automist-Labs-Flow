@@ -11,42 +11,16 @@ import * as fs from 'fs';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import type { WordTiming } from './TtsTypes';
+import { FfmpegResolver } from '../utils/FfmpegResolver';
 
 const execFileAsync = promisify(execFile);
 
 export class AudioDurationMeasurer {
-  private static ffprobePathCache: string | null = null;
-  private static ffprobeChecked = false;
-
   /**
-   * Discovers the ffprobe executable location.
+   * Discovers the ffprobe executable location via centralized FfmpegResolver.
    */
   static getFfprobePath(): string | null {
-    if (this.ffprobeChecked) {
-      return this.ffprobePathCache;
-    }
-
-    const candidates = [
-      'C:\\ffmpeg\\bin\\ffprobe.exe',
-      'C:\\Program Files\\ffmpeg\\bin\\ffprobe.exe',
-      'ffprobe.exe',
-      'ffprobe',
-    ];
-
-    for (const cand of candidates) {
-      if (cand.includes('\\') || cand.includes('/')) {
-        if (fs.existsSync(cand)) {
-          this.ffprobePathCache = cand;
-          this.ffprobeChecked = true;
-          return cand;
-        }
-      }
-    }
-
-    // Default to 'ffprobe' on system PATH
-    this.ffprobePathCache = 'ffprobe';
-    this.ffprobeChecked = true;
-    return 'ffprobe';
+    return FfmpegResolver.findFfprobe();
   }
 
   /**

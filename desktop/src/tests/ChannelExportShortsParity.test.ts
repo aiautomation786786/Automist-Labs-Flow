@@ -22,6 +22,7 @@ const execFileAsync = promisify(execFile);
 describe('Phase 4: Complete ZBot Channel Delivery, Export & Shorts Parity', () => {
   let tmpBaseDir: string;
   let originalEnv: string | undefined;
+  let originalFlowAppData: string | undefined;
   let testShortsVideoPath: string;
   let testLongsVideoPath: string;
   let testThumbnailPath: string;
@@ -77,7 +78,9 @@ describe('Phase 4: Complete ZBot Channel Delivery, Export & Shorts Parity', () =
   beforeEach(() => {
     tmpBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gf-phase4-test-'));
     originalEnv = process.env.LOCALAPPDATA;
+    originalFlowAppData = process.env.FLOW_APPDATA_DIR;
     process.env.LOCALAPPDATA = tmpBaseDir;
+    process.env.FLOW_APPDATA_DIR = tmpBaseDir;
     ChannelRepository.clearCache();
     ProjectRepository.clearCache();
     ChannelHistoryRepository.clearCache();
@@ -92,6 +95,11 @@ describe('Phase 4: Complete ZBot Channel Delivery, Export & Shorts Parity', () =
     StoryRepository.clearCache();
     RetryCoordinator.getInstance().clearMemory();
     process.env.LOCALAPPDATA = originalEnv;
+    if (originalFlowAppData !== undefined) {
+      process.env.FLOW_APPDATA_DIR = originalFlowAppData;
+    } else {
+      delete process.env.FLOW_APPDATA_DIR;
+    }
     if (fs.existsSync(tmpBaseDir)) {
       try {
         fs.rmSync(tmpBaseDir, { recursive: true, force: true });

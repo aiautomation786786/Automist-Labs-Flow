@@ -13,11 +13,14 @@ import type { StoryEntity, RenderManifest } from '../shared/types';
 describe('FinalRenderManager Orchestration & Lifecycle', () => {
   let testAppDir: string;
   let prevLocalAppData: string | undefined;
+  let prevFlowAppData: string | undefined;
 
   beforeEach(() => {
     testAppDir = fs.mkdtempSync(path.join(os.tmpdir(), 'final_render_mgr_test_'));
     prevLocalAppData = process.env['LOCALAPPDATA'];
+    prevFlowAppData = process.env['FLOW_APPDATA_DIR'];
     process.env['LOCALAPPDATA'] = testAppDir;
+    process.env['FLOW_APPDATA_DIR'] = testAppDir;
   });
 
   afterEach(async () => {
@@ -26,6 +29,11 @@ describe('FinalRenderManager Orchestration & Lifecycle', () => {
       process.env['LOCALAPPDATA'] = prevLocalAppData;
     } else {
       delete process.env['LOCALAPPDATA'];
+    }
+    if (prevFlowAppData !== undefined) {
+      process.env['FLOW_APPDATA_DIR'] = prevFlowAppData;
+    } else {
+      delete process.env['FLOW_APPDATA_DIR'];
     }
     if (fs.existsSync(testAppDir)) {
       try {

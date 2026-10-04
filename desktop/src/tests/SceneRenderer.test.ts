@@ -16,8 +16,10 @@ describe('SceneRenderer', () => {
     testImagePath = path.join(tempDir, 'test_image.png');
     testAudioPath = path.join(tempDir, 'test_audio.mp3');
 
+    const ffmpegBin = SceneRenderer.getFfmpegPath();
+
     // Create real test image (1280x720) via FFmpeg lavfi
-    execFileSync('ffmpeg', [
+    execFileSync(ffmpegBin, [
       '-y',
       '-f', 'lavfi',
       '-i', 'color=c=navy:s=1280x720:d=1',
@@ -26,7 +28,7 @@ describe('SceneRenderer', () => {
     ], { stdio: 'ignore' });
 
     // Create real test audio (1.5s silent/tone MP3) via FFmpeg lavfi
-    execFileSync('ffmpeg', [
+    execFileSync(ffmpegBin, [
       '-y',
       '-f', 'lavfi',
       '-i', 'sine=frequency=440:duration=1.5',
@@ -107,7 +109,8 @@ describe('SceneRenderer', () => {
 
   it('3. Renders 9:16 vertical video correctly', async () => {
     const vertImagePath = path.join(tempDir, 'test_vert.png');
-    execFileSync('ffmpeg', [
+    const ffmpegBin = SceneRenderer.getFfmpegPath();
+    execFileSync(ffmpegBin, [
       '-y',
       '-f', 'lavfi',
       '-i', 'color=c=darkred:s=720x1280:d=1',
