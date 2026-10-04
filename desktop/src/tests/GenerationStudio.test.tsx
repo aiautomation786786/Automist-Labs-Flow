@@ -198,7 +198,7 @@ describe('GenerationStudioScreen', () => {
     expect(onProjectCreated).toHaveBeenCalledWith('proj_studio_123');
   });
 
-  it('submits single image generation with original or 2k export and no 4k option', async () => {
+  it('submits single image generation with locked original resolution and no 2k/4k upscale options', async () => {
     render(
       <GenerationStudioScreen
         initialMode="single_image"
@@ -212,13 +212,17 @@ describe('GenerationStudioScreen', () => {
       await Promise.resolve();
     });
 
+    // Verify Resolution controls are completely absent: no Export Resolution, no Original pill, no 2K, no 4K
+    expect(screen.queryByText(/Export Resolution/i)).toBeNull();
+    expect(screen.queryByText(/Original \(Native\)/i)).toBeNull();
+    expect(screen.queryByText('Resolution: Original')).toBeNull();
+    expect(screen.queryByText('Original')).toBeNull();
+    expect(screen.queryByText(/2K/i)).toBeNull();
+    expect(screen.queryByText(/4K/i)).toBeNull();
+
     // Enter single prompt
     const promptInput = screen.getByPlaceholderText(/Describe your desired image/i);
     fireEvent.change(promptInput, { target: { value: 'A golden retriever in a field of sunflowers' } });
-
-    // Click 2K Upscaled export
-    const upscale2kBtn = screen.getByText('2K Upscaled');
-    fireEvent.click(upscale2kBtn);
 
     // Submit
     const submitBtn = screen.getByText('Generate Image (x1)');
@@ -232,11 +236,16 @@ describe('GenerationStudioScreen', () => {
       expect.objectContaining({
         generationMode: 'single_image',
         imageRatio: '16:9',
-        imageDownloadQuality: '2k',
-        prompts: [{ text: 'A golden retriever in a field of sunflowers', type: 'image' }],
+        imageDownloadQuality: 'original',
+        prompts: expect.arrayContaining([
+          expect.objectContaining({
+            text: 'A golden retriever in a field of sunflowers',
+            type: 'image',
+          }),
+        ]),
       })
     );
-    expect(onProjectCreated).toHaveBeenCalledWith('proj_studio_123');
+    expect(window.flowApi?.startProjectGeneration).toHaveBeenCalledWith('proj_studio_123');
   });
 
   it('supports selecting image model (Nano Banana Pro / Lite) and passing it to createProject', async () => {

@@ -11,6 +11,7 @@
 import type { Page, Locator } from 'playwright';
 import type { ModelSelectionResult } from '../../shared/types';
 import { AppLogger } from '../utils/AppLogger';
+import { FlowDriver } from './FlowDriver';
 
 const logger = new AppLogger({ mirrorToStderr: false });
 
@@ -164,6 +165,13 @@ export class ModelSelector {
           return (modelSelectorEl.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 80);
         }
 
+        // Strategy 4: If settings popover or model family button is mounted
+        const familyBtn = document.querySelector('button[aria-label="Select model family"]') as HTMLElement;
+        if (familyBtn) {
+          const text = (familyBtn.textContent || '').trim().replace(/\s+/g, ' ');
+          if (text) return text.substring(0, 80);
+        }
+
         return null;
       });
     } catch {
@@ -254,6 +262,7 @@ export class ModelSelector {
     }
 
     // Step 2: Open the model selector dropdown if popover is not already open
+    await FlowDriver.dismissNonCriticalOverlays(page).catch(() => false);
     const settingsPane = page.locator('.cdk-overlay-pane:has(flow-prompt-box-settings), flow-prompt-box-settings, .settings-content-overlay').first();
     let paneVisible = false;
     try {
@@ -383,12 +392,36 @@ export class ModelSelector {
       }
     }
 
-    // Step 7: Reliably close popover and overlays (NEVER click top-left (50,50) which navigates Home!)
+    // Check model state before closing drawer / popover
+    let modelDetectedInSettings = await this.detectCurrentModel(page);
+    logger.debug('model_selector', 'Model detected inside settings before closing', { modelDetectedInSettings });
+
+    // Step 7: Reliably close popover/drawer and overlays (NEVER click top-left (50,50) which navigates Home!)
+    // If the new Flow sidebar "Agent settings" drawer is open with a Save button, click Save to commit & close
+    try {
+      const saveBtn = page.locator('button:has-text("Save")').first();
+      if (typeof saveBtn.isVisible === 'function' && await saveBtn.isVisible().catch(() => false)) {
+        logger.info('model_selector', 'Clicking settings drawer Save button');
+        await clickElement(saveBtn);
+        await page.waitForTimeout(350);
+      }
+    } catch {}
+
+    // Check if back button is present in settings header
+    try {
+      const backBtn = page.locator('button:has-text("arrow_back")').first();
+      if (typeof backBtn.isVisible === 'function' && await backBtn.isVisible().catch(() => false)) {
+        logger.info('model_selector', 'Clicking settings drawer Back button');
+        await clickElement(backBtn);
+        await page.waitForTimeout(300);
+      }
+    } catch {}
+
     for (let attempt = 0; attempt < 4; attempt++) {
       let isStillOpen = false;
       try {
         const evalCheck = await page.evaluate(() => {
-          return document.querySelector('flow-prompt-box-settings, .settings-content-overlay') !== null;
+          return document.querySelector('flow-prompt-box-settings, .settings-content-overlay, button:has-text("Save")') !== null;
         }).catch(() => false);
         if (evalCheck === true) {
           isStillOpen = true;
@@ -414,12 +447,13 @@ export class ModelSelector {
     }
 
     // Step 8: Verify the newly selected model — STRICT exact match required with resilient polling
-    let modelDetectedAfter: string | null = null;
-    let verified = false;
-    const verifyDeadline = Date.now() + 4000;
+    let modelDetectedAfter: string | null = modelDetectedInSettings;
+    let verified = !!(modelDetectedInSettings && isExactModelMatch(modelDetectedInSettings, targetModel));
+    const verifyDeadline = Date.now() + 3000;
     while (Date.now() < verifyDeadline) {
-      modelDetectedAfter = await this.detectCurrentModel(page);
-      if (modelDetectedAfter && isExactModelMatch(modelDetectedAfter, targetModel)) {
+      const current = await this.detectCurrentModel(page);
+      if (current && isExactModelMatch(current, targetModel)) {
+        modelDetectedAfter = current;
         verified = true;
         break;
       }
@@ -775,18 +809,18 @@ export class ModelSelector {
   private static async findModelDropdownButton(page: Page): Promise<Locator | null> {
     // Priority 1: Direct targeted selectors for the Flow bottom composer settings trigger button
     const targetedSelectors = [
+      'button[aria-label="Settings"]:not([aria-label*="Tile grid"])',
+      'button.agent-action-button:has-text("tune")',
+      'div[class*="composer"] button:has-text("tune")',
+      'form button:has-text("tune")',
       'button.settings-trigger-button',
       'button[aria-label="Settings trigger"]',
       'button:has([settingstriggercontent])',
       'button:has(.settings-summary)',
       'div[class*="composer"] button:has-text("Nano")',
       'div[class*="composer"] button:has-text("Banana")',
-      'div[class*="composer"] button:has-text("Omni")',
-      'div[class*="composer"] button:has-text("Veo")',
       'form button:has-text("Nano")',
       'form button:has-text("Banana")',
-      'form button:has-text("Omni")',
-      'form button:has-text("Veo")',
       'div[class*="composer"] button:has-text("·")',
       'form button:has-text("·")',
     ];
@@ -802,10 +836,13 @@ export class ModelSelector {
 
     // Priority 2: Actively wait for composer buttons with model or parameter keywords
     const candidateSelectors = [
+      'button[aria-label="Settings"]:not([aria-label*="Tile grid"])',
+      'button.agent-action-button:has-text("tune")',
       'button.settings-trigger-button',
       'button[aria-label="Settings trigger"]',
       'button:has-text("Nano")',
       'button:has-text("Banana")',
+      'button:has-text("tune")',
       'button:has-text("Omni")',
       'button:has-text("Veo")',
       'button:has-text("Imagen")',
@@ -850,6 +887,8 @@ export class ModelSelector {
             combined.includes('Image') ||
             combined.includes('Banana') ||
             combined.includes('Nano') ||
+            combined.includes('tune') ||
+            aria === 'Settings' ||
             combined.includes('Omni') ||
             combined.includes('Veo')
           ) {

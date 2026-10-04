@@ -470,6 +470,32 @@ export class FlowDriver {
         ) !== null;
         if (isAuthOverlay) return false;
 
+        // 1.5 Handle Google Flow onboarding dialog sequence
+        const onboarding = document.querySelector('app-onboarding-dialog');
+        if (onboarding) {
+          const nextBtn = Array.from(onboarding.querySelectorAll('button')).find((b) => {
+            const t = (b.textContent || '').trim().toLowerCase();
+            return t === 'next' || t === 'i agree' || t === 'done';
+          });
+          if (nextBtn) {
+            (nextBtn as HTMLElement).click();
+            return true;
+          }
+          const privacy = onboarding.querySelector('.privacy-content');
+          if (privacy) {
+            (privacy as HTMLElement).scrollTop = (privacy as HTMLElement).scrollHeight;
+            privacy.dispatchEvent(new Event('scroll', { bubbles: true }));
+          }
+          const continueBtn = Array.from(onboarding.querySelectorAll('button')).find((b) => {
+            const t = (b.textContent || '').trim().toLowerCase();
+            return t === 'continue' && !(b as HTMLButtonElement).disabled && !b.className.includes('disabled');
+          });
+          if (continueBtn) {
+            (continueBtn as HTMLElement).click();
+            return true;
+          }
+        }
+
         // 2. Identify candidate dialogs or overlay panes
         const overlayContainers = Array.from(
           document.querySelectorAll(
@@ -546,12 +572,29 @@ export class FlowDriver {
     const startTime = Date.now();
 
     while (Date.now() - startTime < timeoutMs) {
+      // 1. Fast path: check findFirstVisible first (compatible with standard Playwright & all test mocks)
+      try {
+        const found = await this.findFirstVisible(page, candidateSelectors, 100);
+        if (found) {
+          return found;
+        }
+      } catch {
+        // Ignore and continue
+      }
+
+      // 2. Multi-element scanning for pages with hidden preceding elements
       for (const selector of candidateSelectors) {
         try {
-          const loc = page.locator(selector).first();
-          const isVis = await loc.isVisible().catch(() => false);
-          if (isVis) {
-            return loc;
+          const loc = page.locator(selector);
+          if (typeof loc.count === 'function') {
+            const count = await loc.count().catch(() => 0);
+            for (let i = 0; i < count; i++) {
+              const item = loc.nth(i);
+              const isVis = await item.isVisible().catch(() => false);
+              if (isVis) {
+                return item;
+              }
+            }
           }
         } catch {
           // Ignore selector error and continue

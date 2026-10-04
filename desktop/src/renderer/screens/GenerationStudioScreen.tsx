@@ -10,6 +10,7 @@ import { naturalSort, detectAmbiguousNumericOrder } from '../../shared/utils/Nat
 import { SUPPORTED_IMAGE_MODELS, getImageModelConfig } from '../../shared/image-models';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { formatAssetUrl } from '../utils/assetUrl';
+import { SingleImageStudio } from './SingleImageStudio';
 import {
   ImageIcon,
   VideoIcon,
@@ -56,7 +57,21 @@ const SAMPLE_IMAGE_TO_VIDEO_PROMPTS = [
   'Bring this image to life with continuous fluid motion, gentle ambient breeze, and photorealistic depth.',
 ];
 
-export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
+export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = (props) => {
+  const mode = props.initialMode || 'single_image';
+  if (mode === 'single_image') {
+    return (
+      <SingleImageStudio
+        onProjectCreated={props.onProjectCreated}
+        onCancel={props.onCancel}
+        onNavigateProfiles={props.onNavigateProfiles}
+      />
+    );
+  }
+  return <StandardGenerationStudioScreen {...props} />;
+};
+
+const StandardGenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
   initialMode = 'single_image',
   onProjectCreated,
   onCancel,

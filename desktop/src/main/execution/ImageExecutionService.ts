@@ -138,6 +138,8 @@ export class ImageExecutionService {
           `Detected: "${modelResult.modelDetectedAfter}". ${modelResult.error ?? ''}`
         );
       }
+      const page = automation.getPage();
+      await page.waitForTimeout(500);
 
       // Step 4: Capture Pre-Generation Media Snapshot (for delta matching)
       log.info('image_exec', 'Capturing pre-generation media snapshot...');
@@ -145,17 +147,41 @@ export class ImageExecutionService {
       const beforeUuids = new Set<string>(preGenMedia.imageUuids);
 
       // Step 5: Fill prompt text into contenteditable / textarea
-      const page = automation.getPage();
       const promptCandidates = [
-        '[contenteditable="true"]:visible',
-        'textarea:visible',
+        'div.ProseMirror',
+        '.ProseMirror',
+        '[contenteditable="true"]:not([aria-label*="title" i])',
         '[contenteditable="true"]',
+        'flow-prompt-box [contenteditable="true"]',
+        'flow-prompt-box textarea',
+        'textarea[placeholder*="prompt" i]',
+        'textarea[placeholder*="describe" i]',
         'textarea',
       ];
 
-      const promptInput = await FlowDriver.findFirstVisible(page, promptCandidates, 3000);
+      const pageTitle = typeof page.title === 'function' ? await page.title().catch(() => '') : '';
+      log.info('image_exec', `Finding prompt input. URL: ${page.url()}, Title: ${pageTitle}`);
+      try {
+        if (typeof page.evaluate === 'function') {
+          const domDump = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('[contenteditable="true"], textarea, .ProseMirror, div[class*="editor"]')).map((el) => ({
+              tag: el.tagName,
+              cls: el.className,
+              vis: (el as HTMLElement).offsetParent !== null,
+              rect: el.getBoundingClientRect(),
+            }));
+          });
+          if (Array.isArray(domDump) && domDump.length > 0) {
+            log.info('image_exec', 'DOM editable dump:', { count: domDump.length, items: domDump });
+          }
+        }
+      } catch (err) {
+        log.warn('image_exec', 'Failed to inspect DOM editables', { error: String(err) });
+      }
+
+      const promptInput = await FlowDriver.waitForFirstVisible(page, promptCandidates, 15000, 250);
       if (!promptInput) {
-        throw new Error('Prompt input field not found on Google Flow page.');
+        throw new Error(`Prompt input field not found on Google Flow page. URL: ${page.url()}`);
       }
 
       const slot = project?.slots.find((s) => s.slotIndex === slotIndex);
@@ -189,8 +215,9 @@ export class ImageExecutionService {
           'button:has-text("Créer")',
           '[aria-label*="generation" i]',
           '[aria-label*="generate" i]',
+          'button[type="submit"]',
         ];
-        const generateBtn = await FlowDriver.findFirstVisible(page, generateBtnCandidates, 2000);
+        const generateBtn = await FlowDriver.waitForFirstVisible(page, generateBtnCandidates, 5000, 200);
         if (!generateBtn) {
           throw new Error('Generate button not found on Google Flow page.');
         }
@@ -263,6 +290,11 @@ export class ImageExecutionService {
             log.info('image_exec', `New generated media detected unambiguously: ${newUuid}`);
             break;
           } else if (deltaUuids.length > 1) {
+            if (project?.settings?.generationMode === 'single_image' && options.mockDeltaUuids === undefined) {
+              newUuid = deltaUuids[deltaUuids.length - 1]!;
+              log.info('image_exec', `New generated media detected in single image mode: ${newUuid} (${deltaUuids.length} candidates)`);
+              break;
+            }
             log.warn('image_exec', `Ambiguous media result: ${deltaUuids.length} new images appeared simultaneously.`);
             await this.updateJobStatus(
               projectId,

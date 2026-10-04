@@ -497,11 +497,11 @@ export class GeminiDriver {
     } = {},
   ): Promise<ImageCompletionResult> {
     const timeoutMs = options.timeoutMs ?? 120000;
-    const pollInterval = options.pollIntervalMs ?? 1500;
+    const basePollInterval = options.pollIntervalMs ?? 300;
     const startTime = Date.now();
     const beforeUrls = options.beforeUrls || [];
 
-    logger.info('gemini_driver', `Waiting for image generation completion (timeout: ${timeoutMs / 1000}s)...`);
+    logger.info('gemini_driver', `Waiting for image generation completion (timeout: ${timeoutMs / 1000}s, adaptive polling from ${basePollInterval}ms)...`);
 
     while (Date.now() - startTime < timeoutMs) {
       // 1. Check for safety violation refusal
@@ -564,6 +564,7 @@ export class GeminiDriver {
         options.onProgress(`Gemini generating image... (${elapsedSec}s elapsed)`, estimatedPercent);
       }
 
+      const pollInterval = Math.min(800, basePollInterval + Math.floor((Date.now() - startTime) / 10000) * 100);
       await page.waitForTimeout(pollInterval);
     }
 
