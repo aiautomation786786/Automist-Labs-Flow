@@ -147,6 +147,17 @@ export class MediaDetector {
           }
         });
 
+        // 4. Scan performance resource timing entries for background-fetched Flow video URLs
+        try {
+          const perfEntries = performance.getEntriesByType('resource');
+          for (let p = perfEntries.length - 1; p >= 0; p--) {
+            const name = (perfEntries[p] as any)?.name || '';
+            if (name.includes('flow-content.google/video/') || (name.includes('/video/') && name.includes('.mp4'))) {
+              if (!videoSources.includes(name)) videoSources.push(name);
+            }
+          }
+        } catch {}
+
         return { imageSrcs, videoSources, hasVideo: videos.length > 0 || videoTiles.length > 0 };
       });
 
@@ -302,6 +313,17 @@ export class MediaDetector {
             candidates.push(src);
           }
         }
+
+        // Strategy 3: Check performance resource entries
+        try {
+          const perfEntries = performance.getEntriesByType('resource');
+          for (let p = perfEntries.length - 1; p >= 0; p--) {
+            const name = (perfEntries[p] as any)?.name || '';
+            if ((name.includes('flow-content.google/video/') || (name.includes('/video/') && name.includes('.mp4'))) && !bSet.has(name)) {
+              candidates.push(name);
+            }
+          }
+        } catch {}
 
         return {
           candidates: Array.from(new Set(candidates)),

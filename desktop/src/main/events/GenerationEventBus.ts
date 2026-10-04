@@ -63,6 +63,16 @@ export class GenerationEventBus extends EventEmitter {
   ): this {
     return this.on(event, listener as (...args: unknown[]) => void);
   }
+
+  /**
+   * Typed unsubscription helper.
+   */
+  offTyped<K extends keyof GenerationEventMap>(
+    event: K,
+    listener: GenerationEventMap[K]
+  ): this {
+    return this.off(event, listener as (...args: unknown[]) => void);
+  }
 }
 
 /** Global singleton event bus for the desktop application */

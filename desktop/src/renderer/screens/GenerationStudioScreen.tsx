@@ -11,6 +11,7 @@ import { SUPPORTED_IMAGE_MODELS, getImageModelConfig } from '../../shared/image-
 import { SegmentedControl } from '../components/SegmentedControl';
 import { formatAssetUrl } from '../utils/assetUrl';
 import { SingleImageStudio } from './SingleImageStudio';
+import { SingleVideoStudio } from './SingleVideoStudio';
 import {
   ImageIcon,
   VideoIcon,
@@ -62,6 +63,15 @@ export const GenerationStudioScreen: React.FC<GenerationStudioScreenProps> = (pr
   if (mode === 'single_image') {
     return (
       <SingleImageStudio
+        onProjectCreated={props.onProjectCreated}
+        onCancel={props.onCancel}
+        onNavigateProfiles={props.onNavigateProfiles}
+      />
+    );
+  }
+  if (mode === 'single_video') {
+    return (
+      <SingleVideoStudio
         onProjectCreated={props.onProjectCreated}
         onCancel={props.onCancel}
         onNavigateProfiles={props.onNavigateProfiles}
@@ -323,7 +333,6 @@ const StandardGenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
   const [videoModel, setVideoModel] = useState<'Omni 1.1 Flash' | 'Veo 3.1 - Quality' | 'Veo 3.1 - Fast' | 'Veo 3.1 - Lite'>(
     initialMode.includes('image_to_video') ? 'Omni 1.1 Flash' : 'Veo 3.1 - Quality'
   );
-  const [veoDuration, setVeoDuration] = useState<'4s' | '6s' | '8s'>('8s');
   const [omniResolution, setOmniResolution] = useState<'360p' | '720p'>('720p');
   const [omniDuration, setOmniDuration] = useState<'4s' | '6s' | '8s' | '10s'>('4s');
   const [videoDownloadQuality, setVideoDownloadQuality] = useState<'original' | '1080p'>('original');
@@ -463,10 +472,10 @@ const StandardGenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
       const effectiveDuration = isImageToVideo
         ? (effectiveProvider === 'gemini' ? '10s' : omniDuration)
         : videoModel === 'Veo 3.1 - Quality'
-        ? '8s'
+        ? '10s'
         : isOmni
         ? (effectiveProvider === 'gemini' ? '10s' : omniDuration)
-        : veoDuration;
+        : '8s';
 
       let promptsWithProvider: Array<{ text: string; type: 'image' | 'video'; sourceImagePath?: string; provider?: GenerationProvider }>;
 
@@ -1785,33 +1794,20 @@ const StandardGenerationStudioScreen: React.FC<GenerationStudioScreenProps> = ({
                   ) : videoModel === 'Veo 3.1 - Quality' ? (
                     <div className="native-info-pill">
                       <ClockIcon size={14} />
-                      <span>Native Flow Duration:</span>
-                      <strong style={{ color: '#ffffff' }}>8s</strong>
+                       <span>Native Flow Duration:</span>
+                      <strong style={{ color: '#ffffff' }}>10s</strong>
                       <span style={{ opacity: 0.8, fontSize: '11px' }}>
                         (Cinema Quality Default)
                       </span>
                     </div>
                   ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                          Veo Duration
-                        </span>
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                          Supported 4s, 6s, or 8s generation
-                        </span>
-                      </div>
-                      <SegmentedControl<'4s' | '6s' | '8s'>
-                        options={[
-                          { value: '4s', label: '4s' },
-                          { value: '6s', label: '6s' },
-                          { value: '8s', label: '8s (Default)' },
-                        ]}
-                        value={veoDuration}
-                        onChange={(d) => setVeoDuration(d)}
-                        size="sm"
-                        fullWidth
-                      />
+                    <div className="native-info-pill">
+                      <ClockIcon size={14} />
+                      <span>Native Flow Duration:</span>
+                      <strong style={{ color: '#ffffff' }}>8s</strong>
+                      <span style={{ opacity: 0.8, fontSize: '11px' }}>
+                        ({videoModel === 'Veo 3.1 - Fast' ? 'High-Speed' : 'Efficient'} Default)
+                      </span>
                     </div>
                   )}
                 </div>

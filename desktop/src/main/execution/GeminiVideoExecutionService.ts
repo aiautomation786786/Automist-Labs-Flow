@@ -293,12 +293,15 @@ export class GeminiVideoExecutionService {
         }
       }
 
-      // Extract Duration & Poster (from cleanVideoPath)
-      const durationResult = await VideoDuration.getDuration(cleanVideoPath);
+      // Extract Duration & Poster concurrently from cleanVideoPath
+      const [durationResult] = await Promise.all([
+        VideoDuration.getDuration(cleanVideoPath).catch(() => null),
+        FfmpegResolver.extractPoster(cleanVideoPath, thumbnailPath).catch((err) => {
+          log.warn('gemini_video_exec', `Poster extraction notice: ${(err as Error).message}`);
+        }),
+      ]);
       const durationSeconds = durationResult?.durationSeconds || completionResult.durationSeconds || 10.0;
       const durationFormatted = durationResult?.durationFormatted || `${durationSeconds.toFixed(1)}s`;
-
-      await FfmpegResolver.extractPoster(cleanVideoPath, thumbnailPath);
 
       currentAttempt.endedAt = new Date().toISOString();
       currentAttempt.submissionState = 'completed';

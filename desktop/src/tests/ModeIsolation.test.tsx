@@ -111,7 +111,7 @@ describe('ModeIsolation & Model Constraints', () => {
     expect(screen.queryByText(/Veo Duration/i)).toBeNull();
   });
 
-  it('Veo 3.1 - Quality displays 8s Cinema Default and NO duration buttons', async () => {
+  it('Veo 3.1 - Quality displays 10s Cinema Default and NO duration buttons', async () => {
     render(
       <GenerationStudioScreen
         initialMode="single_video"
@@ -126,20 +126,20 @@ describe('ModeIsolation & Model Constraints', () => {
     });
 
     expect(screen.getByText('Single Video Studio')).toBeDefined();
-    const videoSelect = screen.getByLabelText('AI Video Model') as HTMLSelectElement;
-    expect(videoSelect.value).toBe('Veo 3.1 - Quality');
+    const qualityCard = screen.getByLabelText('Veo 3.1 - Quality');
+    fireEvent.click(qualityCard);
 
-    // Quality has fixed 8s native duration pill
-    expect(screen.getByText(/Native Flow Duration/i)).toBeDefined();
-    expect(screen.getByText('8s')).toBeDefined();
-    expect(screen.getByText('(Cinema Quality Default)')).toBeDefined();
+    // Quality has fixed 10s output profile
+    expect(screen.getByText('Cinema Output')).toBeDefined();
+    expect(screen.getByText('10s Fixed')).toBeDefined();
+    expect(screen.getAllByText(/10s/i).length).toBeGreaterThan(0);
 
-    // Veo Duration segmented control must NOT be shown for Quality
-    expect(screen.queryByText('Veo Duration')).toBeNull();
-    expect(screen.queryByText('Omni Duration')).toBeNull();
+    // Duration buttons (4s, 6s) must NOT be shown for Quality
+    expect(screen.queryByRole('button', { name: '4s' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '6s' })).toBeNull();
   });
 
-  it('Veo 3.1 - Fast provides 4s / 6s / 8s selector with 8s default', async () => {
+  it('Veo 3.1 - Fast displays fixed 8s High-Speed Default and NO duration buttons', async () => {
     render(
       <GenerationStudioScreen
         initialMode="single_video"
@@ -153,13 +153,14 @@ describe('ModeIsolation & Model Constraints', () => {
       await Promise.resolve();
     });
 
-    const videoSelect = screen.getByLabelText('AI Video Model');
-    fireEvent.change(videoSelect, { target: { value: 'Veo 3.1 - Fast' } });
+    const fastCard = screen.getByLabelText('Veo 3.1 - Fast');
+    fireEvent.click(fastCard);
 
-    expect(screen.getByText('Veo Duration')).toBeDefined();
-    expect(screen.getByText('4s')).toBeDefined();
-    expect(screen.getByText('6s')).toBeDefined();
-    expect(screen.getByText('8s (Default)')).toBeDefined();
+    expect(screen.getByText('Fast Output')).toBeDefined();
+    expect(screen.getByText('8s Fixed')).toBeDefined();
+    expect(screen.getAllByText(/8s/i).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: '4s' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '6s' })).toBeNull();
   });
 
   it('Omni 1.1 Flash provides 4s / 6s / 8s / 10s and 360p / 720p selectors', async () => {
@@ -176,12 +177,10 @@ describe('ModeIsolation & Model Constraints', () => {
       await Promise.resolve();
     });
 
-    const videoSelect = screen.getByLabelText('AI Video Model');
-    fireEvent.change(videoSelect, { target: { value: 'Omni 1.1 Flash' } });
+    const omniCard = screen.getByLabelText('Omni 1.1 Flash');
+    fireEvent.click(omniCard);
 
-    expect(screen.getByText('Omni Duration')).toBeDefined();
     expect(screen.getByText('10s')).toBeDefined();
-    expect(screen.getByText('Omni Generation Resolution')).toBeDefined();
     expect(screen.getByText('360p')).toBeDefined();
     expect(screen.getByText('720p')).toBeDefined();
   });
@@ -219,7 +218,7 @@ describe('ModeIsolation & Model Constraints', () => {
 
     // Should now be in Single Video Studio
     expect(screen.getByText('Single Video Studio')).toBeDefined();
-    const videoPromptArea = screen.getByPlaceholderText(/Describe camera movement and cinematography/i);
+    const videoPromptArea = screen.getByPlaceholderText(/Describe your scene, camera movement, and lighting/i);
     // State must be cleanly isolated: empty prompt, not leaked from image mode
     expect((videoPromptArea as HTMLTextAreaElement).value).toBe('');
   });

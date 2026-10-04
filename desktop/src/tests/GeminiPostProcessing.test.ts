@@ -101,6 +101,18 @@ describe('Gemini Watermark Quality & Detection Hardening Suite', () => {
       expect(result.method).toBe('fixed_fallback');
       expect(result.boundingBox).toEqual({ x: 570, y: 1130, w: 60, h: 60 });
     });
+
+    it('Tier 3: falls through to geometry derivation when ZNCC template correlation is low (< 0.40)', async () => {
+      vi.spyOn(FfmpegResolver, 'findFfmpeg').mockReturnValue('/mock/ffmpeg');
+      vi.spyOn(FfmpegResolver, 'findFfprobe').mockReturnValue('/mock/ffprobe');
+      vi.spyOn(GeminiWatermarkDetector, 'probeVideo').mockResolvedValue({ width: 1280, height: 720, duration: 10 });
+
+      const result = await GeminiWatermarkDetector.detect('any_path.mp4', { ratio: '16:9' });
+      expect(result.detected).toBe(true);
+      expect(result.method).toBe('geometry_derived');
+      expect(result.boundingBox).toBeDefined();
+      expect(result.exactCoordinates).toEqual({ x0: 1136, y0: 576 });
+    });
   });
 
   // 3. No-Watermark Detection & Preservation

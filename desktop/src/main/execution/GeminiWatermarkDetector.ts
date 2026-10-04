@@ -292,17 +292,8 @@ export class GeminiWatermarkDetector {
           };
         }
 
-        // If low correlation (< 0.22), no watermark present
-        if (bestZNCC < 0.22) {
-          return {
-            detected: false,
-            method: 'template_zncc',
-            confidence: 1 - bestZNCC,
-            boundingBox: { x: 0, y: 0, w: 0, h: 0 },
-            videoDimensions: dimensions,
-            durationSeconds: duration,
-          };
-        }
+        // If correlation is below confident threshold (< 0.40), log and fall through to Tier 3 geometry derivation
+        log.info('gemini_watermark_detector', `ZNCC score (${bestZNCC.toFixed(4)}) below confident threshold (0.40); falling through to geometry derivation`);
       }
     } catch (err) {
       log.warn('gemini_watermark_detector', `ZNCC template detection encountered error: ${(err as Error).message}`);

@@ -370,6 +370,23 @@ export class VideoExecutionService {
         await JobRepository.updateJob(projectId, jobId, { submissionState: 'submitted', attempts: updatedAttempts });
         generationClickTime = new Date().toISOString();
         log.info('video_exec', 'Generate button clicked once. Transitioning to waiting_for_result.');
+
+        // Auto-approve if Google Flow presents AI Agent credit confirmation prompt
+        try {
+          const approveCandidates = [
+            'div.option-row:has-text("Always approve")',
+            'div[role="radio"]:has-text("Always approve")',
+            '[aria-label*="Always approve" i]',
+            'button:has-text("Always approve")',
+            'button:has-text("Approve")',
+          ];
+          const approveBtn = await FlowDriver.findFirstVisible(page, approveCandidates, 2500);
+          if (approveBtn) {
+            log.info('video_exec', 'Auto-approving Google Flow agent credit confirmation prompt...');
+            await approveBtn.click();
+            await page.waitForTimeout(1000);
+          }
+        } catch {}
       } else {
         log.info('video_exec', 'Dry-run: skipping real Generate click.');
         generationClickTime = new Date().toISOString();
@@ -425,6 +442,24 @@ export class VideoExecutionService {
         }
 
         if (!candidateUrl) {
+          const perfCandidate = await page.evaluate((beforeUrls) => {
+            const bSet = new Set(beforeUrls);
+            const perfEntries = performance.getEntriesByType('resource');
+            for (let i = perfEntries.length - 1; i >= 0; i--) {
+              const name = (perfEntries[i] as any)?.name || '';
+              if ((name.includes('flow-content.google/video/') || (name.includes('/video/') && name.includes('.mp4'))) && !bSet.has(name)) {
+                return name;
+              }
+            }
+            return null;
+          }, Array.from(beforeVideoSources)).catch(() => null);
+
+          if (perfCandidate) {
+            candidateUrl = perfCandidate;
+          }
+        }
+
+        if (!candidateUrl) {
           // Inspect tiles: check for <video>, /asb/ stream, or tile HTML
           const tileVideoCandidate = await page.evaluate((beforeUrls) => {
             const bSet = new Set(beforeUrls);
@@ -473,21 +508,21 @@ export class VideoExecutionService {
             const cType = (probe.headers()['content-type'] || '').toLowerCase();
             const status = probe.status();
             const isVideoContentType =
-              cType.includes('video') ||
+              (cType.includes('video') ||
               cType.includes('mp4') ||
               cType.includes('octet-stream') ||
               cType.includes('binary') ||
               cType.includes('protobuf') ||
               status === 206 ||
-              status === 200;
+              status === 200) && status < 400;
 
-            if (isVideoContentType || isDirectPattern) {
+            if (status < 400 && (isVideoContentType || isDirectPattern)) {
               detectedVideoUrl = candidateUrl;
               detectedUuid = MediaDetector.parseMediaUuids([candidateUrl]).uuids[0];
               log.info('video_exec', `Verified ready video stream: ${candidateUrl} (${cType || 'status: ' + status})`);
               break;
             } else {
-              log.debug('video_exec', `Candidate URL probed but not yet video stream (content-type: ${cType}); continuing poll...`);
+              log.debug('video_exec', `Candidate URL probed but not yet valid video stream (status: ${status}, content-type: ${cType}); continuing poll...`);
             }
           } catch (probeErr) {
             log.debug('video_exec', `Candidate probe notice: ${(probeErr as Error).message}; checking direct pattern...`);
@@ -500,8 +535,18 @@ export class VideoExecutionService {
           }
         }
 
-        // Adaptive polling: 1500ms
-        await page.waitForTimeout(1500);
+        // Adaptive polling: fast 500ms during initial active generation phase, scaling to 1000ms
+        const elapsedSincePollStart = Date.now() - pollStart;
+        const pollInterval = elapsedSincePollStart < 30000 ? 500 : 1000;
+
+        // Proactively hover the video tile so Google Flow UI loads the video stream
+        if (elapsedSincePollStart > 15000 && elapsedSincePollStart % 6000 < 1000) {
+          try {
+            await page.hover('flow-video-tile, [class*="video-tile"]').catch(() => {});
+          } catch {}
+        }
+
+        await page.waitForTimeout(pollInterval);
       }
 
       page.off('response', responseHandler);
@@ -581,6 +626,14 @@ export class VideoExecutionService {
             }
             const bodyMatch = document.body.innerHTML.match(/https?:\/\/[^"'\s]+\/asb\/[a-zA-Z0-9_-]+/);
             if (bodyMatch) return bodyMatch[0].split('=')[0] + '=mm,22,15';
+
+            const perfEntries = performance.getEntriesByType('resource');
+            for (let i = perfEntries.length - 1; i >= 0; i--) {
+              const name = (perfEntries[i] as any)?.name || '';
+              if (name.includes('flow-content.google/video/') || (name.includes('/video/') && name.includes('.mp4'))) {
+                return name;
+              }
+            }
             return null;
           }).catch(() => null);
 
@@ -665,8 +718,14 @@ export class VideoExecutionService {
       }
       log.info('video_exec', `Video output verified: ${fileCheck.sizeBytes} bytes`);
 
-      // Duration extraction
-      const durationResult = await VideoDuration.getDuration(destinationPath);
+      // Extract duration and real JPEG video poster frame concurrently via Promise.all
+      log.info('video_exec', `Extracting video duration and poster frame concurrently -> ${thumbnailPath}`);
+      const [durationResult] = await Promise.all([
+        VideoDuration.getDuration(destinationPath).catch(() => null),
+        FfmpegResolver.extractPoster(destinationPath, thumbnailPath).catch((err) => {
+          log.warn('video_exec', `Poster extraction notice: ${(err as Error).message}`);
+        }),
+      ]);
       const durationSeconds = durationResult?.durationSeconds;
       const durationFormatted = durationResult?.durationFormatted || '8.0s';
       log.info('video_exec', 'Video duration measured', {
@@ -674,10 +733,6 @@ export class VideoExecutionService {
         durationFormatted,
         method: durationResult?.method,
       });
-
-      // Extract real JPEG video poster frame via production-safe FfmpegResolver
-      log.info('video_exec', `Extracting video poster frame -> ${thumbnailPath}`);
-      await FfmpegResolver.extractPoster(destinationPath, thumbnailPath);
 
       // Verify poster thumbnail exists on disk
       const thumbCheck = AssetManager.verifyOutputFile(thumbnailPath, projectId);

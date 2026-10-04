@@ -93,6 +93,7 @@ describe('ChannelRepository Unit & Safety Tests', () => {
 
   it('5. Lists all channels sorted by creation date descending', async () => {
     const ch1 = await ChannelRepository.create({ name: 'Channel Alpha' });
+    await new Promise((r) => setTimeout(r, 5));
     const ch2 = await ChannelRepository.create({ name: 'Channel Beta' });
 
     const all = await ChannelRepository.getAll();

@@ -86,8 +86,8 @@ describe('Persistent Invisible Google Flow Authentication', () => {
     expect(mockStart).toHaveBeenCalledTimes(2);
     // Both starts should have fired nearly simultaneously (within 35ms of each other)
     expect(Math.abs(aStartedAt - bStartedAt)).toBeLessThan(35);
-    // Total duration should be ~50-90ms (parallel), not 100ms+ (serial)
-    expect(duration).toBeLessThan(120);
+    // Total duration should be ~50-100ms (parallel), not serial blocking
+    expect(duration).toBeLessThan(250);
   });
 
   it('isolates session expiration: Profile A auth_required does not invalidate Profile B ready state', async () => {

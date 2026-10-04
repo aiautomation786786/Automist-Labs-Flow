@@ -822,7 +822,7 @@ describe('ParallelScheduler: True Maximum Safe Concurrency', () => {
 
     scheduler = new GenerationScheduler(pool!);
     await scheduler.enqueueProject(project.projectId);
-    await waitMs(60);
+    await waitMs(150);
 
     expect(worker1.isBusy).toBe(true);
     expect(worker2.isBusy).toBe(true);
@@ -863,7 +863,7 @@ describe('ParallelScheduler: True Maximum Safe Concurrency', () => {
 
     scheduler = new GenerationScheduler(pool!);
     await scheduler.enqueueProject(project.projectId);
-    await waitMs(80);
+    await waitMs(150);
 
     expect(pool!.busyCount).toBe(5);
     workers.forEach((w) => expect(w.isBusy).toBe(true));

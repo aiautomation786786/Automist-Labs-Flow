@@ -15,17 +15,17 @@ describe('ProviderCapabilityRegistry', () => {
     const veoQuality = getCapability('Veo 3.1 - Quality');
     expect(veoQuality).toBeDefined();
     expect(veoQuality?.provider).toBe('flow');
-    expect(veoQuality?.durations).toEqual(['8s']);
+    expect(veoQuality?.durations).toEqual(['10s']);
     expect(veoQuality?.supportsImageToVideo).toBe(false);
 
     const veoFast = getCapability('Veo 3.1 - Fast');
     expect(veoFast?.provider).toBe('flow');
-    expect(veoFast?.durations).toEqual(['4s', '6s', '8s']);
+    expect(veoFast?.durations).toEqual(['8s']);
     expect(veoFast?.supportsImageToVideo).toBe(false);
 
     const veoLite = getCapability('Veo 3.1 - Lite');
     expect(veoLite?.provider).toBe('flow');
-    expect(veoLite?.durations).toEqual(['4s', '6s', '8s']);
+    expect(veoLite?.durations).toEqual(['8s']);
     expect(veoLite?.supportsImageToVideo).toBe(false);
 
     const omni = getCapability('Omni 1.1 Flash');
@@ -52,9 +52,9 @@ describe('ProviderCapabilityRegistry', () => {
 
   it('strictly limits Gemini eligibility to 10s Omni requests', () => {
     // Veo is NEVER eligible for Gemini
-    expect(getEligibleProviders({ model: 'Veo 3.1 - Quality', duration: '8s' })).toEqual(['flow']);
-    expect(getEligibleProviders({ model: 'Veo 3.1 - Fast', duration: '4s' })).toEqual(['flow']);
-    expect(getEligibleProviders({ model: 'Veo 3.1 - Lite', duration: '6s' })).toEqual(['flow']);
+    expect(getEligibleProviders({ model: 'Veo 3.1 - Quality', duration: '10s' })).toEqual(['flow']);
+    expect(getEligibleProviders({ model: 'Veo 3.1 - Fast', duration: '8s' })).toEqual(['flow']);
+    expect(getEligibleProviders({ model: 'Veo 3.1 - Lite', duration: '8s' })).toEqual(['flow']);
 
     // Omni with 4s, 6s, 8s is strictly Flow
     expect(getEligibleProviders({ model: 'Omni 1.1 Flash', duration: '4s' })).toEqual(['flow']);

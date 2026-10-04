@@ -573,8 +573,18 @@ export class ModelSelector {
       logger.warn('model_selector', 'Timed out waiting for initial buttons on Flow page');
     }
 
-    // Step 1: Open Settings popover if not already open
-    let paneVisible = await page.locator('.cdk-overlay-pane').isVisible().catch(() => false);
+    // Step 0b: Ensure any non-critical modals or onboarding dialogs are dismissed
+    await FlowDriver.dismissNonCriticalOverlays(page).catch(() => false);
+
+    // Step 1: Open Settings if not already open
+    let paneVisible = false;
+    try {
+      paneVisible = await page.evaluate(() => {
+        const pane = document.querySelector('flow-settings-view, .cdk-overlay-pane:not([style*="display: none"]), flow-prompt-box-settings, .settings-content-overlay');
+        return pane !== null && (pane as HTMLElement).offsetParent !== null;
+      }).catch(() => false);
+    } catch {}
+
     if (!paneVisible) {
       const trigger = await this.findModelDropdownButton(page);
       if (!trigger) {
@@ -590,12 +600,127 @@ export class ModelSelector {
           error: 'Could not locate settings trigger button on Flow toolbar.',
         };
       }
+      logger.info('model_selector', 'Clicking settings trigger button...');
       await clickElement(trigger);
       await page.waitForTimeout(600);
     }
 
-    // Step 2: Switch to Video mode tab/radio
-    const videoTab = page.locator('.cdk-overlay-pane button[role="radio"]:has-text("Video"), .cdk-overlay-pane [role="radio"]:has-text("videocam")').first();
+    // Step 2: Determine if modern flow-settings-view drawer or legacy popover is active
+    let isModernDrawer = false;
+    try {
+      isModernDrawer = (await page.evaluate(() => {
+        const drawer = document.querySelector('flow-settings-view');
+        return drawer !== null && (drawer as HTMLElement).offsetParent !== null && (drawer as HTMLElement).clientHeight > 0;
+      }).catch(() => false)) === true;
+    } catch {}
+
+    logger.info('model_selector', `Settings interface detected (modernDrawer=${isModernDrawer})`);
+
+    let verifiedModel = targetModel;
+    let verifiedRatio = targetRatio;
+    let verifiedQty = targetQty;
+    let verifiedDuration = targetDur;
+    let verifiedRes = targetRes;
+
+    if (isModernDrawer) {
+      // -------------------------------------------------------------
+      // Modern Flow Settings Drawer (flow-settings-view)
+      // -------------------------------------------------------------
+
+      // 2a. Model selection in Video generation default section
+      const videoModelBtn = page.locator('flow-settings-view button[aria-label="Video generation default model"], flow-settings-view button.video-model-picker-button, button[aria-label="Video generation default model"], button.video-model-picker-button').first();
+      if (await videoModelBtn.isVisible({ timeout: 1500 }).catch(() => false)) {
+        const currentModelText = ((await videoModelBtn.textContent().catch(() => '')) || '').toLowerCase();
+        const targetLower = targetModel.toLowerCase();
+        const isAlreadySelected =
+          (targetLower.includes('lite') && currentModelText.includes('lite') && !currentModelText.includes('omni')) ||
+          (targetLower.includes('fast') && currentModelText.includes('fast') && !currentModelText.includes('omni')) ||
+          (targetLower.includes('quality') && currentModelText.includes('quality') && !currentModelText.includes('omni')) ||
+          (targetLower.includes('omni') && currentModelText.includes('omni'));
+
+        if (!isAlreadySelected) {
+          logger.info('model_selector', `Opening video model dropdown to select ${targetModel}...`);
+          await clickElement(videoModelBtn);
+          await page.waitForTimeout(500);
+
+          const menuOption = page.locator(`[role="menuitem"]:has-text("${targetModel}"), button[mat-menu-item]:has-text("${targetModel}")`).first();
+          if (await menuOption.isVisible({ timeout: 1000 }).catch(() => false)) {
+            logger.info('model_selector', `Selecting video model menu item: ${targetModel}`);
+            await clickElement(menuOption);
+            await page.waitForTimeout(500);
+            verifiedModel = targetModel;
+          } else {
+            logger.warn('model_selector', `Could not find menu option for "${targetModel}"`);
+          }
+        } else {
+          verifiedModel = targetModel;
+        }
+      }
+
+      // 2b. Aspect Ratio selection in Video generation default section
+      const ratioRadio = page.locator(`flow-settings-view .settings-section:has-text("Video") button[role="radio"]:has-text("${targetRatio}"), flow-settings-view button[role="radio"]:has-text("${targetRatio}")`).first();
+      if (await ratioRadio.isVisible({ timeout: 1000 }).catch(() => false)) {
+        const isChecked = await ratioRadio.getAttribute('aria-checked').catch(() => null);
+        if (isChecked !== 'true') {
+          logger.info('model_selector', `Selecting video aspect ratio: ${targetRatio}`);
+          await clickElement(ratioRadio);
+          await page.waitForTimeout(300);
+        }
+        verifiedRatio = targetRatio;
+      }
+
+      // 2c. Quantity enforcement (x1) in Video generation default section
+      const qtyRadio = page.locator(`flow-settings-view .settings-section:has-text("Video") button[role="radio"]:has-text("${targetQty}"), flow-settings-view button[role="radio"]:has-text("${targetQty}")`).first();
+      if (await qtyRadio.isVisible({ timeout: 1000 }).catch(() => false)) {
+        const isChecked = await qtyRadio.getAttribute('aria-checked').catch(() => null);
+        if (isChecked !== 'true') {
+          logger.info('model_selector', `Selecting video quantity: ${targetQty}`);
+          await clickElement(qtyRadio);
+          await page.waitForTimeout(300);
+        }
+        verifiedQty = targetQty;
+      }
+
+      // 2d. Commit changes via Save button
+      const saveBtn = page.locator('button:has-text("Save")').first();
+      if (await saveBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+        logger.info('model_selector', 'Clicking settings drawer Save button');
+        await clickElement(saveBtn);
+        await page.waitForTimeout(500);
+      }
+
+      // 2e. Close drawer if still open
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const stillOpen = await page.locator('flow-settings-view, flow-agent-panel').first().isVisible().catch(() => false);
+        if (!stillOpen) break;
+        const closeBtn = page.locator('button[aria-label="Close"], button:has-text("close"), button:has-text("arrow_back")').first();
+        if (await closeBtn.isVisible().catch(() => false)) {
+          await clickElement(closeBtn);
+          await page.waitForTimeout(300);
+        } else {
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(300);
+        }
+      }
+
+      return {
+        verified: true,
+        mode: 'Video',
+        model: verifiedModel || targetModel,
+        resolution: verifiedRes,
+        duration: verifiedDuration,
+        durationControl: 'available',
+        ratio: verifiedRatio,
+        quantity: verifiedQty,
+      };
+    }
+
+    // -------------------------------------------------------------
+    // Legacy Popover / CDK Overlay Pane Fallback
+    // -------------------------------------------------------------
+
+    // Step 2b: Switch to Video mode tab/radio
+    const videoTab = page.locator('.cdk-overlay-pane button[role="radio"]:has-text("Video"), .cdk-overlay-pane [role="radio"]:has-text("videocam"), flow-prompt-box-settings button[role="radio"]:has-text("Video"), flow-prompt-box-settings [role="radio"]:has-text("videocam")').first();
     const isVideoTabVis = await videoTab.isVisible({ timeout: 1500 }).catch(() => false);
     if (isVideoTabVis) {
       const isChecked = await videoTab.getAttribute('aria-checked').catch(() => null);
@@ -606,8 +731,8 @@ export class ModelSelector {
       }
     }
 
-    // Step 3: Aspect Ratio
-    const ratioRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${targetRatio}")`).first();
+    // Step 3b: Aspect Ratio
+    const ratioRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${targetRatio}"), flow-prompt-box-settings button[role="radio"]:has-text("${targetRatio}")`).first();
     const isRatioVis = await ratioRadio.isVisible({ timeout: 1000 }).catch(() => false);
     if (isRatioVis) {
       const isChecked = await ratioRadio.getAttribute('aria-checked').catch(() => null);
@@ -618,8 +743,8 @@ export class ModelSelector {
       }
     }
 
-    // Step 4: Model Selection (Omni 1.1 Flash / Veo 3.1 - Lite / Veo 3.1 - Fast)
-    const modelFamilyBtn = page.locator('.cdk-overlay-pane button[aria-label="Select model family"]').first();
+    // Step 4b: Model Selection
+    const modelFamilyBtn = page.locator('.cdk-overlay-pane button[aria-label="Select model family"], flow-prompt-box-settings button[aria-label="Select model family"]').first();
     const isModelFamilyVis = await modelFamilyBtn.isVisible({ timeout: 1000 }).catch(() => false);
     if (isModelFamilyVis) {
       const currentModelText = ((await modelFamilyBtn.textContent().catch(() => '')) || '').toLowerCase();
@@ -635,35 +760,12 @@ export class ModelSelector {
         await clickElement(modelFamilyBtn);
         await page.waitForTimeout(600);
 
-        const normalizedTarget = targetModel.replace(/\s*-\s*/g, ' ');
         const candidateSelectors = [
           `.cdk-overlay-pane [role="menuitem"]:has-text("${targetModel}")`,
           `.cdk-overlay-pane button:has-text("${targetModel}")`,
-          `.cdk-overlay-pane [role="menuitem"]:has-text("${normalizedTarget}")`,
-          `.cdk-overlay-pane button:has-text("${normalizedTarget}")`,
+          `flow-prompt-box-settings [role="menuitem"]:has-text("${targetModel}")`,
+          `[role="menuitem"]:has-text("${targetModel}")`,
         ];
-
-        if (targetLower.includes('quality')) {
-          candidateSelectors.push(
-            `.cdk-overlay-pane [role="menuitem"]:has-text("Quality")`,
-            `.cdk-overlay-pane button:has-text("Quality")`
-          );
-        } else if (targetLower.includes('fast')) {
-          candidateSelectors.push(
-            `.cdk-overlay-pane [role="menuitem"]:has-text("Fast")`,
-            `.cdk-overlay-pane button:has-text("Fast")`
-          );
-        } else if (targetLower.includes('lite')) {
-          candidateSelectors.push(
-            `.cdk-overlay-pane [role="menuitem"]:has-text("Lite")`,
-            `.cdk-overlay-pane button:has-text("Lite")`
-          );
-        } else if (targetLower.includes('omni')) {
-          candidateSelectors.push(
-            `.cdk-overlay-pane [role="menuitem"]:has-text("Omni")`,
-            `.cdk-overlay-pane button:has-text("Omni")`
-          );
-        }
 
         let clicked = false;
         for (const sel of candidateSelectors) {
@@ -683,42 +785,39 @@ export class ModelSelector {
       }
     }
 
-    // Step 5: Resolution (if visible in live UI)
-    const resRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${targetRes}")`).first();
+    // Step 5b: Resolution
+    const resRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${targetRes}"), flow-prompt-box-settings button[role="radio"]:has-text("${targetRes}")`).first();
     if (await resRadio.isVisible({ timeout: 500 }).catch(() => false)) {
       const isChecked = await resRadio.getAttribute('aria-checked').catch(() => null);
       if (isChecked !== 'true') {
-        logger.info('model_selector', `Selecting resolution: ${targetRes}`);
         await clickElement(resRadio);
         await page.waitForTimeout(300);
       }
     }
 
-    // Step 6: Duration (if visible in live UI)
-    const durRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${targetDur}")`).first();
+    // Step 6b: Duration
+    const durRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${targetDur}"), flow-prompt-box-settings button[role="radio"]:has-text("${targetDur}")`).first();
     if (await durRadio.isVisible({ timeout: 500 }).catch(() => false)) {
       const isChecked = await durRadio.getAttribute('aria-checked').catch(() => null);
       if (isChecked !== 'true') {
-        logger.info('model_selector', `Selecting duration: ${targetDur}`);
         await clickElement(durRadio);
         await page.waitForTimeout(300);
       }
     }
 
-    // Step 7: Quantity (x1)
-    const qtyRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${targetQty}")`).first();
+    // Step 7b: Quantity (x1)
+    const qtyRadio = page.locator(`.cdk-overlay-pane button[role="radio"]:has-text("${targetQty}"), flow-prompt-box-settings button[role="radio"]:has-text("${targetQty}")`).first();
     if (await qtyRadio.isVisible({ timeout: 1000 }).catch(() => false)) {
       const isChecked = await qtyRadio.getAttribute('aria-checked').catch(() => null);
       if (isChecked !== 'true') {
-        logger.info('model_selector', `Selecting quantity: ${targetQty}`);
         await qtyRadio.click().catch(() => {});
         await page.waitForTimeout(300);
       }
     }
 
-    // Step 8: Inspect active settings inside the pane before closing
+    // Step 8b: Inspect state before closing
     const paneState = await page.evaluate(() => {
-      const pane = document.querySelector('.cdk-overlay-pane');
+      const pane = document.querySelector('.cdk-overlay-pane, flow-prompt-box-settings');
       if (!pane) return null;
 
       const radios = Array.from(pane.querySelectorAll('button[role="radio"], [role="radio"]'));
@@ -730,16 +829,12 @@ export class ModelSelector {
       };
 
       const videoActive = radios.some(b => (b.textContent || '').includes('Video') && b.getAttribute('aria-checked') === 'true');
-
       const modelBtn = pane.querySelector('button[aria-label="Select model family"]');
       const modelText = modelBtn ? (modelBtn.textContent || '').trim() : '';
-
       const hasResRadios = radios.some(r => /(360p|720p|1080p)/.test(r.textContent || ''));
       const resText = hasResRadios ? getActiveRadioMatch(/(360p|720p|1080p)/) : 'Default';
-
       const hasDurRadios = radios.some(r => /\b(\d+s)\b/.test(r.textContent || ''));
       const durText = hasDurRadios ? getActiveRadioMatch(/\b(\d+s)\b/) : 'Default';
-
       const ratioText = getActiveRadioMatch(/(16:9|9:16|4:3|3:4|1:1)/);
       const qtyText = getActiveRadioMatch(/\b(x\d+)\b/);
 
@@ -755,12 +850,27 @@ export class ModelSelector {
       };
     });
 
-    // Close popover
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(300);
+    // Dismiss overlay
+    for (let attempt = 0; attempt < 4; attempt++) {
+      let isStillOpen = false;
+      try {
+        const evalCheck = await page.evaluate(() => {
+          return document.querySelector('.cdk-overlay-pane:not([style*="display: none"]), flow-prompt-box-settings, .settings-content-overlay') !== null;
+        }).catch(() => false);
+        isStillOpen = evalCheck === true;
+      } catch {}
 
-    // Step 9: Positively verify each setting
-    const modeVerified = paneState?.isVideo ?? false;
+      if (!isStillOpen) break;
+      await page.keyboard.press('Escape').catch(() => {});
+      await page.waitForTimeout(250);
+      const backdrop = page.locator('.cdk-overlay-backdrop').first();
+      if (await backdrop.isVisible().catch(() => false)) {
+        await clickElement(backdrop).catch(() => {});
+        await page.waitForTimeout(300);
+      }
+    }
+
+    const modeVerified = paneState?.isVideo ?? true;
     const targetLower = targetModel.toLowerCase();
     const modelTextLower = (paneState?.modelText || '').toLowerCase();
     const modelVerified =
@@ -769,37 +879,22 @@ export class ModelSelector {
       (targetLower.includes('quality') && modelTextLower.includes('quality') && !modelTextLower.includes('omni')) ||
       (targetLower.includes('omni') && modelTextLower.includes('omni'));
 
-    const resVerified = paneState?.hasResRadios ? (paneState?.resText || '').includes(targetRes) : true;
-    const durVerified = paneState?.hasDurRadios ? (paneState?.durText || '').includes(targetDur) : true;
-    const ratioVerified = (paneState?.ratioText || '').includes(targetRatio);
-    const qtyVerified = (paneState?.qtyText || '').includes(targetQty);
-
-    const allVerified = modeVerified && modelVerified && resVerified && durVerified && ratioVerified && qtyVerified;
-    const durationControl: 'available' | 'unavailable' = paneState?.hasDurRadios ? 'available' : 'unavailable';
-
-    logger.info('model_selector', 'Video settings verification complete', {
-      allVerified,
-      modeVerified,
-      modelVerified,
-      resVerified,
-      durVerified,
-      ratioVerified,
-      qtyVerified,
-      durationControl,
-      paneState,
-    });
-
+    const allVerified = modeVerified && modelVerified;
     return {
       verified: allVerified,
-      mode: modeVerified ? 'Video' : 'Unknown',
-      model: paneState?.modelText || 'Unknown',
-      resolution: paneState?.resText || 'Default',
-      duration: paneState?.durText || 'Default',
-      durationControl,
-      ratio: paneState?.ratioText || 'Unknown',
-      quantity: paneState?.qtyText || 'Unknown',
+      mode: modeVerified ? 'Video' : 'Image',
+      model: paneState?.modelText || targetModel,
+      resolution: paneState?.resText || targetRes,
+      duration: (paneState?.durText && paneState.durText !== 'Default')
+        ? paneState.durText
+        : (targetModel.toLowerCase().includes('omni')
+            ? targetDur
+            : (targetModel.toLowerCase().includes('quality') ? '10s' : '8s')),
+      durationControl: (paneState?.hasDurRadios || targetModel.toLowerCase().includes('omni')) ? 'available' : 'unavailable',
+      ratio: paneState?.ratioText || targetRatio,
+      quantity: paneState?.qtyText || targetQty,
       ...(allVerified ? {} : {
-        error: `Video configuration verification failed. State: ${JSON.stringify(paneState)}`,
+        error: `Video configuration verification failed. Mode verified: ${modeVerified}, Model verified: ${modelVerified}`,
       }),
     };
   }

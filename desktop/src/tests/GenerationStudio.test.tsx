@@ -77,7 +77,7 @@ describe('GenerationStudioScreen', () => {
     expect(screen.getByText('Generate Image (x1)')).toBeDefined();
   });
 
-  it('renders single video workspace with model-specific native duration (Veo Quality -> 8s)', async () => {
+  it('renders single video workspace with model-specific native duration (Veo Quality -> 10s)', async () => {
     render(
       <GenerationStudioScreen
         initialMode="single_video"
@@ -92,9 +92,14 @@ describe('GenerationStudioScreen', () => {
     });
 
     expect(screen.getByText('Single Video Studio')).toBeDefined();
-    expect(screen.getByDisplayValue(/Veo 3.1 - Quality/i)).toBeDefined();
-    expect(screen.getByText(/Native Flow Duration/i)).toBeDefined();
-    expect(screen.getByText('8s')).toBeDefined();
+
+    // Select Veo 3.1 - Quality
+    const qualityCard = screen.getByLabelText('Veo 3.1 - Quality');
+    fireEvent.click(qualityCard);
+
+    expect(screen.getByText('Cinema Output')).toBeDefined();
+    expect(screen.getByText('10s Fixed')).toBeDefined();
+    expect(screen.getAllByText(/10s/i).length).toBeGreaterThan(0);
     // 4K must not exist
     expect(screen.queryByText(/4k/i)).toBeNull();
   });
@@ -113,13 +118,17 @@ describe('GenerationStudioScreen', () => {
       await Promise.resolve();
     });
 
-    const select = screen.getByLabelText('AI Video Model');
-    fireEvent.change(select, { target: { value: 'Veo 3.1 - Fast' } });
+    const fastCard = screen.getByLabelText('Veo 3.1 - Fast');
+    fireEvent.click(fastCard);
+    expect(screen.getByText('Fast Output')).toBeDefined();
+    expect(screen.getByText('8s Fixed')).toBeDefined();
+    expect(screen.getAllByText(/8s/i).length).toBeGreaterThan(0);
 
-    expect(screen.getByText('8s (Default)')).toBeDefined();
-
-    fireEvent.change(select, { target: { value: 'Veo 3.1 - Lite' } });
-    expect(screen.getByText('8s (Default)')).toBeDefined();
+    const liteCard = screen.getByLabelText('Veo 3.1 - Lite');
+    fireEvent.click(liteCard);
+    expect(screen.getByText('Efficient Output')).toBeDefined();
+    expect(screen.getByText('8s Fixed')).toBeDefined();
+    expect(screen.getAllByText(/8s/i).length).toBeGreaterThan(0);
   });
 
   it('shows live duration buttons and resolution when Omni 1.1 Flash is selected', async () => {
@@ -136,10 +145,10 @@ describe('GenerationStudioScreen', () => {
       await Promise.resolve();
     });
 
-    const select = screen.getByLabelText('AI Video Model');
-    fireEvent.change(select, { target: { value: 'Omni 1.1 Flash' } });
+    const omniCard = screen.getByLabelText('Omni 1.1 Flash');
+    fireEvent.click(omniCard);
 
-    expect(screen.getByText('Omni 1.1 Flash live duration controls')).toBeDefined();
+    expect(screen.getByText('Native Google Flow Multimodal Pipeline')).toBeDefined();
     expect(screen.getByText('6s')).toBeDefined();
     expect(screen.getByText('360p')).toBeDefined();
     expect(screen.getByText('720p')).toBeDefined();
@@ -303,22 +312,20 @@ describe('GenerationStudioScreen', () => {
     });
 
     // Switch model to Omni 1.1 Flash
-    const select = screen.getByLabelText('AI Video Model');
-    fireEvent.change(select, { target: { value: 'Omni 1.1 Flash' } });
+    const omniCard = screen.getByLabelText('Omni 1.1 Flash');
+    fireEvent.click(omniCard);
 
-    // Verify Provider Engine segmented control is rendered
-    expect(screen.getByText('Provider Engine')).toBeDefined();
-    expect(screen.getByText('Gemini')).toBeDefined();
+    // Verify Provider Engine is rendered
+    expect(screen.getByText('Gemini (Clean)')).toBeDefined();
 
     // Click Gemini provider
-    fireEvent.click(screen.getByText('Gemini'));
+    fireEvent.click(screen.getByText('Gemini (Clean)'));
 
-    // Verify 10s Gemini duration is active
-    expect(screen.getByText('Gemini Native Duration:')).toBeDefined();
-    expect(screen.getByText('10s')).toBeDefined();
+    // Verify Gemini duration is active
+    expect(screen.getByText(/10s Duration/i)).toBeDefined();
 
     // Enter prompt
-    const promptInput = screen.getByPlaceholderText(/Describe camera movement and cinematography/i);
+    const promptInput = screen.getByPlaceholderText(/Describe your scene, camera movement, and lighting/i);
     fireEvent.change(promptInput, { target: { value: 'A cosmic nebula expanding in deep space' } });
 
     // Submit
@@ -335,6 +342,7 @@ describe('GenerationStudioScreen', () => {
         videoModel: 'Gemini Omni',
         videoDuration: '10s',
         generationMode: 'gemini_text_to_video',
+        videoDownloadQuality: 'original',
         prompts: [
           expect.objectContaining({
             text: 'A cosmic nebula expanding in deep space',
