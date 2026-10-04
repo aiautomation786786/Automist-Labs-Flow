@@ -21,9 +21,11 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gf-mgr-test-'));
 process.env['LOCALAPPDATA'] = tmpDir;
 
 import { ProfileSessionManager } from '../main/engine/ProfileSessionManager';
-import { ProfileConfigManager, getProfilesRootDir } from '../main/engine/ProfileConfig';
+import { ProfileConfigManager, getProfilesRootDir, setCustomProfilesRootDir } from '../main/engine/ProfileConfig';
 import { ChromePortAllocator } from '../main/engine/ChromePortAllocator';
 import { WindowsChromeFinder } from '../main/engine/WindowsChromeFinder';
+
+setCustomProfilesRootDir(tmpDir);
 
 // ---------------------------------------------------------------------------
 // Mock Chrome finder so tests don't need real Chrome installed
@@ -182,7 +184,7 @@ describe('ProfileSessionManager — unit tests (no Chrome)', () => {
 
     try {
       await manager.autoStartProfiles();
-      expect(startSpy).toHaveBeenCalledWith({ headless: false, background: true });
+      expect(startSpy).toHaveBeenCalledWith({ mode: 'background_verify', headless: true, background: true });
     } finally {
       ProfileSession.prototype.start = origStart;
     }

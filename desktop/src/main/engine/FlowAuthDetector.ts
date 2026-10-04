@@ -148,9 +148,9 @@ export class FlowAuthDetector {
 
     log.debug('auth_detector', 'Checking auth state', { url: url.substring(0, 100) });
 
-    // 1. Redirected to Google accounts — must sign in
-    if (GOOGLE_ACCOUNTS_PATTERN.test(url) || GOOGLE_SIGNIN_PATTERN.test(url)) {
-      log.info('auth_detector', 'Google login wall detected', { url: url.substring(0, 100) });
+    // 1. Redirected to Google accounts or unauthenticated marketing page — must sign in
+    if (GOOGLE_ACCOUNTS_PATTERN.test(url) || GOOGLE_SIGNIN_PATTERN.test(url) || url.includes('/about')) {
+      log.info('auth_detector', 'Google login wall or unauthenticated landing detected', { url: url.substring(0, 100) });
       return { state: 'login_required', url, detectedEmail: null, locale: null };
     }
 
@@ -301,7 +301,7 @@ export class FlowAuthDetector {
    */
   static async navigateAndCheck(
     page: Page,
-    flowUrl = 'https://labs.google/fx/en/tools/flow',
+    flowUrl = 'https://flow.google.com',
     profileId?: string,
   ): Promise<FlowAuthCheckResult> {
     const log = profileId ? logger.forProfile(profileId) : logger;
@@ -323,22 +323,28 @@ export class FlowAuthDetector {
     log.info('auth_detector', `Navigating to Flow`, { flowUrl });
 
     try {
-      await page.goto(flowUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      // Give the page a moment to redirect if auth is needed
-      await page.waitForTimeout(2000);
+      await page.goto(flowUrl, { waitUntil: 'commit', timeout: 15000 });
     } catch (err) {
-      log.warn('auth_detector', `Initial navigation to Flow failed (${(err as Error).message}), retrying once...`);
-      try {
-        await page.waitForTimeout(1500);
-        await page.goto(flowUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await page.waitForTimeout(2000);
-      } catch (retryErr) {
-        log.error('auth_detector', 'Navigation to Flow failed after retry', retryErr as Error);
-        return { state: 'unknown', url: flowUrl, detectedEmail: null, locale: null };
+      const msg = (err as Error).message || '';
+      // In Chromium, net::ERR_ABORTED is typically caused by immediate server/client redirects (e.g. ?pli=1)
+      if (!msg.includes('net::ERR_ABORTED')) {
+        log.warn('auth_detector', `Initial navigation to Flow returned: ${msg}, continuing to reactive poll`);
       }
     }
 
-    return this.check(page, profileId);
+    // Fast reactive polling instead of fixed delay:
+    // Check every 100ms up to 5000ms; return immediately when definitive state is reached
+    const pollStart = Date.now();
+    let result: FlowAuthCheckResult = { state: 'unknown', url: flowUrl, detectedEmail: null, locale: null };
+    while (Date.now() - pollStart < 5000) {
+      result = await this.check(page, profileId);
+      if (result.state === 'authenticated' || result.state === 'login_required' || result.state === 'captcha') {
+        return result;
+      }
+      await page.waitForTimeout(100);
+    }
+
+    return result;
   }
 }
 

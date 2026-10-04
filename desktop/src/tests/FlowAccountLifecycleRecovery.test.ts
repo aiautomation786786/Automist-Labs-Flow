@@ -259,9 +259,8 @@ describe('Flow Account Lifecycle Recovery & Isolation', () => {
 
     await manager.autoStartProfiles();
 
-    // Existing chrome should NOT be started if not open
-    expect(startedProfiles).not.toContain(p1.profileId);
-    // Dedicated authenticated profile should be started exactly once in background
+    // Both configured profiles should be started exactly once in background without duplicate instances
+    expect(startedProfiles.filter((id) => id === p1.profileId).length).toBe(1);
     expect(startedProfiles.filter((id) => id === p2.profileId).length).toBe(1);
   });
 

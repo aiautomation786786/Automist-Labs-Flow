@@ -31,15 +31,16 @@ import { AppLogger } from '../utils/AppLogger';
 import { FlowAuthDetector } from './FlowAuthDetector';
 import { FlowAutomationSession } from './FlowAutomationSession';
 import { LocalChromeProfileDiscoverer } from './LocalChromeProfileDiscoverer';
+import { ProfileConfigManager } from './ProfileConfig';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 /** How many times to probe the CDP port before giving up. */
-const CDP_PROBE_MAX_ATTEMPTS = 20;
+const CDP_PROBE_MAX_ATTEMPTS = 60;
 /** Milliseconds between CDP probe attempts. */
-const CDP_PROBE_INTERVAL_MS = 1000;
+const CDP_PROBE_INTERVAL_MS = 50;
 /** How long to wait for a CDP probe response before moving to next attempt. */
 const CDP_PROBE_TIMEOUT_MS = 2000;
 
@@ -69,7 +70,7 @@ const CHROME_FLAGS_BASE: string[] = [
 ];
 
 // Google Flow URL (English by default; may be updated after locale detection)
-export const FLOW_BASE_URL = 'https://labs.google/fx/en/tools/flow';
+export const FLOW_BASE_URL = 'https://flow.google.com';
 
 // ---------------------------------------------------------------------------
 // ProfileSession events
@@ -108,6 +109,11 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   private isExistingBrowser = false;
   private isRecoveringMainPage = false;
   private postLoginWatcherTimer: NodeJS.Timeout | null = null;
+  private isAutoClosedAfterAuth = false;
+  public isVerifiedInCurrentProcess = false;
+  public isVerifying = false;
+  private activeVerifyPromise: Promise<FlowAuthCheckResult & { pagesCount: number; flowPageFound: boolean }> | null = null;
+  private isModeBgVerify = false;
 
   // ---- Auth / locale (discovered at runtime) ------------------------------
   private detectedEmail: string | null = null;
@@ -151,7 +157,9 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   // ---------------------------------------------------------------------------
 
   /** Starts the session: launches Chrome, connects Playwright, checks auth. */
-  async start(options: boolean | { headless?: boolean; background?: boolean } = false): Promise<void> {
+  async start(
+    options: boolean | { headless?: boolean; background?: boolean; mode?: 'visible_login' | 'background_verify' } = false
+  ): Promise<void> {
     if (this.startPromise) {
       this.log.info('session', 'Session start already in progress; awaiting active start promise');
       return this.startPromise;
@@ -164,34 +172,38 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     }
   }
 
-  private async _startInternal(options: boolean | { headless?: boolean; background?: boolean } = false): Promise<void> {
-    const headless = typeof options === 'boolean' ? options : (options?.headless ?? false);
-    const background = typeof options === 'boolean' ? !headless : (options?.background ?? !headless);
-
-    if (
-      this._status !== 'created' &&
-      this._status !== 'stopped' &&
-      this._status !== 'error' &&
-      this._status !== 'browser_open'
-    ) {
-      throw new Error(
-        `Cannot start profile ${this.profileId}: current status is '${this._status}'.`
-      );
-    }
-
-    // If browser process is already running (e.g. from launchLoginBrowser), attach without re-spawning
-    if (this._status === 'browser_open' || (this.chromeProcess && this.isProcessAlive())) {
-      this.log.info('session', 'Chrome is already running for profile; attaching Playwright and checking auth');
-      this.isExistingBrowser = false;
-      await this.connectToRunningBrowser();
-      await this.checkAuth();
-      return;
-    }
-
-    this.setStatus('starting');
-    this.errorMessage = null;
+  private async _startInternal(
+    options: boolean | { headless?: boolean; background?: boolean; mode?: 'visible_login' | 'background_verify' } = false
+  ): Promise<void> {
+    const isModeBgVerify = typeof options === 'object' && options?.mode === 'background_verify';
+    this.isModeBgVerify = Boolean(isModeBgVerify);
+    const headless = typeof options === 'boolean' ? options : (options?.headless ?? isModeBgVerify);
+    const background = typeof options === 'boolean' ? !headless : (options?.background ?? true);
 
     try {
+      if (this._status === 'stopping') {
+        throw new Error(
+          `Cannot start profile ${this.profileId}: current status is 'stopping'.`
+        );
+      }
+      const validStartStatuses = ['created', 'stopped', 'error', 'browser_open', 'auth_required', 'connection_error', 'starting', 'ready'];
+      if (!validStartStatuses.includes(this._status) && this.isProcessAlive()) {
+        throw new Error(
+          `Cannot start profile ${this.profileId}: current status is '${this._status}'.`
+        );
+      }
+
+      // If browser process is already running (e.g. from launchLoginBrowser), attach without re-spawning
+      if (this._status === 'browser_open' || (this.chromeProcess && this.isProcessAlive())) {
+        this.log.info('session', 'Chrome is already running for profile; attaching Playwright and checking auth');
+        this.isExistingBrowser = false;
+        await this.connectToRunningBrowser();
+        await this.checkAuth();
+        return;
+      }
+
+      this.setStatus('starting');
+      this.errorMessage = null;
       if (this.config.connectionMode === 'existing_chrome') {
         const detection = await LocalChromeProfileDiscoverer.detectProfileState({
           userDataDir: this.config.localUserDataDir,
@@ -227,7 +239,8 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
           cdpPort: this.config.cdpPort,
         });
 
-        if (this.config.localUserDataDir && this.config.localProfileDirectory) {
+        const isAlreadySeeded = LocalChromeProfileDiscoverer.isDedicatedUserDataDirSeeded(this.config.userDataDir);
+        if (!isAlreadySeeded && this.config.localUserDataDir && this.config.localProfileDirectory) {
           LocalChromeProfileDiscoverer.seedDedicatedUserDataDir(
             this.config.localUserDataDir,
             this.config.localProfileDirectory,
@@ -239,6 +252,12 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
         await this.launchChrome(headless, background);
         await this.connectPlaywright();
         await this.checkAuth();
+        if (isModeBgVerify) {
+          this.isAutoClosedAfterAuth = this.status === 'ready';
+          await this.cleanupPlaywrightObjects();
+          await this.killChrome();
+          this.emit('status_change', this.getSnapshot());
+        }
         return;
       }
 
@@ -247,11 +266,18 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       await this.launchChrome(headless, background);
       await this.connectPlaywright();
       await this.checkAuth();
+      if (isModeBgVerify) {
+        this.isAutoClosedAfterAuth = this.status === 'ready';
+        await this.cleanupPlaywrightObjects();
+        await this.killChrome();
+        this.emit('status_change', this.getSnapshot());
+      }
     } catch (err) {
       const message = (err as Error).message;
       this.log.error('session', 'Session start failed', err as Error);
       this.errorMessage = message;
-      this.setStatus('error');
+      const fallbackStatus = isModeBgVerify ? 'connection_error' : 'error';
+      this.setStatus(fallbackStatus);
       this.emit('error', this.profileId, message);
       // Attempt cleanup so resources are not leaked
       await this.cleanupResources();
@@ -356,7 +382,8 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     }
 
     // Seed session data if needed
-    if (this.config.connectionMode === 'existing_chrome' && this.config.localUserDataDir && this.config.localProfileDirectory) {
+    const isAlreadySeeded = LocalChromeProfileDiscoverer.isDedicatedUserDataDirSeeded(userDataDir);
+    if (!isAlreadySeeded && this.config.connectionMode === 'existing_chrome' && this.config.localUserDataDir && this.config.localProfileDirectory) {
       LocalChromeProfileDiscoverer.seedDedicatedUserDataDir(
         this.config.localUserDataDir,
         this.config.localProfileDirectory,
@@ -378,7 +405,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       '--window-position=100,100',
       '--window-size=1280,900',
       // Navigate to Google Flow immediately so the user lands there for sign-in
-      'https://labs.google/fx/en/tools/flow',
+      FLOW_BASE_URL,
     ];
     // CRITICAL: no --headless flag — window must be visible for manual user sign-in
 
@@ -431,10 +458,22 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       this.cleanupPlaywrightObjects();
       this.chromeProcess = null;
 
+      if (this.isAutoClosedAfterAuth) {
+        this.isAutoClosedAfterAuth = false;
+        this.log.info('chrome_exit', 'Dedicated Chrome process closed automatically after login; preserving ready status', { pid });
+        this.setStatus('ready');
+        this.errorMessage = null;
+        this.emit('status_change', this.getSnapshot());
+        return;
+      }
+
       if (
         this._status === 'stopping' ||
         this._status === 'stopped' ||
-        this._status === 'created'
+        this._status === 'created' ||
+        this._status === 'ready' ||
+        this._status === 'auth_required' ||
+        this._status === 'connection_error'
       ) {
         return;
       }
@@ -449,6 +488,26 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     return { pid, cdpPort, userDataDir };
   }
 
+  /**
+   * Automatically closes the owned visible login Chrome process after authentication succeeds.
+   * Gracefully disconnects Playwright, terminates ONLY this instance's spawned Chrome PID,
+   * leaves the macOS Dock, and transitions the session state to 'ready'.
+   */
+  async closeLoginBrowser(): Promise<void> {
+    const proc = this.chromeProcess;
+    const pid = proc?.pid;
+    this.log.info('chrome_launch', 'Auto-closing visible login Chrome process after successful auth', { pid });
+    this.stopPostLoginWatcher();
+    this.isAutoClosedAfterAuth = true;
+    await this.cleanupPlaywrightObjects();
+    if (proc && proc.pid && !proc.killed && proc.exitCode === null) {
+      await this.killChrome();
+    }
+    this.setStatus('ready');
+    this.errorMessage = null;
+    this.emit('status_change', this.getSnapshot());
+  }
+
   /** Returns true if the Chrome child process is currently known to be alive. */
   isProcessAlive(): boolean {
     if (!this.chromeProcess) return false;
@@ -458,12 +517,12 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   /**
    * Starts a background watcher that monitors the login page for successful sign-in.
    * As soon as the user logs in and reaches an authenticated Flow state, the window
-   * is automatically hidden into the background, status is set to 'ready', and events emitted.
+   * is automatically closed, status is set to 'ready', and events emitted.
    */
   startPostLoginWatcher(): void {
     if (this.postLoginWatcherTimer) return;
 
-    this.log.info('auth_watcher', 'Starting post-login background auto-hide watcher');
+    this.log.info('auth_watcher', 'Starting post-login background auto-close watcher');
 
     const startTime = Date.now();
     const MAX_WATCH_TIME_MS = 15 * 60 * 1000; // 15 minutes max
@@ -475,8 +534,8 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
         return;
       }
 
-      // If already ready, no need to keep watching
-      if (this._status === 'ready') {
+      // If already ready and browser closed, no need to keep watching
+      if (this._status === 'ready' && !this.isProcessAlive()) {
         this.stopPostLoginWatcher();
         return;
       }
@@ -501,7 +560,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
         // Check auth status
         const authResult = await FlowAuthDetector.check(page, this.profileId);
         if (authResult.state === 'authenticated') {
-          this.log.info('auth_watcher', 'Successful authentication detected! Auto-hiding window.', {
+          this.log.info('auth_watcher', 'Successful authentication detected! Auto-closing visible login Chrome window.', {
             detectedEmail: authResult.detectedEmail,
             locale: authResult.locale,
           });
@@ -519,13 +578,25 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
               this.detectedEmail = authResult.detectedEmail;
             }
           }
-          this.setStatus('ready');
-          this.emit('status_change', this.getSnapshot());
 
-          // Automatically hide the window from the desktop and taskbar
-          await this.hideWindowFromTaskbar(page).catch(() => {});
+          // Persist discovered email/locale to profile configuration
+          try {
+            const patch: Record<string, any> = {
+              ...(this.detectedEmail ? { detectedEmail: this.detectedEmail } : {}),
+              ...(authResult.locale ? { flowUrlLocale: `/fx/${authResult.locale}/tools/flow` } : {}),
+            };
+            if (this.detectedEmail && this.config.displayName && /^Flow Account( \d+)?$/i.test(this.config.displayName.trim())) {
+              patch.displayName = this.detectedEmail;
+            }
+            ProfileConfigManager.update(this.profileId, patch);
+          } catch {
+            /* ignore if disk write fails */
+          }
 
           this.stopPostLoginWatcher();
+
+          // Auto-close owned visible Chrome process so it cleanly exits and leaves macOS Dock
+          await this.closeLoginBrowser();
         }
       } catch (err) {
         this.log.debug('auth_watcher', `Post-login check notice: ${(err as Error).message}`);
@@ -582,7 +653,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       throw new Error(`Dedicated Chrome process (PID ${this.chromeProcess.pid}) has exited.`);
     }
 
-    // 2. Poll CDP endpoint until ready or timeout (polling every 300ms)
+    // 2. Poll CDP endpoint until ready or timeout (polling every 50ms)
     this.setStatus('waiting_for_cdp');
     const startTime = Date.now();
     let portReady = false;
@@ -592,7 +663,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
         portReady = true;
         break;
       } catch {
-        await delay(300);
+        await delay(CDP_PROBE_INTERVAL_MS);
       }
     }
 
@@ -652,7 +723,9 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
         if (url.includes('flow.google.com/project/') || url.includes('labs.google/fx/project/')) {
           flowPage = p;
           this.log.info('reconnect', `Found and reusing existing Flow project tab: ${url}`);
-          await Promise.race([flowPage.bringToFront(), delay(1500)]).catch(() => {});
+          if (!this.isModeBgVerify) {
+            await Promise.race([flowPage.bringToFront(), delay(500)]).catch(() => {});
+          }
           break;
         }
       } catch {
@@ -668,7 +741,9 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
           if (url.includes('labs.google') || url.includes('flow.google.com')) {
             flowPage = p;
             this.log.info('reconnect', `Found and reusing existing Flow tab: ${url}`);
-            await Promise.race([flowPage.bringToFront(), delay(1500)]).catch(() => {});
+            if (!this.isModeBgVerify) {
+              await Promise.race([flowPage.bringToFront(), delay(500)]).catch(() => {});
+            }
             break;
           }
         } catch {
@@ -685,7 +760,9 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
           if (url.includes('accounts.google.com') || url.includes('google.com/signin')) {
             flowPage = p;
             this.log.info('reconnect', `Found and reusing Google sign-in tab: ${url}`);
-            await Promise.race([flowPage.bringToFront(), delay(1500)]).catch(() => {});
+            if (!this.isModeBgVerify) {
+              await Promise.race([flowPage.bringToFront(), delay(500)]).catch(() => {});
+            }
             break;
           }
         } catch {
@@ -701,9 +778,11 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       const targetUrl = flowUrlLocale
         ? `https://labs.google${flowUrlLocale}`
         : FLOW_BASE_URL;
-      await flowPage.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch((e) => {
-        this.log.warn('reconnect', `Navigation to Flow tab returned warning: ${(e as Error).message}`);
-      });
+      if (typeof (flowPage as any)?.goto === 'function') {
+        await flowPage.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch((e) => {
+          this.log.warn('reconnect', `Navigation to Flow tab returned warning: ${(e as Error).message}`);
+        });
+      }
     }
 
     this.mainPage = flowPage;
@@ -774,7 +853,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     if (result.state === 'loading') {
       const startPoll = Date.now();
       while (Date.now() - startPoll < 4000) {
-        await delay(800);
+        await delay(100);
         result = await FlowAuthDetector.check(page, this.profileId);
         if (result.state !== 'loading') break;
       }
@@ -872,6 +951,100 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     };
   }
 
+  /**
+   * Performs background verification for this profile:
+   * - If Chrome is already running, attaches and verifies auth state.
+   * - If not running, launches headless Chrome (--headless=new), verifies auth,
+   *   and cleanly terminates the background process immediately.
+   * Guarantees no visible window and no icon in the macOS Dock.
+   */
+  async verifyAuthBackground(): Promise<FlowAuthCheckResult & { pagesCount: number; flowPageFound: boolean }> {
+    if (this.activeVerifyPromise) {
+      this.log.info('auth_verify', 'Background verification already in progress; reusing active promise', { profileId: this.profileId });
+      return this.activeVerifyPromise;
+    }
+
+    this.isVerifying = true;
+    this.emit('status_change', this.getSnapshot());
+    this.activeVerifyPromise = this._verifyAuthBackgroundInternal();
+    try {
+      return await this.activeVerifyPromise;
+    } finally {
+      this.activeVerifyPromise = null;
+      this.isVerifying = false;
+      this.emit('status_change', this.getSnapshot());
+    }
+  }
+
+  private async _verifyAuthBackgroundInternal(): Promise<FlowAuthCheckResult & { pagesCount: number; flowPageFound: boolean }> {
+    const totalStart = Date.now();
+    this.log.info('auth_verify', 'Starting background headless Chrome for authentication verification', {
+      profileId: this.profileId,
+      cdpPort: this.config.cdpPort,
+      userDataDir: this.config.userDataDir,
+    });
+
+    try {
+      // If Chrome is already running, verify against the existing instance
+      if (this.isProcessAlive()) {
+        const res = await this.verifyAuth();
+        if (res.state === 'authenticated' && this._status === 'browser_open') {
+          await this.closeLoginBrowser();
+        }
+        if (res.state === 'authenticated') {
+          this.isVerifiedInCurrentProcess = true;
+          this.setStatus('ready');
+        } else {
+          this.setStatus('auth_required');
+        }
+        this.log.info('auth_verify', `Verification against running Chrome completed after ${Date.now() - totalStart} ms`, {
+          profileId: this.profileId,
+          state: res.state,
+        });
+        return res;
+      }
+
+      await this.start({ mode: 'background_verify', headless: true, background: true });
+
+      const finalState = this._status === 'ready' ? 'authenticated' : (this._status === 'auth_required' ? 'login_required' : 'unknown');
+      if (this._status === 'ready') {
+        this.isVerifiedInCurrentProcess = true;
+      }
+
+      this.log.info('auth_verify', `Verification completed after ${Date.now() - totalStart} ms`, {
+        profileId: this.profileId,
+        state: finalState,
+        status: this._status,
+      });
+
+      return {
+        state: finalState,
+        url: this.flowUrl || FLOW_BASE_URL,
+        detectedEmail: this.detectedEmail,
+        locale: null,
+        pagesCount: 1,
+        flowPageFound: true,
+      };
+    } catch (err) {
+      this.log.warn('auth_verify', `Background verification encountered an error after ${Date.now() - totalStart} ms`, {
+        profileId: this.profileId,
+        error: (err as Error).message,
+      });
+      // Invariant: status must never be left as 'starting' or 'created' on failure
+      if (this._status === 'starting' || this._status === 'created') {
+        this.setStatus('connection_error');
+      }
+      throw err;
+    } finally {
+      const cleanupStart = Date.now();
+      if (this.isProcessAlive()) {
+        await this.killChrome().catch(() => {});
+      }
+      await this.cleanupPlaywrightObjects().catch(() => {});
+      this.log.info('auth_verify', `Verification cleanup completed after ${Date.now() - cleanupStart} ms`, { profileId: this.profileId });
+    }
+  }
+
 
   // ---------------------------------------------------------------------------
   // Snapshots & Getters
@@ -928,6 +1101,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       flowTabUrl: this.page && !this.page.isClosed() ? this.page.url() : null,
       localProfileDirectory: this.config.localProfileDirectory,
       chromePid: this.chromeProcess?.pid,
+      isVerifying: this.isVerifying,
     };
   }
 
@@ -998,6 +1172,10 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     }
 
     if (!this.context || !this.browser || !this.browser.isConnected()) {
+      if (!this.isProcessAlive() && !this.isExistingBrowser) {
+        this.log.info('tab_lifecycle', `Starting background Chrome on demand for job ${jobId}`);
+        await this.launchChrome(true, true);
+      }
       await this.connectToRunningBrowser();
     }
     if (!this.context) {
@@ -1195,6 +1373,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
    *     Encoded via Base64 UTF-16LE (-EncodedCommand) to eliminate quote-escaping failures.
    */
   async hideWindowFromTaskbar(page?: Page): Promise<void> {
+    if (this.isModeBgVerify) return;
     const targetPage = page && !page.isClosed() ? page : (this.page && !this.page.isClosed() ? this.page : this.context?.pages()[0]);
 
     // Native CDP window minimization (instant, cross-platform, zero process overhead, preserves CDP connection)
@@ -1223,6 +1402,9 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   private attachBrowserListeners(browser: Browser): void {
     if (typeof (browser as any)?.on === 'function') {
       (browser as any).on('disconnected', () => {
+        if (this.isAutoClosedAfterAuth || this.isModeBgVerify) {
+          return;
+        }
         this.log.warn('session', 'Playwright browser connection disconnected');
         this.cleanupPlaywrightObjects();
         if (this._status !== 'stopping' && this._status !== 'stopped' && this._status !== 'created') {
@@ -1235,6 +1417,9 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   private attachMainPageListeners(page: Page): void {
     if (typeof (page as any)?.once === 'function') {
       (page as any).once('close', async () => {
+        if (this.isAutoClosedAfterAuth || this.isModeBgVerify || this._status === 'stopped' || this._status === 'stopping') {
+          return;
+        }
         this.log.warn('session', 'Main profile page was closed; attempting recovery');
         if (this.page === page) this.page = null;
         if (this.mainPage === page) this.mainPage = null;
@@ -1328,7 +1513,8 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     }
 
     // If existing_chrome, ensure the dedicated directory is seeded with the latest session data
-    if (this.config.connectionMode === 'existing_chrome' && this.config.localUserDataDir && this.config.localProfileDirectory) {
+    const isAlreadySeeded = LocalChromeProfileDiscoverer.isDedicatedUserDataDirSeeded(effectiveUserData);
+    if (!isAlreadySeeded && this.config.connectionMode === 'existing_chrome' && this.config.localUserDataDir && this.config.localProfileDirectory) {
       LocalChromeProfileDiscoverer.seedDedicatedUserDataDir(
         this.config.localUserDataDir,
         this.config.localProfileDirectory,
@@ -1364,6 +1550,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       profileDirectory: effectiveProfileDir,
     });
 
+    const spawnStart = Date.now();
     const chromeProcess = spawn(chromePath, flags, {
       // Detach so the Chrome window is independent of the Node parent process
       detached: false,
@@ -1387,7 +1574,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       this.hideWindowFromTaskbar().catch(() => {});
     }
 
-    this.log.info('chrome_launch', 'Chrome spawned', { pid: chromeProcess.pid, cdpPort });
+    this.log.info('chrome_launch', `Background Chrome started in ${Date.now() - spawnStart} ms`, { pid: chromeProcess.pid, cdpPort });
 
     // Pipe Chrome stderr to our log file so diagnostics are available
     chromeProcess.stderr?.on('data', (chunk: Buffer) => {
@@ -1403,7 +1590,25 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       this.cleanupPlaywrightObjects();
       this.chromeProcess = null;
 
-      if (this._status === 'stopping' || this._status === 'stopped' || this._status === 'created') {
+      if (this.isAutoClosedAfterAuth) {
+        this.isAutoClosedAfterAuth = false;
+        this.log.info('chrome_exit', 'Chrome process closed automatically after authentication/verification; preserving ready state', {
+          pid: chromeProcess.pid,
+        });
+        this.setStatus('ready');
+        this.errorMessage = null;
+        this.emit('status_change', this.getSnapshot());
+        return;
+      }
+
+      if (
+        this._status === 'stopping' ||
+        this._status === 'stopped' ||
+        this._status === 'created' ||
+        this._status === 'ready' ||
+        this._status === 'auth_required' ||
+        this._status === 'connection_error'
+      ) {
         return;
       }
 
@@ -1427,6 +1632,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
    * Uses the same strategy as the original connect.js (up to 20 attempts, 1s apart).
    */
   private async waitForCdpPort(port: number): Promise<void> {
+    const cdpStart = Date.now();
     this.log.info('cdp_probe', `Waiting for CDP port ${port} to open...`);
 
     for (let attempt = 1; attempt <= CDP_PROBE_MAX_ATTEMPTS; attempt++) {
@@ -1436,7 +1642,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
 
       try {
         await probeCdpPort(port);
-        this.log.info('cdp_probe', `CDP port ${port} is open`, { attempt });
+        this.log.info('cdp_probe', `CDP ready after ${Date.now() - cdpStart} ms`, { attempt, port });
         return; // Success
       } catch {
         this.log.debug('cdp_probe', `CDP not ready`, { attempt, port });
@@ -1457,6 +1663,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
     const { cdpPort } = this.config;
     this.setStatus('connecting');
 
+    const pwStart = Date.now();
     const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
     this.log.info('playwright', `Connecting via CDP`, { endpoint: cdpEndpoint });
 
@@ -1465,6 +1672,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
         timeout: 25000,
       });
       this.attachBrowserListeners(this.browser);
+      this.log.info('playwright', `Playwright CDP connected after ${Date.now() - pwStart} ms`, { endpoint: cdpEndpoint });
     } catch (err) {
       const fallbackStatus = (this.chromeProcess && this.isProcessAlive()) ? 'connection_error' : 'error';
       this.setStatus(fallbackStatus);
@@ -1478,8 +1686,8 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
 
     this.setStatus('creating_page');
 
-    if (this.isExistingBrowser || this.config.connectionMode === 'existing_chrome') {
-      // CRITICAL REQUIREMENT 5: Always create a NEW tab in the existing browser.
+    if (this.isExistingBrowser) {
+      // CRITICAL REQUIREMENT 5: Always create a NEW tab in the user's running personal browser.
       // NEVER navigate or close existing tabs!
       this.page = await this.context.newPage();
       this.mainPage = this.page;
@@ -1488,7 +1696,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
         totalTabs: this.context.pages().length,
       });
     } else {
-      // In dedicated application-managed browser mode, reuse existing Flow tab if present
+      // In dedicated automation Chrome instance, reuse existing tab
       const pages = this.context.pages();
       let flowPage: Page | null = null;
       for (const p of pages) {
@@ -1505,13 +1713,15 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       this.attachMainPageListeners(this.page);
 
       // Prune extraneous restored tabs for dedicated profiles to enforce the single-tab idle invariant
-      for (const p of pages) {
-        if (p !== this.mainPage && !this.isJobPage(p)) {
-          try {
-            await p.close();
-            this.log.info('tab_lifecycle', 'Closed extraneous restored tab on startup to enforce 1-tab invariant');
-          } catch {
-            /* ignore */
+      if (this.config.connectionMode !== 'existing_chrome') {
+        for (const p of pages) {
+          if (p !== this.mainPage && !this.isJobPage(p)) {
+            try {
+              await p.close();
+              this.log.info('tab_lifecycle', 'Closed extraneous restored tab on startup to enforce 1-tab invariant');
+            } catch {
+              /* ignore */
+            }
           }
         }
       }
@@ -1534,6 +1744,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       throw new Error('No page available for auth check.');
     }
 
+    const authStart = Date.now();
     let result = await FlowAuthDetector.navigateAndCheck(
       this.page,
       this.config.flowUrlLocale
@@ -1551,6 +1762,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
       }
     }
 
+    this.log.info('auth', `Auth check completed after ${Date.now() - authStart} ms`, { state: result.state });
     this.flowUrl = result.url;
     this.detectedEmail = result.detectedEmail ?? this.detectedEmail;
 
@@ -1572,7 +1784,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
         this.setStatus('auth_required');
         this.emit('status_change', this.getSnapshot());
         this.log.info('auth', 'Login or CAPTCHA required — waiting for user to sign in');
-        if (this.context && this.page) {
+        if (this.context && this.page && !this.isModeBgVerify) {
           try {
             if (typeof (this.context as any).newCDPSession === 'function') {
               const cdp = await (this.context as any).newCDPSession(this.page);
@@ -1603,7 +1815,7 @@ export class ProfileSession extends EventEmitter<ProfileSessionEventMap> {
   // Private: State machine helpers
   // ---------------------------------------------------------------------------
 
-  private setStatus(newStatus: ProfileSessionStatus): void {
+  public setStatus(newStatus: ProfileSessionStatus): void {
     const prev = this._status;
     this._status = newStatus;
     this.lastStatusChange = new Date();

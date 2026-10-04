@@ -845,11 +845,93 @@ export class LocalChromeProfileDiscoverer {
    * into the dedicated target directory so the user's authenticated Google session is preserved
    * without locking, modifying, or competing with the running personal Chrome instance.
    */
+  /**
+   * Set of directory names to strictly exclude when seeding dedicated profile data.
+   * Skipping disposable caches speeds up seeding by orders of magnitude while preserving
+   * essential session cookies, local storage, and IndexedDB auth state.
+   */
+  static readonly EXCLUDED_CACHE_DIRS = new Set([
+    'Cache',
+    'Code Cache',
+    'GPUCache',
+    'ShaderCache',
+    'DawnGraphiteCache',
+    'DawnWebGPUCache',
+    'Crashpad',
+    'Media Cache',
+    'Service Worker',
+    'File System',
+    'Application Cache',
+    'AutofillAiModelCache',
+    'AutofillStrikeDatabase',
+    'BudgetDatabase',
+    'Download Service',
+    'OptimizationGuideModelStore',
+  ]);
+
+  /**
+   * Recursively copies a directory while skipping disposable cache folders.
+   */
+  static copyDirectoryFiltered(
+    srcDir: string,
+    targetDir: string,
+    stats: { filesCount: number; bytesCount: number }
+  ): void {
+    if (!fs.existsSync(srcDir)) return;
+    try {
+      fs.mkdirSync(targetDir, { recursive: true });
+      const entries = fs.readdirSync(srcDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          if (LocalChromeProfileDiscoverer.EXCLUDED_CACHE_DIRS.has(entry.name)) {
+            continue; // Skip disposable cache directories
+          }
+          LocalChromeProfileDiscoverer.copyDirectoryFiltered(
+            path.join(srcDir, entry.name),
+            path.join(targetDir, entry.name),
+            stats
+          );
+        } else if (entry.isFile()) {
+          const srcFile = path.join(srcDir, entry.name);
+          const targetFile = path.join(targetDir, entry.name);
+          try {
+            fs.copyFileSync(srcFile, targetFile);
+            stats.filesCount++;
+            try { stats.bytesCount += fs.statSync(targetFile).size; } catch { /* ignore */ }
+          } catch {
+            // Ignore busy / locked files
+          }
+        }
+      }
+    } catch {
+      // Ignore directory read errors
+    }
+  }
+
+  /**
+   * Checks whether a dedicated profile user-data directory has already been seeded with session data.
+   */
+  static isDedicatedUserDataDirSeeded(targetUserDataDir?: string | null): boolean {
+    if (!targetUserDataDir || !fs.existsSync(targetUserDataDir)) return false;
+    const hasPreferences = fs.existsSync(path.join(targetUserDataDir, 'Default', 'Preferences'));
+    const hasCookies = fs.existsSync(path.join(targetUserDataDir, 'Default', 'Cookies'));
+    const hasNetwork = fs.existsSync(path.join(targetUserDataDir, 'Default', 'Network', 'Cookies'));
+    return hasPreferences || hasCookies || hasNetwork;
+  }
+
+  /**
+   * Seeds an isolated dedicated Chrome user-data directory from an existing local Chrome profile.
+   * Copies essential session credentials (Cookies, Preferences, Login Data, Web Data, Local State,
+   * Local Storage, IndexedDB) into the dedicated target directory so the user's authenticated
+   * Google session is preserved without locking, modifying, or competing with the running personal Chrome instance.
+   */
   static seedDedicatedUserDataDir(
     sourceUserDataDir: string,
     sourceProfileDir: string,
     targetUserDataDir: string
   ): boolean {
+    const seedStart = Date.now();
+    const stats = { filesCount: 0, bytesCount: 0 };
     try {
       const srcFullProfile = path.join(sourceUserDataDir, sourceProfileDir);
       if (!fs.existsSync(srcFullProfile)) return false;
@@ -857,47 +939,77 @@ export class LocalChromeProfileDiscoverer {
       const targetDefault = path.join(targetUserDataDir, 'Default');
       fs.mkdirSync(targetDefault, { recursive: true });
 
-      // 1. Copy root Local State if present
+      // 1. Copy root Local State if present (essential for OS Crypt / cookie decryption)
       const srcLocalState = path.join(sourceUserDataDir, 'Local State');
       const targetLocalState = path.join(targetUserDataDir, 'Local State');
       if (fs.existsSync(srcLocalState) && !fs.existsSync(targetLocalState)) {
         try {
           fs.copyFileSync(srcLocalState, targetLocalState);
+          stats.filesCount++;
+          try { stats.bytesCount += fs.statSync(targetLocalState).size; } catch { /* ignore */ }
         } catch {
           // Ignore busy
         }
       }
 
-      // 2. Copy profile files
-      const items = ['Preferences', 'Secure Preferences', 'Login Data', 'Login Data For Account', 'Web Data'];
+      // 2. Copy profile root auth and credential files (including macOS root Cookies)
+      const items = [
+        'Preferences',
+        'Secure Preferences',
+        'Login Data',
+        'Login Data-journal',
+        'Login Data For Account',
+        'Login Data For Account-journal',
+        'Web Data',
+        'Web Data-journal',
+        'Account Web Data',
+        'Account Web Data-journal',
+        'Cookies',
+        'Cookies-journal',
+        'Device Bound Sessions',
+        'Device Bound Sessions-journal',
+      ];
       for (const item of items) {
         const srcPath = path.join(srcFullProfile, item);
         const targetPath = path.join(targetDefault, item);
         if (fs.existsSync(srcPath) && !fs.existsSync(targetPath)) {
           try {
             fs.copyFileSync(srcPath, targetPath);
+            stats.filesCount++;
+            try { stats.bytesCount += fs.statSync(targetPath).size; } catch { /* ignore */ }
           } catch {
             // Ignore if busy/locked
           }
         }
       }
 
-      // 3. Copy Network directory (Cookies)
+      // 3. Copy Network directory (contains Cookies on Windows / some Chrome versions)
       const srcNetwork = path.join(srcFullProfile, 'Network');
       const targetNetwork = path.join(targetDefault, 'Network');
-      if (fs.existsSync(srcNetwork) && !fs.existsSync(path.join(targetNetwork, 'Cookies'))) {
-        fs.mkdirSync(targetNetwork, { recursive: true });
-        const files = fs.readdirSync(srcNetwork);
-        for (const f of files) {
-          try {
-            fs.copyFileSync(path.join(srcNetwork, f), path.join(targetNetwork, f));
-          } catch {
-            // Ignore busy files
-          }
-        }
+      if (fs.existsSync(srcNetwork)) {
+        LocalChromeProfileDiscoverer.copyDirectoryFiltered(srcNetwork, targetNetwork, stats);
       }
 
-      appLogger.info('chrome_discoverer', `Seeded dedicated profile data from ${sourceProfileDir} to ${targetUserDataDir}`);
+      // 4. Copy Local Storage directory (contains leveldb session tokens for modern web apps)
+      const srcLocalStorage = path.join(srcFullProfile, 'Local Storage');
+      const targetLocalStorage = path.join(targetDefault, 'Local Storage');
+      if (fs.existsSync(srcLocalStorage)) {
+        LocalChromeProfileDiscoverer.copyDirectoryFiltered(srcLocalStorage, targetLocalStorage, stats);
+      }
+
+      // 5. Copy IndexedDB directory (contains Firebase and Google auth cached records)
+      const srcIndexedDb = path.join(srcFullProfile, 'IndexedDB');
+      const targetIndexedDb = path.join(targetDefault, 'IndexedDB');
+      if (fs.existsSync(srcIndexedDb)) {
+        LocalChromeProfileDiscoverer.copyDirectoryFiltered(srcIndexedDb, targetIndexedDb, stats);
+      }
+
+      const durationMs = Date.now() - seedStart;
+      const sizeMb = (stats.bytesCount / (1024 * 1024)).toFixed(2);
+      appLogger.info(
+        'chrome_discoverer',
+        `Profile seed completed in ${durationMs} ms (${stats.filesCount} files, ${sizeMb} MB) from ${sourceProfileDir} to ${targetUserDataDir}`
+      );
       return true;
     } catch (err) {
       appLogger.warn('chrome_discoverer', `Could not seed dedicated profile from ${sourceProfileDir}: ${(err as Error).message}`);

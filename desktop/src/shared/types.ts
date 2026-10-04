@@ -167,6 +167,8 @@ export interface ProfileSessionSnapshot {
     localProfileDirectory?: string;
     /** PID of the app-owned dedicated Chrome process (undefined if not running). */
     chromePid?: number;
+    /** True while a background verification check is actively running for this profile. */
+    isVerifying?: boolean;
 }
 /**
  * A candidate Chrome installation found during filesystem/registry scanning.
@@ -1414,6 +1416,22 @@ export interface FlowApi {
         notes?: string;
         preferredCdpPort?: number;
     }) => Promise<ProfileConfig>;
+    connectExistingProfile?: (params: {
+        displayName: string;
+        localProfileDirectory: string;
+        localUserDataDir?: string;
+        expectedEmail?: string;
+        notes?: string;
+        preferredCdpPort?: number;
+    }) => Promise<ProfileConnectionResult>;
+    cancelConnection?: (profileId: string) => Promise<void>;
+    onProfileConnectionProgress?: (callback: (progress: ProfileConnectionProgress) => void) => () => void;
+    verifySelectedProfiles?: (profileIds: string[]) => Promise<Record<string, {
+        success: boolean;
+        status: ProfileSessionStatus;
+        detectedEmail?: string | null;
+        error?: string;
+    }>>;
     getAppInfo: () => Promise<{
         appDataDir: string;
         version: string;
@@ -1555,6 +1573,37 @@ export interface ProfileInUseResult {
     pids: number[];
     cdpPort?: number;
     details?: string;
+}
+export type ProfileConnectionStage =
+  | 'preparing'
+  | 'copying_session'
+  | 'checking_auth'
+  | 'connecting_flow'
+  | 'auth_required'
+  | 'waiting_for_user'
+  | 'login_detected'
+  | 'finalizing'
+  | 'success'
+  | 'error'
+  | 'cancelled';
+
+export interface ProfileConnectionProgress {
+  profileId: string;
+  stage: ProfileConnectionStage;
+  message: string;
+  progress: number;
+  displayName?: string;
+  detectedEmail?: string | null;
+  error?: string;
+}
+
+export interface ProfileConnectionResult {
+  success: boolean;
+  profileId: string;
+  status: ProfileSessionStatus;
+  detectedEmail?: string | null;
+  requiresInteraction?: boolean;
+  error?: string;
 }
 declare global {
     interface Window {

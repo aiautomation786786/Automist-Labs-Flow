@@ -91,13 +91,13 @@ describe('ProfilesScreen', () => {
     // Detected email shown
     expect(screen.getByText('user1@example.com')).toBeDefined();
     // Status badges
-    expect(screen.getAllByText(/Authenticated/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Sign-In Required/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Connected/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Reconnect Required/i).length).toBeGreaterThan(0);
 
-    // Click Open Login for auth_required profile (prof_2)
-    const openLoginBtns = screen.getAllByRole('button', { name: /Open Login/i });
+    // Click Reconnect for auth_required profile (prof_2)
+    const openLoginBtns = screen.getAllByRole('button', { name: /Reconnect/i });
     await act(async () => {
-      fireEvent.click(openLoginBtns[0]); // prof_2 is auth_required, shows Open Login
+      fireEvent.click(openLoginBtns[0]); // prof_2 is auth_required, shows Reconnect
       await Promise.resolve();
     });
 
@@ -185,21 +185,21 @@ describe('ProfilesScreen', () => {
     });
 
     // Choice modal should open
-    expect(screen.getByText('Add a Flow Account')).toBeDefined();
-    expect(screen.getByText(/Choose how you want to connect/i)).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Add Flow Account' })).toBeDefined();
+    expect(screen.getByText(/Choose how you'd like to connect your account/i)).toBeDefined();
 
-    // Both options must be present
-    expect(screen.getByText('Sign in with Google')).toBeDefined();
-    expect(screen.getByText('Connect Existing Chrome Profile')).toBeDefined();
-    expect(screen.getByText(/Continue with Google/i)).toBeDefined();
-    expect(screen.getByText(/Scan Chrome Profiles/i)).toBeDefined();
+    // Both redesigned options must be present
+    expect(screen.getByText('Connect Existing Profile')).toBeDefined();
+    expect(screen.getByText('Add New Account')).toBeDefined();
+    expect(screen.getByText(/Use a Chrome profile that's already signed in/i)).toBeDefined();
+    expect(screen.getByText(/Sign in with a new Google account using a dedicated Infinity Flow profile/i)).toBeDefined();
 
     // Chrome must NOT have been launched yet — user hasn't chosen
     expect(window.flowApi?.createProfile).not.toHaveBeenCalled();
     expect(window.flowApi?.launchLoginBrowser).not.toHaveBeenCalled();
   });
 
-  it('choosing Sign in with Google in choice modal launches Chrome', async () => {
+  it('choosing Add New Account in choice modal launches Chrome', async () => {
     render(<ProfilesScreen />);
 
     await act(async () => {
@@ -213,7 +213,7 @@ describe('ProfilesScreen', () => {
       await Promise.resolve();
     });
 
-    // Click the "Sign in with Google" option
+    // Click the "Add New Account" option
     const googleBtn = screen.getByTestId('choice-google-signin');
     await act(async () => {
       fireEvent.click(googleBtn);
@@ -230,7 +230,7 @@ describe('ProfilesScreen', () => {
     expect(screen.getAllByText(/Chrome window is open/i).length).toBeGreaterThan(0);
   });
 
-  it('choosing Connect Existing Chrome Profile in choice modal opens scan modal', async () => {
+  it('choosing Connect Existing Profile in choice modal opens scan modal', async () => {
     // Setup detectLocalChromeProfiles
     (window.flowApi as any).detectLocalChromeProfiles = vi.fn().mockResolvedValue([]);
 
@@ -247,7 +247,7 @@ describe('ProfilesScreen', () => {
       await Promise.resolve();
     });
 
-    // Click the "Connect Existing Chrome Profile" option
+    // Click the "Connect Existing Profile" option
     const connectBtn = screen.getByTestId('choice-connect-existing');
     await act(async () => {
       fireEvent.click(connectBtn);
@@ -274,7 +274,7 @@ describe('ProfilesScreen', () => {
     });
 
     // Modal should be open
-    expect(screen.getByText('Add a Flow Account')).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Add Flow Account' })).toBeDefined();
 
     // Click Cancel
     const cancelBtn = screen.getByRole('button', { name: /^Cancel$/i });
@@ -284,7 +284,7 @@ describe('ProfilesScreen', () => {
     });
 
     // Modal should be gone, Chrome was never launched
-    expect(screen.queryByText('Add a Flow Account')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Add Flow Account' })).toBeNull();
     expect(window.flowApi?.launchLoginBrowser).not.toHaveBeenCalled();
     expect(window.flowApi?.createProfile).not.toHaveBeenCalled();
   });

@@ -61,6 +61,8 @@ import type {
   SeparateFilesInput,
   SystemMetrics,
   GeminiKeySummary,
+  ProfileConnectionProgress,
+  ProfileConnectionResult,
 } from '../shared/types';
 
 const flowApi: FlowApi = {
@@ -134,6 +136,18 @@ const flowApi: FlowApi = {
     notes?: string;
     preferredCdpPort?: number;
   }) => ipcRenderer.invoke('profiles:createExisting', params),
+  connectExistingProfile: (params: {
+    displayName: string;
+    localProfileDirectory: string;
+    localUserDataDir?: string;
+    expectedEmail?: string;
+    notes?: string;
+    preferredCdpPort?: number;
+  }): Promise<ProfileConnectionResult> => ipcRenderer.invoke('profiles:connectExisting', params),
+  cancelConnection: (profileId: string): Promise<void> =>
+    ipcRenderer.invoke('profiles:cancelConnection', profileId),
+  verifySelectedProfiles: (profileIds: string[]): Promise<Record<string, { success: boolean; status: ProfileSessionStatus; detectedEmail?: string | null; error?: string }>> =>
+    ipcRenderer.invoke('profiles:verifySelected', profileIds),
 
   // Settings & System
   getAppInfo: () => ipcRenderer.invoke('system:getAppInfo'),
@@ -279,6 +293,12 @@ const flowApi: FlowApi = {
       callback(data);
     ipcRenderer.on('flow:worker:status', handler);
     return () => ipcRenderer.removeListener('flow:worker:status', handler);
+  },
+
+  onProfileConnectionProgress: (callback: (progress: ProfileConnectionProgress) => void) => {
+    const handler = (_e: unknown, data: ProfileConnectionProgress) => callback(data);
+    ipcRenderer.on('flow:profile:connection_progress', handler);
+    return () => ipcRenderer.removeListener('flow:profile:connection_progress', handler);
   },
 
   onRenderProgress: (callback: (event: RenderProgressEvent) => void) => {

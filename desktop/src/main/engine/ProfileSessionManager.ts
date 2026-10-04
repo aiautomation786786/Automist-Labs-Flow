@@ -19,6 +19,9 @@ import type {
   ProfileConfig,
   ProfileSessionSnapshot,
   ProfileSessionStatus,
+  ProfileConnectionProgress,
+  ProfileConnectionResult,
+  ProfileConnectionStage,
 } from '../../shared/types';
 import { ProfileSession, probeCdpPort } from './ProfileSession';
 import { ProfileConfigManager } from './ProfileConfig';
@@ -46,6 +49,8 @@ export interface ManagerEventMap {
   'profile:created': [config: ProfileConfig];
   /** Emitted when a profile is deleted. */
   'profile:deleted': [profileId: string];
+  /** Emitted during profile connection onboarding progress. */
+  'profile:connection_progress': [progress: ProfileConnectionProgress];
 }
 
 // ---------------------------------------------------------------------------
@@ -56,6 +61,15 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
   private readonly sessions = new Map<string, ProfileSession>();
   private readonly portAllocator: ChromePortAllocator;
   private readonly profileOperationLocks = new Map<string, Promise<any>>();
+  private readonly inFlightVerifications = new Map<
+    string,
+    Promise<{
+      success: boolean;
+      status: ProfileSessionStatus;
+      detectedEmail: string | null;
+      error?: string;
+    }>
+  >();
   private chromePath: string;
 
   private async withProfileLock<T>(profileId: string, fn: () => Promise<T>): Promise<T> {
@@ -230,6 +244,223 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
     }
 
     return updated;
+  }
+
+  /**
+   * Connects an existing local Chrome profile using the fast-path background verification flow:
+   * 1. Preparing profile (creates config & allocates port)
+   * 2. Copying account session (seeds cookies, local storage, indexedDB; skips disposable caches)
+   * 3. Checking existing login (spawns headless Chrome --headless=new)
+   * 4. Connecting to Google Flow (checks auth state in background)
+   * 5. Finalizing account (if valid auth -> 'ready' & terminates background Chrome; if auth required -> launches visible login window)
+   */
+  async connectExistingChromeProfile(
+    params: {
+      displayName: string;
+      localProfileDirectory: string;
+      localUserDataDir?: string;
+      expectedEmail?: string;
+      notes?: string;
+      preferredCdpPort?: number;
+    },
+    onProgress?: (progress: ProfileConnectionProgress) => void
+  ): Promise<ProfileConnectionResult> {
+    const connectStartTime = Date.now();
+    let profileId = '';
+
+    const emitProg = (
+      stage: ProfileConnectionStage,
+      message: string,
+      progress: number,
+      extra: Partial<ProfileConnectionProgress> = {}
+    ) => {
+      const payload: ProfileConnectionProgress = {
+        profileId,
+        stage,
+        message,
+        progress,
+        displayName: params.displayName,
+        ...extra,
+      };
+      this.emit('profile:connection_progress', payload);
+      onProgress?.(payload);
+    };
+
+    try {
+      // -----------------------------------------------------------------------
+      // Stage 1: Preparing profile
+      // -----------------------------------------------------------------------
+      emitProg('preparing', 'Preparing profile configuration...', 10);
+      const prepStart = Date.now();
+
+      const userDataDir = params.localUserDataDir || LocalChromeProfileDiscoverer.discoverChromeUserDataDir() || '';
+      const tempKey = `pending_${process.hrtime.bigint().toString()}`;
+      const cdpPort = params.preferredCdpPort ?? (await this.portAllocator.allocate(tempKey));
+
+      const config = ProfileConfigManager.create({
+        displayName: params.displayName,
+        chromePath: this.chromePath,
+        cdpPort,
+        notes: params.notes,
+        expectedEmail: params.expectedEmail,
+      });
+      profileId = config.profileId;
+      appLogger.info('session_manager', `Profile record created in ${Date.now() - prepStart} ms for '${profileId}'`);
+      emitProg('preparing', 'Profile environment prepared', 20);
+
+      // -----------------------------------------------------------------------
+      // Stage 2: Copying account session
+      // -----------------------------------------------------------------------
+      emitProg('copying_session', 'Copying authenticated Google session data...', 35);
+      const seedStart = Date.now();
+
+      if (userDataDir && params.localProfileDirectory) {
+        LocalChromeProfileDiscoverer.seedDedicatedUserDataDir(
+          userDataDir,
+          params.localProfileDirectory,
+          config.userDataDir
+        );
+      }
+      appLogger.info('session_manager', `Profile seed completed in ${Date.now() - seedStart} ms for '${profileId}'`);
+
+      const updated = ProfileConfigManager.update(config.profileId, {
+        connectionMode: 'existing_chrome',
+        localProfileDirectory: params.localProfileDirectory,
+        localUserDataDir: userDataDir,
+        preferredCdpPort: cdpPort,
+      });
+
+      this.portAllocator.release(tempKey);
+      this.portAllocator.setAllocation(config.profileId, cdpPort);
+      this.emit('profile:created', updated);
+      emitProg('copying_session', 'Session data copied successfully', 45);
+
+      // -----------------------------------------------------------------------
+      // Stage 3: Checking existing login
+      // -----------------------------------------------------------------------
+      emitProg('checking_auth', 'Checking existing Google login...', 55);
+
+      let session = this.sessions.get(profileId);
+      if (!session) {
+        session = new ProfileSession(updated);
+        this.sessions.set(profileId, session);
+        this.attachSessionEvents(session);
+      }
+
+      // -----------------------------------------------------------------------
+      // Stage 4: Connecting to Google Flow (Background Headless Verification)
+      // -----------------------------------------------------------------------
+      emitProg('connecting_flow', 'Connecting to Google Flow in background...', 70);
+      const verifyStart = Date.now();
+
+      const authResult = await session.verifyAuthBackground();
+      appLogger.info('session_manager', `Background verification completed in ${Date.now() - verifyStart} ms for '${profileId}' (state: ${authResult.state})`);
+
+      // -----------------------------------------------------------------------
+      // Stage 5: Finalizing account / Handling outcome
+      // -----------------------------------------------------------------------
+      if (authResult.state === 'authenticated') {
+        emitProg('finalizing', 'Finalizing account connection...', 90);
+
+        if (authResult.detectedEmail || authResult.locale) {
+          this.persistDiscoveredMetadata(profileId, updated, authResult);
+        }
+
+        session.isVerifiedInCurrentProcess = true;
+        session.setStatus('ready');
+        this.emit('session:ready', profileId);
+        this.emit('session:status', session.getSnapshot());
+
+        const totalMs = Date.now() - connectStartTime;
+        appLogger.info('session_manager', `Connection completed in ${totalMs} ms for '${profileId}'`);
+
+        const detectedEmail = authResult.detectedEmail ?? session.getSnapshot().detectedEmail;
+        emitProg('success', 'Connected successfully ✓', 100, { detectedEmail });
+
+        return {
+          success: true,
+          profileId,
+          status: 'ready',
+          detectedEmail,
+        };
+      } else {
+        // Sign-in genuinely required: transition progress and launch interactive visible Chrome
+        emitProg('auth_required', 'Google sign-in required. Opening secure Chrome window...', 75);
+        appLogger.info('session_manager', `Existing profile '${profileId}' requires interactive sign-in; opening login browser`);
+
+        await session.launchLoginBrowser();
+        emitProg('waiting_for_user', 'Waiting for you to complete Google sign-in...', 80);
+
+        // Listen for post-login completion on the session to advance progress
+        const onSessionReady = (readyId: string) => {
+          if (readyId === profileId) {
+            this.off('session:ready', onSessionReady);
+            emitProg('login_detected', 'Google sign-in detected!', 92);
+            emitProg('finalizing', 'Finalizing account connection...', 96);
+            emitProg('success', 'Connected successfully ✓', 100, {
+              detectedEmail: session?.getSnapshot().detectedEmail,
+            });
+          }
+        };
+        this.on('session:ready', onSessionReady);
+
+        return {
+          success: false,
+          profileId,
+          status: 'browser_open',
+          requiresInteraction: true,
+        };
+      }
+    } catch (err) {
+      const errMsg = (err as Error).message;
+      appLogger.error('session_manager', `Connection failed for profile '${profileId}': ${errMsg}`);
+      emitProg('error', errMsg, 100, { error: errMsg });
+      return {
+        success: false,
+        profileId,
+        status: 'error',
+        error: errMsg,
+      };
+    }
+  }
+
+  /**
+   * Safely cancels an in-flight connection attempt for a specific profile.
+   * Cleans up ONLY owned background or login browser processes belonging to that profile.
+   * Leaves personal Chrome and all other Infinity Flow profiles untouched.
+   */
+  async cancelConnection(profileId: string): Promise<void> {
+    appLogger.info('session_manager', `cancelConnection: Cancelling connection attempt for '${profileId}'`);
+    const session = this.sessions.get(profileId);
+    if (session) {
+      try {
+        if (session.isProcessAlive()) {
+          if (session.status === 'browser_open') {
+            await session.closeLoginBrowser().catch(() => {});
+          }
+        }
+        await session.stop().catch(() => {});
+      } catch (err) {
+        appLogger.warn('session_manager', `cancelConnection cleanup notice for '${profileId}': ${(err as Error).message}`);
+      }
+    }
+
+    // If profile was unverified / in-flight, delete it so incomplete records don't linger
+    try {
+      const config = ProfileConfigManager.read(profileId);
+      if (config && (!session || session.status !== 'ready')) {
+        await this.deleteProfile(profileId).catch(() => {});
+      }
+    } catch {
+      /* ignore if not yet saved */
+    }
+
+    this.emit('profile:connection_progress', {
+      profileId,
+      stage: 'cancelled',
+      message: 'Connection cancelled',
+      progress: 0,
+    });
   }
 
   /**
@@ -412,6 +643,134 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
    * Performs an internal auth health check so profiles with valid Google cookies become 'ready' (● Ready)
    * without requiring manual "Verify Account" or user browser interaction.
    */
+  /**
+   * Automatically starts and verifies all configured profiles in background mode on app launch.
+   * Performs safe, resource-bounded background authentication health checks with a concurrency
+   * limit of at most 2 verifications at a time, ensuring profiles with valid Google cookies
+   * become 'ready' (Connected) without opening visible Chrome windows or appearing in the macOS Dock.
+   */
+  /**
+   * Verifies multiple profiles headlessly in the background with a max concurrency of 2.
+   * If profileIds is not supplied, runs for all enabled profiles (e.g. startup auto-verification).
+   *
+   * Eligibility rules:
+   *  - SKIP if already authentic and verified in the CURRENT runtime process (session.isVerifiedInCurrentProcess && session.status === 'ready')
+   *  - SKIP if currently generating a job (session.status === 'busy')
+   *  - SKIP if currently verifying (session.isVerifying)
+   *  - For all eligible profiles: sets status to 'starting' (UI shows "Checking...") and queues headless verify.
+   */
+  async verifyProfilesBackground(
+    profileIds?: string[]
+  ): Promise<Record<string, { success: boolean; status: ProfileSessionStatus; detectedEmail?: string | null; error?: string }>> {
+    const allConfigs = ProfileConfigManager.list();
+    const targetConfigs = profileIds
+      ? allConfigs.filter((c) => profileIds.includes(c.profileId))
+      : allConfigs.filter((c) => c.enabled !== false);
+
+    const results: Record<string, { success: boolean; status: ProfileSessionStatus; detectedEmail?: string | null; error?: string }> = {};
+
+    if (targetConfigs.length === 0) {
+      appLogger.info('session_manager', 'verifyProfilesBackground: No eligible profiles to verify');
+      return results;
+    }
+
+    // Pre-initialize and determine eligibility
+    const eligibleConfigs: ProfileConfig[] = [];
+    for (const config of targetConfigs) {
+      let session = this.sessions.get(config.profileId);
+      if (!session) {
+        const existingPort = this.portAllocator.getPort(config.profileId);
+        if (!existingPort) {
+          this.portAllocator.setAllocation(config.profileId, config.cdpPort);
+        }
+        session = new ProfileSession(config);
+        this.sessions.set(config.profileId, session);
+        this.attachSessionEvents(session);
+      }
+
+      // Normalize stale transient statuses if Chrome process is not alive
+      if (!session.isProcessAlive() && !session.isVerifying) {
+        const transientStatuses: ProfileSessionStatus[] = ['starting', 'connecting', 'chrome_launched', 'waiting_for_cdp', 'creating_page', 'busy', 'reconnecting'];
+        if (transientStatuses.includes(session.status)) {
+          session.setStatus('stopped');
+        }
+      }
+
+      // Check eligibility
+      if (session.isVerifiedInCurrentProcess && session.status === 'ready') {
+        appLogger.info('session_manager', `verifyProfilesBackground: Skipping '${config.profileId}' - already verified in current runtime`);
+        results[config.profileId] = {
+          success: true,
+          status: 'ready',
+          detectedEmail: session.getSnapshot().detectedEmail,
+        };
+        continue;
+      }
+      if (session.status === 'busy') {
+        appLogger.info('session_manager', `verifyProfilesBackground: Skipping '${config.profileId}' - session is busy`);
+        results[config.profileId] = {
+          success: true,
+          status: 'busy',
+          detectedEmail: session.getSnapshot().detectedEmail,
+        };
+        continue;
+      }
+      if (session.isVerifying) {
+        appLogger.info('session_manager', `verifyProfilesBackground: Skipping '${config.profileId}' - verification already in progress`);
+        continue;
+      }
+
+      // Mark queued profiles as verifying so the UI immediately reflects "Checking..."
+      session.isVerifying = true;
+      session.emit('status_change', session.getSnapshot());
+      eligibleConfigs.push(config);
+    }
+
+    if (eligibleConfigs.length === 0) {
+      return results;
+    }
+
+    appLogger.info('session_manager', `verifyProfilesBackground: Queuing ${eligibleConfigs.length} profile(s) for background verification (max concurrency 2)...`);
+
+    const MAX_CONCURRENT_VERIFICATIONS = 2;
+    const queue = eligibleConfigs.map((config) => ({
+      config,
+      enqueuedAt: Date.now(),
+    }));
+    const workers = Array.from(
+      { length: Math.min(MAX_CONCURRENT_VERIFICATIONS, queue.length) },
+      async () => {
+        while (queue.length > 0) {
+          const item = queue.shift();
+          if (!item) break;
+          const { config, enqueuedAt } = item;
+          const waitMs = Date.now() - enqueuedAt;
+          appLogger.info('session_manager', `verifyProfilesBackground: Profile '${config.profileId}' dequeued after ${waitMs} ms queue wait`);
+
+          try {
+            const res = await this.verifyAccount(config.profileId);
+            results[config.profileId] = res;
+          } catch (err) {
+            results[config.profileId] = {
+              success: false,
+              status: 'error',
+              error: (err as Error).message,
+            };
+          }
+        }
+      }
+    );
+
+    await Promise.all(workers);
+    appLogger.info('session_manager', `verifyProfilesBackground: Completed verification for ${eligibleConfigs.length} profile(s)`);
+    return results;
+  }
+
+  /**
+   * Auto-starts background verification for all configured profiles on application launch.
+   * Stale persisted 'ready' status does NOT skip verification: each profile is verified
+   * in the current runtime process without opening visible Chrome.
+   */
   async autoStartProfiles(): Promise<void> {
     const profiles = ProfileConfigManager.list();
     if (profiles.length === 0) {
@@ -419,65 +778,7 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       return;
     }
 
-    const enabledProfiles = profiles.filter((p) => p.enabled !== false);
-    appLogger.info('session_manager', `Auto-starting ${enabledProfiles.length} background profile session(s)...`);
-
-    await Promise.allSettled(
-      enabledProfiles.map(async (config) => {
-        try {
-          let session = this.sessions.get(config.profileId);
-          if (!session) {
-            const existingPort = this.portAllocator.getPort(config.profileId);
-            if (!existingPort) {
-              this.portAllocator.setAllocation(config.profileId, config.cdpPort);
-            }
-            session = new ProfileSession(config);
-            this.sessions.set(config.profileId, session);
-            this.attachSessionEvents(session);
-          }
-
-          if (session.isReady || session.status === 'busy') return;
-
-          // For existing_chrome profiles: do NOT silently launch the user's normal Chrome with personal tabs in background
-          if (config.connectionMode === 'existing_chrome') {
-            let isPortActive = false;
-            try {
-              await probeCdpPort(config.cdpPort);
-              isPortActive = true;
-            } catch {
-              isPortActive = false;
-            }
-
-            if (!isPortActive) {
-              appLogger.info('session_manager', `Skipping auto-launch for existing_chrome profile ${config.profileId} (Chrome not currently running with debugging on port ${config.cdpPort})`);
-              return;
-            }
-          }
-
-          // Auto-start in background off-screen mode with bounded retry
-          let attempts = 0;
-          const maxAttempts = 2;
-          while (attempts < maxAttempts) {
-            attempts++;
-            try {
-              await session.start({ headless: false, background: true });
-              appLogger.info('session_manager', `Profile ${config.profileId} auto-start finished with status: ${session.status}`);
-              break;
-            } catch (err) {
-              if (attempts >= maxAttempts) {
-                throw err;
-              }
-              appLogger.warn('session_manager', `Retry ${attempts}/${maxAttempts} auto-starting profile ${config.profileId}: ${(err as Error).message}`);
-              await new Promise((resolve) => setTimeout(resolve, 1000));
-            }
-          }
-        } catch (err) {
-          appLogger.warn('session_manager', `Auto-start notice for ${config.profileId}: ${(err as Error).message}`);
-        }
-      })
-    );
-
-    appLogger.info('session_manager', 'All background profile auto-start attempts completed');
+    await this.verifyProfilesBackground();
   }
 
   /**
@@ -643,14 +944,49 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
    * (e.g. launched via launchLoginBrowser) over CDP, finds the active Flow tab,
    * evaluates authentication via FlowAuthDetector, and updates status/metadata.
    */
-  async verifyAccount(profileId: string): Promise<{
+  verifyAccount(profileId: string): Promise<{
     success: boolean;
     status: ProfileSessionStatus;
     detectedEmail: string | null;
     error?: string;
   }> {
-    return this.withProfileLock(profileId, async () => {
-      const config = ProfileConfigManager.read(profileId);
+    const existing = this.inFlightVerifications.get(profileId);
+    if (existing) {
+      appLogger.info('session_manager', `verifyAccount: Reusing in-flight verification promise for '${profileId}'`);
+      return existing;
+    }
+
+    const verifyPromise = (async () => {
+      try {
+        return await this.withProfileLock(profileId, async () => {
+          return await this._verifyAccountInternal(profileId);
+        });
+      } finally {
+        this.inFlightVerifications.delete(profileId);
+      }
+    })();
+
+    this.inFlightVerifications.set(profileId, verifyPromise);
+    return verifyPromise;
+  }
+
+  private async _verifyAccountInternal(profileId: string): Promise<{
+    success: boolean;
+    status: ProfileSessionStatus;
+    detectedEmail: string | null;
+    error?: string;
+  }> {
+    let config: ProfileConfig;
+    try {
+      config = ProfileConfigManager.read(profileId);
+    } catch {
+      const existingSession = this.sessions.get(profileId);
+      if (existingSession && (existingSession as any).config) {
+        config = (existingSession as any).config;
+      } else {
+        throw new Error(`Profile config not found: ${profileId}`);
+      }
+    }
 
     // 1. Get or instantiate session
     let session = this.sessions.get(profileId);
@@ -685,33 +1021,49 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       sessionStatus: session.status,
     });
 
-    if (!isPidAlive && !isPortActive && session.status !== 'ready' && session.status !== 'connected' && session.status !== 'browser_open') {
+    if (!isPidAlive && !isPortActive) {
+      // Background headless verification
       try {
-        const localEmail = LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
-          config.userDataDir,
-          config.chromeProfileName || 'Default'
-        ) || config.expectedEmail;
-        appLogger.info('session_manager', `verifyAccount: Starting background session for ${profileId} (${localEmail || 'dedicated'}) to verify Flow authentication`);
-        await session.start({ headless: false, background: true });
-        if (session.isReady || (session.status as string) === 'ready') {
-          this.emit('session:status', session.getSnapshot());
+        appLogger.info('session_manager', `verifyAccount: Running background headless verification for ${profileId}`);
+        const authResult = await session.verifyAuthBackground();
+
+        if (authResult.detectedEmail || authResult.locale) {
+          this.persistDiscoveredMetadata(profileId, config, authResult);
+        }
+
+        this.emit('session:status', session.getSnapshot());
+        if (authResult.state === 'authenticated') {
+          session.isVerifiedInCurrentProcess = true;
           this.emit('session:ready', profileId);
           return {
             success: true,
             status: 'ready',
-            detectedEmail: session.getSnapshot().detectedEmail || localEmail || null,
+            detectedEmail: session.getSnapshot().detectedEmail,
+          };
+        } else if (authResult.state === 'login_required' || authResult.state === 'captcha') {
+          this.emit('session:auth_required', profileId);
+          return {
+            success: false,
+            status: 'auth_required',
+            detectedEmail: session.getSnapshot().detectedEmail,
+            error: authResult.state === 'login_required' ? 'User sign-in required. Click Reconnect to sign in.' : 'CAPTCHA challenge detected on Flow.',
+          };
+        } else {
+          return {
+            success: false,
+            status: session.status,
+            detectedEmail: session.getSnapshot().detectedEmail,
+            error: 'Unable to verify Flow authentication status.',
           };
         }
       } catch (err) {
-        appLogger.warn('session_manager', `verifyAccount: Background check notice for ${profileId}: ${(err as Error).message}`);
-      }
-
-      if (!session.isProcessAlive() && !session.isReady) {
+        appLogger.warn('session_manager', `verifyAccount: Background check error for ${profileId}: ${(err as Error).message}`);
+        this.emit('session:status', session.getSnapshot());
         return {
           success: false,
           status: session.status,
-          detectedEmail: null,
-          error: 'Dedicated Chrome is not running. Click "Open Login" to launch it.',
+          detectedEmail: session.getSnapshot().detectedEmail,
+          error: (err as Error).message,
         };
       }
     }
@@ -751,46 +1103,21 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
 
       // Update persistent metadata if email or locale discovered
       if (authResult.detectedEmail || authResult.locale) {
-        let safeEmailToPersist: string | undefined = authResult.detectedEmail ?? undefined;
-        if (safeEmailToPersist) {
-          const diskProfiles = ProfileConfigManager.readAll();
-          const otherProfiles = diskProfiles.filter((p) => p.profileId !== profileId);
-          const hasConflict = otherProfiles.some(
-            (p) =>
-              (p.expectedEmail && p.expectedEmail.toLowerCase() === safeEmailToPersist!.toLowerCase()) ||
-              (p.detectedEmail && p.detectedEmail.toLowerCase() === safeEmailToPersist!.toLowerCase())
-          );
-          if (hasConflict) {
-            appLogger.warn(
-              'session_manager',
-              `Cross-profile contamination blocked: detected email '${safeEmailToPersist}' belongs to another profile. Reverting to local user data email for '${profileId}'.`
-            );
-            safeEmailToPersist =
-              LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
-                config.userDataDir,
-                config.chromeProfileName || 'Default'
-              ) || undefined;
-          }
-        }
-
-        const patch: Record<string, any> = {
-          ...(safeEmailToPersist ? { detectedEmail: safeEmailToPersist } : {}),
-          ...(authResult.locale ? { flowUrlLocale: `/fx/${authResult.locale}/tools/flow` } : {}),
-        };
-        // Auto-update display name if default generated name was used
-        if (safeEmailToPersist && config.displayName && /^Flow Account( \d+)?$/i.test(config.displayName.trim())) {
-          patch.displayName = safeEmailToPersist;
-        }
-        ProfileConfigManager.update(profileId, patch);
+        this.persistDiscoveredMetadata(profileId, config, authResult);
       }
 
       this.emit('session:status', session.getSnapshot());
       if (authResult.state === 'authenticated') {
+        session.isVerifiedInCurrentProcess = true;
         this.emit('session:ready', profileId);
-        // Explicitly hide the window from the taskbar after verification succeeds
-        await session.hideWindowFromTaskbar().catch((err) => {
-          appLogger.debug('session_manager', `Could not hide window after auth: ${(err as Error).message}`);
-        });
+        // If this was a login browser, auto-close it now so it cleanly exits and leaves macOS Dock
+        if (session.status === 'browser_open' || session.isProcessAlive()) {
+          await session.closeLoginBrowser().catch((err) => {
+            appLogger.debug('session_manager', `Could not auto-close login window after auth: ${(err as Error).message}`);
+          });
+        }
+      } else if (authResult.state === 'login_required' || authResult.state === 'captcha') {
+        this.emit('session:auth_required', profileId);
       }
 
       return {
@@ -809,7 +1136,45 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
         error: (err as Error).message,
       };
     }
-    });
+  }
+
+  private persistDiscoveredMetadata(
+    profileId: string,
+    config: ProfileConfig,
+    authResult: { detectedEmail?: string | null; locale?: string | null }
+  ): void {
+    if (!authResult.detectedEmail && !authResult.locale) return;
+
+    let safeEmailToPersist: string | undefined = authResult.detectedEmail ?? undefined;
+    if (safeEmailToPersist) {
+      const diskProfiles = ProfileConfigManager.readAll();
+      const otherProfiles = diskProfiles.filter((p) => p.profileId !== profileId);
+      const hasConflict = otherProfiles.some(
+        (p) =>
+          (p.expectedEmail && p.expectedEmail.toLowerCase() === safeEmailToPersist!.toLowerCase()) ||
+          (p.detectedEmail && p.detectedEmail.toLowerCase() === safeEmailToPersist!.toLowerCase())
+      );
+      if (hasConflict) {
+        appLogger.warn(
+          'session_manager',
+          `Cross-profile contamination blocked: detected email '${safeEmailToPersist}' belongs to another profile. Reverting to local user data email for '${profileId}'.`
+        );
+        safeEmailToPersist =
+          LocalChromeProfileDiscoverer.extractEmailFromUserDataDir(
+            config.userDataDir,
+            config.chromeProfileName || 'Default'
+          ) || undefined;
+      }
+    }
+
+    const patch: Record<string, any> = {
+      ...(safeEmailToPersist ? { detectedEmail: safeEmailToPersist } : {}),
+      ...(authResult.locale ? { flowUrlLocale: `/fx/${authResult.locale}/tools/flow` } : {}),
+    };
+    if (safeEmailToPersist && config.displayName && /^Flow Account( \d+)?$/i.test(config.displayName.trim())) {
+      patch.displayName = safeEmailToPersist;
+    }
+    ProfileConfigManager.update(profileId, patch);
   }
 
   /**
@@ -860,6 +1225,12 @@ export class ProfileSessionManager extends EventEmitter<ManagerEventMap> {
       const session = this.sessions.get(config.profileId);
 
       if (session) {
+        if (!session.isProcessAlive() && !session.isVerifying) {
+          const transientStatuses: ProfileSessionStatus[] = ['starting', 'connecting', 'chrome_launched', 'waiting_for_cdp', 'creating_page', 'busy', 'reconnecting'];
+          if (transientStatuses.includes(session.status)) {
+            session.setStatus('stopped');
+          }
+        }
         const snap = session.getSnapshot();
         // Defensive invariant: snapshot cdpPort must always reflect profile's persisted/allocated port
         snap.cdpPort = config.cdpPort;

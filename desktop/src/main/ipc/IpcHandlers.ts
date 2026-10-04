@@ -367,6 +367,34 @@ export class IpcHandlers {
       return await sessionManager.createExistingChromeProfile(p);
     });
 
+    ipcMain.handle('profiles:connectExisting', async (_event, params: unknown) => {
+      const p = params as {
+        displayName: string;
+        localProfileDirectory: string;
+        localUserDataDir?: string;
+        expectedEmail?: string;
+        notes?: string;
+        preferredCdpPort?: number;
+      };
+      if (!p || !p.displayName?.trim() || !p.localProfileDirectory?.trim()) {
+        throw new Error('Display name and local profile directory are required.');
+      }
+      return await sessionManager.connectExistingChromeProfile(p);
+    });
+
+    ipcMain.handle('profiles:cancelConnection', async (_event, profileId: unknown) => {
+      if (typeof profileId !== 'string' || !profileId.trim()) {
+        throw new Error('profileId must be a non-empty string');
+      }
+      await sessionManager.cancelConnection(profileId);
+      return { success: true };
+    });
+
+    ipcMain.handle('profiles:verifySelected', async (_event, profileIds: unknown) => {
+      if (!Array.isArray(profileIds)) throw new Error('profileIds must be an array of strings');
+      return await sessionManager.verifyProfilesBackground(profileIds as string[]);
+    });
+
     // -------------------------------------------------------------------------
     // Settings & System API
     // -------------------------------------------------------------------------
@@ -1050,6 +1078,9 @@ export class IpcHandlers {
           profileId: snapshot.profileId,
           status: snapshot.status,
         });
+      });
+      (sessionManager as any).on('profile:connection_progress', (progress: any) => {
+        getWebContents?.()?.send('flow:profile:connection_progress', progress);
       });
     }
 
